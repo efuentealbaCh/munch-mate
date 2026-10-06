@@ -210,6 +210,19 @@ apps/api/src/
 
 ---
 
+## Web — Next.js
+
+- **UI**: Tailwind CSS v4 + shadcn/ui (`components/ui/*`, added with the shadcn CLI). Theme tokens in `app/globals.css` (base stone, primary orange-700 for AA contrast with white text); change the brand by editing `--primary`, `--ring`, `--brand-soft*`. System font (no `next/font`, so builds need no font download). Light mode only for now.
+- **Text in Spanish (Chile)**, routes in Spanish (`/ingresar`, `/registro`, `/verificar-email`, `/invitacion`, …) — emails from the api link to them. Mobile-first: staff use phones.
+- **API access only through `lib/api.ts`** (same-origin `/api/...`): typed errors (`ApiError` with `code`), automatic single-flight refresh on 401 `UNAUTHENTICATED`, never refreshes on auth endpoints. Show the api's `message` to users; branch on `code`.
+- **Sessions are checked client-side** (`AuthProvider` → `/api/auth/me`): the cookies are httpOnly and `mm_rt` is scoped to `/api/auth`, so Next middleware/proxy cannot see the session. Protected areas render a skeleton, then redirect to `/ingresar?next=…`.
+- `next` redirect params go through `lib/safe-next.ts` (open-redirect protection).
+- Forms: react-hook-form + zod schemas in `lib/validation.ts` that mirror the api DTOs. Slug rules come from `@app/utils`, never re-implemented.
+- No global state library; React context for auth, small hooks (`hooks/`) for data.
+- Tests: **vitest** for pure logic in `lib/` (`pnpm --filter @app/web test`); **Playwright** (`pnpm test:web`) for user flows against the local prod stack (`https://localhost`, reads emails from Mailpit). Playwright is not part of CI yet.
+
+---
+
 ## Real-time — Socket.IO
 
 ### Message flow
@@ -482,6 +495,7 @@ pnpm build && pnpm typecheck
 pnpm test                # unit
 pnpm test:int            # integration (Testcontainers — Docker must be running)
 pnpm test:e2e            # api end-to-end (Testcontainers + Supertest)
+pnpm test:web            # Playwright browser flows — needs `pnpm stack:up` running (first time: pnpm --filter @app/web exec playwright install chromium)
 
 # Production stack on the local machine (release gate) — stop the dev infra first
 pnpm stack:up            # compose.yaml + compose.prod.yaml + compose.local.yaml (Mailpit), DOMAIN=localhost, builds images
@@ -522,6 +536,7 @@ The goal: **anything that passes the release gate locally can be deployed to the
   - Phase 1b (implemented, local only): verify the email with the token read from Mailpit, create a restaurant (generated slug, owner role), invite staff and receive the invitation email, anonymous access to the restaurant → 401.
   - Non-ASCII text in smoke requests must be written as JSON escapes (`\u00e1`): Git Bash on Windows passes non-ASCII arguments to curl in the console code page.
   - On the VPS the smoke test must never create users or send real emails.
+- Registration is rate-limited to 5/min per IP. `pnpm smoke` registers 1 user and `pnpm test:web` 4: running both plus manual tests within the same minute hits 429 — wait a minute between heavy runs.
   - Phase 1+: login and an authenticated request through Caddy; Socket.IO authenticates and receives an event; enqueuing an email job results in a message in Mailpit (local) or a completed job (VPS).
 
 ---
