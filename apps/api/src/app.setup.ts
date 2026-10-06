@@ -13,6 +13,7 @@ export function configureApp(app: NestExpressApplication): void {
   // Requests arrive through Caddy (Docker network) or the Next dev proxy (loopback): trust them for
   // X-Forwarded-For, so rate limits and sessions see the real client IP instead of the proxy's.
   app.set("trust proxy", "loopback, linklocal, uniquelocal");
+  app.disable("x-powered-by");
   app.use(cookieParser());
   app.setGlobalPrefix("api");
   app.useGlobalPipes(

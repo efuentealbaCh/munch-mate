@@ -38,7 +38,14 @@ import { RestaurantsModule } from "./modules/restaurants/restaurants.module";
               : undefined,
           // Docker hits /api/health every few seconds; logging it would drown real traffic.
           autoLogging: { ignore: (req) => req.url === "/api/health" },
-          redact: ["req.headers.authorization", "req.headers.cookie", 'res.headers["set-cookie"]'],
+          // The referer carries the page URL, which holds one-time tokens on /verificar-email,
+          // /restablecer-contrasena and /invitacion.
+          redact: [
+            "req.headers.authorization",
+            "req.headers.cookie",
+            "req.headers.referer",
+            'res.headers["set-cookie"]',
+          ],
         },
       }),
     }),
