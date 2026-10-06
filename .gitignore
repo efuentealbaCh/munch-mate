@@ -3,6 +3,8 @@ dist/
 .next/
 out/
 coverage/
+test-results/
+playwright-report/
 *.tsbuildinfo
 
 # Secrets — only .env.example and SOPS-encrypted files are committed

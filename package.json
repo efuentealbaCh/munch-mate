@@ -8,10 +8,11 @@
   "scripts": {
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
-    "dev": "pnpm --filter @app/types build && pnpm -r --parallel --filter \"./apps/*\" --filter @app/types dev",
+    "dev": "pnpm --filter \"./packages/*\" build && pnpm -r --parallel --filter \"./apps/*\" --filter \"./packages/*\" dev",
     "test": "pnpm -r test",
     "test:int": "pnpm -r test:int",
     "test:e2e": "pnpm -r test:e2e",
+    "test:web": "pnpm --filter @app/web test:e2e:web",
     "env:init": "sh infra/scripts/env-init.sh",
     "infra:up": "docker compose -f compose.yaml -f compose.dev.yaml up -d --wait mongo valkey garage mailpit",
     "infra:down": "docker compose -f compose.yaml -f compose.dev.yaml down",
