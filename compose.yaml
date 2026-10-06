@@ -81,6 +81,8 @@ services:
     image: ${REGISTRY:-munch-mate}/api:${TAG:-local}
     environment:
       <<: *node-app-env
+      APP_URL: https://${DOMAIN:?set in .env}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?set in .env}
     depends_on: *node-app-depends
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health > /dev/null"]
@@ -99,6 +101,12 @@ services:
     environment:
       <<: *node-app-env
       HEALTH_PORT: 3001
+      SMTP_HOST: ${SMTP_HOST:?set in .env}
+      SMTP_PORT: ${SMTP_PORT:?set in .env}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      MAIL_FROM: ${MAIL_FROM:?set in .env}
     depends_on: *node-app-depends
     # Let in-flight jobs finish on deploy/restart before Docker sends SIGKILL (default is 10s).
     stop_grace_period: 30s

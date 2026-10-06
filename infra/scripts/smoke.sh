@@ -16,8 +16,13 @@ BASE="https://$DOMAIN"
 S3_URL="https://s3.$DOMAIN/$S3_BUCKET/smoke-$(date +%s).txt"
 
 CURL="curl -sS --max-time 15"
+LOCAL=false
 if [ "$DOMAIN" = "localhost" ]; then
-  # Local stack: Caddy's internal CA is not trusted by the host, and s3.localhost may not resolve.
+  LOCAL=true
+  # Local release gate (compose.local.yaml): emails go to a Mailpit container.
+  COMPOSE="$COMPOSE -f compose.local.yaml"
+  EXPECTED_SERVICES="$EXPECTED_SERVICES mailpit"
+  # Caddy's internal CA is not trusted by the host, and s3.localhost may not resolve.
   CURL="$CURL -k --resolve s3.localhost:443:127.0.0.1"
 fi
 SIGNED="--aws-sigv4 aws:amz:$S3_REGION:s3 --user $S3_ACCESS_KEY_ID:$S3_SECRET_ACCESS_KEY -H x-amz-content-sha256:UNSIGNED-PAYLOAD"
@@ -89,6 +94,53 @@ const { Queue, QueueEvents } = require("bullmq");
 });
 EOF
 then pass "queue round trip (system:ping)"; else fail "queue round trip (system:ping)"; fi
+
+# 7. Auth through Caddy. Safe everywhere: no data is created and no email is sent.
+body=$($CURL "$BASE/api/auth/me" || true)
+case "$body" in
+  *'"UNAUTHENTICATED"'*) pass "protected route without session → 401" ;;
+  *) fail "protected route without session: $body" ;;
+esac
+body=$($CURL -H "Origin: $BASE" -H "Content-Type: application/json" \
+  -d '{"email":"smoke-nobody@example.com","password":"wrong-password"}' "$BASE/api/auth/login" || true)
+case "$body" in
+  *'"INVALID_CREDENTIALS"'*) pass "login with unknown account → 401" ;;
+  *) fail "login with unknown account: $body" ;;
+esac
+code=$(status -H "Origin: https://evil.example" -H "Content-Type: application/json" -d '{}' "$BASE/api/auth/login")
+if [ "$code" = "403" ]; then pass "cross-origin POST rejected (403)"; else fail "cross-origin POST returned $code"; fi
+
+# 8. Full registration flow — local stack only (creates a user and sends an email to Mailpit).
+if [ "$LOCAL" = true ]; then
+  jar=$(mktemp)
+  headers=$(mktemp)
+  email="smoke-$(date +%s)@example.com"
+  code=$($CURL -o /dev/null -w '%{http_code}' -c "$jar" -D "$headers" -H "Origin: $BASE" \
+    -H "Content-Type: application/json" \
+    -d "{\"email\":\"$email\",\"password\":\"smoke test password\",\"name\":\"Smoke\"}" \
+    "$BASE/api/auth/register" || true)
+  if [ "$code" = "201" ]; then pass "register through Caddy (201)"; else fail "register returned $code"; fi
+
+  if grep -i '^set-cookie: mm_at=' "$headers" | grep -qi 'secure' && grep -i '^set-cookie: mm_at=' "$headers" | grep -qi 'httponly'; then
+    pass "session cookie is Secure + HttpOnly"
+  else
+    fail "session cookie flags: $(grep -i '^set-cookie: mm_at=' "$headers" | cut -c1-120)"
+  fi
+
+  code=$(status -b "$jar" "$BASE/api/auth/me")
+  if [ "$code" = "200" ]; then pass "session cookie authenticates /api/auth/me"; else fail "/api/auth/me with session returned $code"; fi
+
+  delivered=false
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    if curl -sS --max-time 5 "http://127.0.0.1:8025/api/v1/search?query=to:$email" | grep -q '"total":[1-9]'; then
+      delivered=true
+      break
+    fi
+    sleep 1
+  done
+  if [ "$delivered" = true ]; then pass "verification email delivered (Mailpit)"; else fail "verification email not delivered within 15s"; fi
+  rm -f "$jar" "$headers"
+fi
 
 echo
 if [ "$failures" -gt 0 ]; then
