@@ -1,0 +1,24 @@
+{
+  "name": "munch-mate",
+  "private": true,
+  "packageManager": "pnpm@12.9.1",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "dev": "pnpm --filter @app/types build && pnpm -r --parallel --filter \"./apps/*\" --filter @app/types dev",
+    "test": "pnpm -r test",
+    "test:int": "pnpm -r test:int",
+    "test:e2e": "pnpm -r test:e2e",
+    "env:init": "sh infra/scripts/env-init.sh",
+    "infra:up": "docker compose -f compose.yaml -f compose.dev.yaml up -d --wait mongo valkey garage mailpit",
+    "infra:down": "docker compose -f compose.yaml -f compose.dev.yaml down",
+    "infra:init": "sh infra/scripts/garage-init.sh compose.yaml compose.dev.yaml",
+    "stack:up": "docker compose -f compose.yaml -f compose.prod.yaml up -d --build --wait",
+    "stack:init": "sh infra/scripts/garage-init.sh compose.yaml compose.prod.yaml",
+    "stack:down": "docker compose -f compose.yaml -f compose.prod.yaml down",
+    "smoke": "sh infra/scripts/smoke.sh"
+  }
+}
