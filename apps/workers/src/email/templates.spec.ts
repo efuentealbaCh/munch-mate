@@ -22,6 +22,27 @@ describe("renderEmail", () => {
   });
 });
 
+describe("renderEmail staff-invitation", () => {
+  it("lists the roles in Spanish and escapes the restaurant name", () => {
+    const email = renderEmail({
+      template: "staff-invitation",
+      data: {
+        to: "cocina@example.com",
+        restaurantName: "Fuente <Alemana>",
+        inviterName: "Ana",
+        roles: ["kitchen", "cashier"],
+        url: "https://munchmate.cl/invitacion?token=abc",
+      },
+    });
+
+    expect(email.subject).toBe("Ana te invitó a Fuente <Alemana> en Munch Mate");
+    expect(email.html).toContain("Fuente &lt;Alemana&gt;");
+    expect(email.html).not.toContain("<Alemana>");
+    expect(email.text).toContain("Cocina, Caja");
+    expect(email.text).toContain("https://munchmate.cl/invitacion?token=abc");
+  });
+});
+
 describe("escapeHtml", () => {
   it("escapes the five HTML-significant characters", () => {
     expect(escapeHtml(`&<>"'`)).toBe("&amp;&lt;&gt;&quot;&#39;");

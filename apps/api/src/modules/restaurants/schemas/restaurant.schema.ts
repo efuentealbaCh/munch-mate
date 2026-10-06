@@ -1,0 +1,39 @@
+import type { RestaurantStatus } from "@app/types";
+import { Prop, Schema, SchemaFactory } from "@nestjs/mongoose";
+import { type HydratedDocument, Types } from "mongoose";
+
+/** A tenant. Single location in the MVP: one address, one schedule, one menu. */
+@Schema({ collection: "restaurants", timestamps: true })
+export class Restaurant {
+  @Prop({ required: true, trim: true, maxlength: 100 })
+  name!: string;
+
+  /** Public identifier in `/r/{slug}`. Unique across the platform. */
+  @Prop({ required: true, unique: true })
+  slug!: string;
+
+  /** ISO 4217. Amounts are stored as integers in the currency's minor unit (CLP has none). */
+  @Prop({ required: true, default: "CLP" })
+  currency!: string;
+
+  /** IANA zone; defines the business day for daily ticket numbers. */
+  @Prop({ required: true, default: "America/Santiago" })
+  timezone!: string;
+
+  @Prop({ type: String, enum: ["active", "suspended"], default: "active" })
+  status!: RestaurantStatus;
+
+  @Prop({ type: Types.ObjectId, required: true })
+  createdBy!: Types.ObjectId;
+
+  /**
+   * Bumped inside every transaction that changes owner memberships. Two concurrent transactions that each
+   * demote a different owner would otherwise both see "another owner remains" (write skew) and leave the
+   * restaurant without owners; writing this shared document makes one of them conflict and retry.
+   */
+  @Prop({ default: 0 })
+  membershipVersion!: number;
+}
+
+export type RestaurantDocument = HydratedDocument<Restaurant>;
+export const RestaurantSchema = SchemaFactory.createForClass(Restaurant);

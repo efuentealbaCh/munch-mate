@@ -53,7 +53,7 @@ function toApiErrorBody(status: number, payload: string | object, fallbackMessag
     return { statusCode: status, code: fallbackCode, message: payload };
   }
 
-  const body = payload as { code?: unknown; message?: unknown };
+  const body = payload as { code?: unknown; message?: unknown; meta?: unknown };
   // ValidationPipe reports one message per invalid field.
   if (Array.isArray(body.message)) {
     return {
@@ -67,7 +67,16 @@ function toApiErrorBody(status: number, payload: string | object, fallbackMessag
     statusCode: status,
     code: typeof body.code === "string" ? body.code : fallbackCode,
     message: typeof body.message === "string" ? body.message : fallbackMessage,
+    ...(isStringRecord(body.meta) ? { meta: body.meta } : {}),
   };
+}
+
+function isStringRecord(value: unknown): value is Record<string, string> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    Object.values(value).every((v) => typeof v === "string")
+  );
 }
 
 function isTerminusBody(payload: unknown): boolean {

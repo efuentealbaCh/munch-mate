@@ -1,4 +1,4 @@
-import type { EmailJob } from "@app/types";
+import { type EmailJob, RESTAURANT_ROLE_LABELS } from "@app/types";
 
 export interface RenderedEmail {
   subject: string;
@@ -65,6 +65,22 @@ export function renderEmail(job: EmailJob): RenderedEmail {
           { label: "Restablecer contraseña", url },
         ),
         text: `Hola ${name}:\n\nPara restablecer tu contraseña abre este enlace:\n${url}\n\nVence en 24 horas. Si no fuiste tú, ignora este correo.`,
+      };
+    }
+    case "staff-invitation": {
+      const { restaurantName, inviterName, roles, url } = job.data;
+      const roleList = roles.map((role) => RESTAURANT_ROLE_LABELS[role]).join(", ");
+      return {
+        subject: `${inviterName} te invitó a ${restaurantName} en Munch Mate`,
+        html: layout(
+          `Te invitaron a ${escapeHtml(restaurantName)}`,
+          [
+            `${escapeHtml(inviterName)} te invitó a sumarte al equipo de <strong>${escapeHtml(restaurantName)}</strong> con el rol: ${escapeHtml(roleList)}.`,
+            "Si aún no tienes cuenta, podrás crearla con este mismo correo. La invitación vence en 24 horas.",
+          ],
+          { label: "Aceptar invitación", url },
+        ),
+        text: `${inviterName} te invitó a sumarte al equipo de ${restaurantName} (${roleList}) en Munch Mate.\n\nAcepta la invitación aquí:\n${url}\n\nSi aún no tienes cuenta, podrás crearla con este mismo correo. Vence en 24 horas.`,
       };
     }
     default: {

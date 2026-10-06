@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
-import { type Model, Types } from "mongoose";
+import { type ClientSession, type Model, Types } from "mongoose";
 import { type PlatformRole, User } from "./schemas/user.schema";
 
 /** Plain user object returned by the repository; services never handle Mongoose documents. */
@@ -46,14 +46,23 @@ export class UsersRepository {
     return doc ? toRecord(doc) : null;
   }
 
+  async findByIds(ids: string[]): Promise<UserRecord[]> {
+    const docs = await this.users.find({ _id: { $in: ids.filter((id) => Types.ObjectId.isValid(id)) } }).lean();
+    return docs.map(toRecord);
+  }
+
   async findByEmail(email: string): Promise<UserRecord | null> {
     const doc = await this.users.findOne({ email: email.trim().toLowerCase() }).lean();
     return doc ? toRecord(doc) : null;
   }
 
   /** Sets emailVerifiedAt only if not already verified, keeping the original verification date. */
-  async markEmailVerified(id: string): Promise<void> {
-    await this.users.updateOne({ _id: id, emailVerifiedAt: null }, { $set: { emailVerifiedAt: new Date() } });
+  async markEmailVerified(id: string, session?: ClientSession): Promise<void> {
+    await this.users.updateOne(
+      { _id: id, emailVerifiedAt: null },
+      { $set: { emailVerifiedAt: new Date() } },
+      { session },
+    );
   }
 
   async updatePasswordHash(id: string, passwordHash: string): Promise<void> {

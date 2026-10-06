@@ -15,6 +15,7 @@ import { ValkeyThrottlerStorage } from "./infra/redis/valkey-throttler.storage";
 import { AccessTokenGuard } from "./modules/auth/access-token.guard";
 import { AuthModule } from "./modules/auth/auth.module";
 import { HealthModule } from "./modules/health/health.module";
+import { RestaurantsModule } from "./modules/restaurants/restaurants.module";
 
 @Module({
   imports: [
@@ -62,6 +63,7 @@ import { HealthModule } from "./modules/health/health.module";
     }),
     HealthModule,
     AuthModule,
+    RestaurantsModule,
   ],
   providers: [
     // Global guards run in this order: rate limit → CSRF origin check → session.
