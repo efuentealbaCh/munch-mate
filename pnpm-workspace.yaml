@@ -3,6 +3,7 @@ packages:
   - "packages/*"
 allowBuilds:
   '@parcel/watcher': false
+  argon2: true
   cpu-features: false
   msgpackr-extract: false
   protobufjs: false

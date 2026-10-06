@@ -1,7 +1,13 @@
 import { Controller, Get } from "@nestjs/common";
 import { HealthCheck, HealthCheckService, MongooseHealthIndicator } from "@nestjs/terminus";
+import { SkipThrottle } from "@nestjs/throttler";
+import { Public } from "../auth/decorators";
 import { ValkeyHealthIndicator } from "./valkey.health";
 
+// Skipping the throttler also keeps this endpoint answering 503 (not 500) when Valkey is down,
+// since the throttler stores its counters in Valkey.
+@Public()
+@SkipThrottle()
 @Controller("health")
 export class HealthController {
   constructor(

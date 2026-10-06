@@ -1,9 +1,10 @@
 /**
  * BullMQ queue names shared by the api (producer) and the workers (consumers).
- * Feature queues (`email`, `pdf`, `notif`) are added in their phases.
+ * Feature queues (`pdf`, `notif`) are added in their phases.
  */
 export const QUEUES = {
   SYSTEM: "system",
+  EMAIL: "email",
 } as const;
 
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];

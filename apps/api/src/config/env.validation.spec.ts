@@ -3,6 +3,8 @@ import { envValidationSchema } from "./env.validation";
 const validEnv = {
   MONGODB_URI: "mongodb://user:pass@mongo:27017/munchmate?replicaSet=rs0",
   VALKEY_URL: "redis://:pass@valkey:6379",
+  APP_URL: "https://munchmate.cl",
+  JWT_ACCESS_SECRET: "a".repeat(64),
 };
 
 /** Returns the names of the variables that failed validation. */
@@ -25,7 +27,9 @@ describe("envValidationSchema", () => {
   });
 
   it("reports every missing required variable at once", () => {
-    expect(invalidKeys({})).toEqual(expect.arrayContaining(["MONGODB_URI", "VALKEY_URL"]));
+    expect(invalidKeys({})).toEqual(
+      expect.arrayContaining(["MONGODB_URI", "VALKEY_URL", "APP_URL", "JWT_ACCESS_SECRET"]),
+    );
   });
 
   it("rejects connection strings with the wrong scheme", () => {
@@ -35,5 +39,16 @@ describe("envValidationSchema", () => {
 
   it("rejects an unknown NODE_ENV", () => {
     expect(invalidKeys({ ...validEnv, NODE_ENV: "staging" })).toEqual(["NODE_ENV"]);
+  });
+
+  it("strips trailing slashes from APP_URL so links can be built by concatenation", () => {
+    expect(envValidationSchema.parse({ ...validEnv, APP_URL: "https://munchmate.cl/" }).APP_URL).toBe(
+      "https://munchmate.cl",
+    );
+  });
+
+  it("rejects non-http APP_URL and short JWT secrets", () => {
+    expect(invalidKeys({ ...validEnv, APP_URL: "ftp://munchmate.cl" })).toEqual(["APP_URL"]);
+    expect(invalidKeys({ ...validEnv, JWT_ACCESS_SECRET: "short" })).toEqual(["JWT_ACCESS_SECRET"]);
   });
 });

@@ -1,0 +1,75 @@
+import type { EmailJob } from "@app/types";
+
+export interface RenderedEmail {
+  subject: string;
+  html: string;
+  text: string;
+}
+
+/** Escapes user-provided values (names) before inserting them into HTML. */
+export function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+/** Minimal, client-compatible layout: inline styles only, single column, plain-text alternative always sent. */
+function layout(title: string, paragraphs: string[], action: { label: string; url: string }): string {
+  const body = paragraphs.map((p) => `<p style="margin:0 0 16px">${p}</p>`).join("");
+  return `<!doctype html>
+<html lang="es">
+  <body style="margin:0;padding:24px;background:#f6f6f6;font-family:Arial,Helvetica,sans-serif;color:#1f1f1f">
+    <div style="max-width:520px;margin:0 auto;background:#ffffff;border-radius:8px;padding:32px">
+      <h1 style="margin:0 0 24px;font-size:20px">${title}</h1>
+      ${body}
+      <p style="margin:24px 0">
+        <a href="${escapeHtml(action.url)}" style="display:inline-block;background:#1f1f1f;color:#ffffff;text-decoration:none;padding:12px 20px;border-radius:6px">${action.label}</a>
+      </p>
+      <p style="margin:0;font-size:12px;color:#6b6b6b">Si el botón no funciona, copia este enlace en tu navegador:<br>${escapeHtml(action.url)}</p>
+    </div>
+  </body>
+</html>`;
+}
+
+/**
+ * Renders the subject, HTML and plain-text bodies of an email job.
+ * Exhaustive over EmailJob: adding a template to @app/types without rendering it here fails to compile.
+ */
+export function renderEmail(job: EmailJob): RenderedEmail {
+  switch (job.template) {
+    case "verify-email": {
+      const { name, url } = job.data;
+      return {
+        subject: "Confirma tu correo en Munch Mate",
+        html: layout(
+          `Hola ${escapeHtml(name)}`,
+          ["Confirma tu correo para empezar a usar Munch Mate.", "El enlace vence en 24 horas."],
+          { label: "Confirmar correo", url },
+        ),
+        text: `Hola ${name}:\n\nConfirma tu correo para empezar a usar Munch Mate:\n${url}\n\nEl enlace vence en 24 horas.`,
+      };
+    }
+    case "password-reset": {
+      const { name, url } = job.data;
+      return {
+        subject: "Restablece tu contraseña de Munch Mate",
+        html: layout(
+          `Hola ${escapeHtml(name)}`,
+          [
+            "Recibimos una solicitud para restablecer tu contraseña.",
+            "El enlace vence en 24 horas. Si no fuiste tú, ignora este correo: tu contraseña no cambiará.",
+          ],
+          { label: "Restablecer contraseña", url },
+        ),
+        text: `Hola ${name}:\n\nPara restablecer tu contraseña abre este enlace:\n${url}\n\nVence en 24 horas. Si no fuiste tú, ignora este correo.`,
+      };
+    }
+    default: {
+      const unreachable: never = job;
+      throw new Error(`No template for ${JSON.stringify(unreachable)}`);
+    }
+  }
+}
