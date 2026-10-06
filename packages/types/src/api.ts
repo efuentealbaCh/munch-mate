@@ -8,6 +8,8 @@ export interface ApiErrorBody {
   message: string;
   /** Field-level validation messages, only for VALIDATION_FAILED. */
   details?: string[];
+  /** Machine-readable extras for specific codes, e.g. `{ suggestion }` on SLUG_TAKEN. */
+  meta?: Record<string, string>;
 }
 
 /** Authenticated user as returned by `/api/auth/*`. Never includes secrets. */
