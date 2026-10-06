@@ -89,6 +89,7 @@ When bumping an image version, update it in `compose.yaml` **and** in the Testco
 ├── compose.yaml              # Base: all services
 ├── compose.dev.yaml          # Dev overrides: ports on 127.0.0.1, mailpit
 ├── compose.prod.yaml         # Prod overrides: restart policies, log rotation, Caddy ports
+├── compose.local.yaml        # Local release gate only: Mailpit for outgoing email (never on the VPS)
 ├── .env.example              # Every variable documented, no real values
 ├── .sops.yaml                # SOPS rules (age recipients) — pending, added with the first VPS deploy
 ├── CLAUDE.md                 # This file
@@ -198,7 +199,9 @@ apps/api/src/
 
 - Use the **Repository Pattern**: services never use Mongoose directly — they go through a Repository.
 - DTOs with `class-validator` + `class-transformer` in every controller.
-- Global `HttpExceptionFilter` for consistent error responses.
+- Global `HttpExceptionFilter`: every error body is `{ statusCode, code, message, details? }` (`ApiErrorBody` in `@app/types`). Throw Nest exceptions with `apiError("STABLE_CODE", "Mensaje en español")`; the frontend branches on `code`, never on `message`.
+- Every route requires a session by default (global `AccessTokenGuard`); opt out with `@Public()`. Global guard order: throttler → origin (CSRF) → session.
+- Rate limits are shared across replicas through Valkey (`ValkeyThrottlerStorage`, in-house because `@nest-lab/throttler-storage-redis` does not declare Nest 12 support). Global default 300/min per IP; tighten sensitive routes with `@Throttle`.
 - Use `ConfigModule` with a Zod validation schema — the app must fail to start if a required variable is missing.
 - Global setup (prefix, pipes, logger, shutdown hooks) lives in `configureApp()` (`src/app.setup.ts`), shared by `main.ts` and the e2e tests.
 - `GET /api/health` must return 200 only when Mongo and Valkey are reachable (used by Docker healthchecks).
@@ -283,7 +286,7 @@ The workers app is a NestJS **standalone application** (`NestFactory.createAppli
 
 - **Idempotency**: every processor must tolerate the same job twice. Use deterministic `jobId`s and check state before side effects.
 - Every job has `attempts` + exponential `backoff`. Failed jobs stay in the `failed` set; never delete them automatically.
-- Job payload types live in `packages/types`; payloads carry IDs, not whole documents.
+- Job payload types live in `packages/types`; payloads carry IDs, not whole documents. Exception: `email` jobs carry the rendered data (name, one-time link), because only the token hash exists in MongoDB. Never log email job payloads.
 - PDFs are generated with a lightweight library (`pdfkit` or `@react-pdf/renderer`) — **no headless browser** — and uploaded to Garage; the job result stores the object key.
 - Graceful shutdown: on `SIGTERM`, let in-flight jobs finish (`worker.close()`), then disconnect.
 
@@ -407,20 +410,21 @@ s3.{$DOMAIN} {
 
 All variables are documented in `.env.example`. Real values live in `.env` on the server (`chmod 600`) and are versioned encrypted with SOPS + age (`.env.prod.enc.env`).
 
+- The same `.env` serves `pnpm dev` (apps on the host) and Docker. Values that differ per context (`APP_URL`, `MONGODB_URI`, `VALKEY_URL`) are **built in `compose.yaml`** for containers; the `.env` entries are only read by the apps on the host.
+- `.env` is also sourced by the shell scripts (`. ./.env`): **quote any value containing spaces, `<`, `>` or `&`**.
+- Each app validates its own variables with Zod at startup (`src/config/env.validation.ts`) — that file is the source of truth.
+
 ### api
 
 ```
-NODE_ENV            development | production
+NODE_ENV            development | test | production
 MONGODB_URI
 VALKEY_URL          redis://:password@valkey:6379
-JWT_ACCESS_SECRET
-S3_ENDPOINT         http://garage:3900
-S3_PUBLIC_ENDPOINT  https://s3.<domain>
-S3_REGION
-S3_BUCKET
-S3_ACCESS_KEY_ID
-S3_SECRET_ACCESS_KEY
-APP_URL             https://<domain>
+APP_URL             https://<domain> (http://localhost:3100 in dev) — email links, CSRF origin, cookie Secure flag
+JWT_ACCESS_SECRET   ≥ 32 chars
+S3_ENDPOINT         http://garage:3900            (phase 2)
+S3_PUBLIC_ENDPOINT  https://s3.<domain>           (phase 2)
+S3_REGION / S3_BUCKET / S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY   (phase 2)
 ```
 
 ### workers
@@ -429,9 +433,10 @@ APP_URL             https://<domain>
 NODE_ENV
 MONGODB_URI
 VALKEY_URL
-S3_ENDPOINT / S3_REGION / S3_BUCKET / S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY
-SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS / SMTP_FROM
-VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY      (web-push)
+HEALTH_PORT         internal healthcheck port (3001)
+SMTP_HOST / SMTP_PORT / SMTP_SECURE / SMTP_USER / SMTP_PASS / MAIL_FROM
+S3_ENDPOINT / S3_REGION / S3_BUCKET / S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY   (phase 3, PDFs)
+VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY      (phase 6, web-push)
 ```
 
 ### web
@@ -477,7 +482,7 @@ pnpm test:int            # integration (Testcontainers — Docker must be runnin
 pnpm test:e2e            # api end-to-end (Testcontainers + Supertest)
 
 # Production stack on the local machine (release gate) — stop the dev infra first
-pnpm stack:up            # compose.yaml + compose.prod.yaml, DOMAIN=localhost, builds images
+pnpm stack:up            # compose.yaml + compose.prod.yaml + compose.local.yaml (Mailpit), DOMAIN=localhost, builds images
 pnpm stack:init          # same as infra:init, for this stack (needed only on fresh volumes)
 pnpm smoke               # infra/scripts/smoke.sh against https://localhost
 pnpm stack:down
@@ -511,6 +516,8 @@ The goal: **anything that passes the release gate locally can be deployed to the
 - Processors are tested twice with the same job to prove idempotency.
 - The smoke test (`infra/scripts/smoke.sh`) runs against the production stack. **Each phase extends it** with the flows it introduces.
   - Phase 0 (implemented): every service healthy, HTTP→HTTPS redirect, web served, `/api/health` ok, `/api/*` routed to the api, signed S3 upload/download through `s3.<domain>`, anonymous S3 access denied, `system:ping` job round trip inside the workers container.
+  - Phase 1a (implemented): protected route without session → 401, unknown login → 401, cross-origin POST → 403. **Local stack only** (`DOMAIN=localhost`, creates data): register through Caddy, `Secure`+`HttpOnly` session cookie, cookie authenticates `/me`, verification email delivered to Mailpit.
+  - On the VPS the smoke test must never create users or send real emails.
   - Phase 1+: login and an authenticated request through Caddy; Socket.IO authenticates and receives an event; enqueuing an email job results in a message in Mailpit (local) or a completed job (VPS).
 
 ---
