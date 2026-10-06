@@ -139,6 +139,39 @@ if [ "$LOCAL" = true ]; then
     sleep 1
   done
   if [ "$delivered" = true ]; then pass "verification email delivered (Mailpit)"; else fail "verification email not delivered within 15s"; fi
+
+  # Follow the emailed link like a user would: read the token from Mailpit and verify.
+  message_id=$(curl -sS "http://127.0.0.1:8025/api/v1/search?query=to:$email" | sed -n 's/.*"ID":"\([^"]*\)".*/\1/p' | head -1)
+  token=$(curl -sS "http://127.0.0.1:8025/api/v1/message/$message_id" | grep -o 'token=[A-Za-z0-9_-]*' | head -1 | cut -d= -f2)
+  code=$(status -H "Origin: $BASE" -H "Content-Type: application/json" -d "{\"token\":\"$token\"}" "$BASE/api/auth/verify-email")
+  if [ "$code" = "204" ]; then pass "email verified with the emailed link"; else fail "verify-email returned $code"; fi
+
+  # Phase 1b: a verified owner creates a restaurant and invites staff.
+  body=$($CURL -b "$jar" -H "Origin: $BASE" -H "Content-Type: application/json" \
+    -d '{"name":"Smoke Pic\u00e1"}' "$BASE/api/restaurants" || true)
+  # JSON escape instead of the literal accented letter: Git Bash on Windows hands non-ASCII arguments to curl in the console code page, not UTF-8.
+  restaurant_id=$(printf '%s' "$body" | sed -n 's/.*"id":"\([0-9a-f]\{24\}\)".*/\1/p')
+  case "$body" in
+    *'"slug":"smoke-pica'*'"myRoles":["owner"]'*) pass "restaurant created with generated slug" ;;
+    *) fail "create restaurant: $body" ;;
+  esac
+
+  staff="smoke-staff-$(date +%s)@example.com"
+  code=$(status -b "$jar" -H "Origin: $BASE" -H "Content-Type: application/json" \
+    -d "{\"email\":\"$staff\",\"roles\":[\"kitchen\"]}" "$BASE/api/restaurants/$restaurant_id/invitations")
+  if [ "$code" = "201" ]; then pass "staff invited (201)"; else fail "invite returned $code"; fi
+  delivered=false
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    if curl -sS --max-time 5 "http://127.0.0.1:8025/api/v1/search?query=to:$staff" | grep -q '"total":[1-9]'; then
+      delivered=true
+      break
+    fi
+    sleep 1
+  done
+  if [ "$delivered" = true ]; then pass "invitation email delivered (Mailpit)"; else fail "invitation email not delivered within 15s"; fi
+
+  code=$(status "$BASE/api/restaurants/$restaurant_id")
+  if [ "$code" = "401" ]; then pass "restaurant requires a session (401)"; else fail "anonymous restaurant read returned $code"; fi
   rm -f "$jar" "$headers"
 fi
 

@@ -96,9 +96,12 @@ pending ──► accepted ──► preparing ──► ready ──┬──�
 
 | Colección | Tenant | Campos clave |
 | --- | --- | --- |
-| `restaurants` | — | `slug` (único), `name`, `logoKey`, `currency`, `timezone`, `openingHours`, `status` |
-| `users` | — | `email` (único), `passwordHash`, `name`, `platformRole?` |
-| `memberships` | ✔ | `userId`, `restaurantId`, `roles[]` (`owner`, `cashier`, `kitchen`, `rider`) |
+| `restaurants` | — | `slug` (único), `name`, `currency`, `timezone`, `status`, `createdBy`, `membershipVersion` ✅ · pendientes: `logoKey`, `openingHours` |
+| `users` | — | `email` (único), `passwordHash`, `name`, `emailVerifiedAt`, `platformRole?` ✅ |
+| `sessions` | — | `userId`, `familyId`, `tokenHash`, `expiresAt`, `rotatedAt`, `revokedAt` ✅ |
+| `one_time_tokens` | — | `type` (`verify_email` / `password_reset`), `tokenHash`, `userId`, `expiresAt`, `usedAt` ✅ |
+| `memberships` | ✔ | `userId`, `restaurantId`, `roles[]` (`owner`, `cashier`, `kitchen`, `rider`) ✅ |
+| `invitations` | ✔ | `email`, `roles[]`, `tokenHash`, `invitedBy`, `expiresAt`, `acceptedAt`, `revokedAt` ✅ |
 | `menu_categories` | ✔ | `name`, `position`, `active` |
 | `products` | ✔ | `categoryId`, `name`, `description`, `price`, `imageKey`, `available`, `modifierGroups[]` (embebidos) |
 | `tables` | ✔ | `label`, `token` (único, va en el QR), `active` |
@@ -108,7 +111,9 @@ pending ──► accepted ──► preparing ──► ready ──┬──�
 | `customer_addresses` | — | `userId`, `label`, `address`, `reference`, `zoneHint` |
 | `push_subscriptions` | — | `userId`, `endpoint`, `keys` |
 
-"Tenant ✔" significa que el documento lleva `restaurantId` y que toda consulta lo filtra.
+"Tenant ✔" significa que el documento lleva `restaurantId` y que toda consulta lo filtra. ✅ = implementado.
+
+> **Pendiente para la Fase 3:** el owner puede cambiar el slug, y eso rompe los enlaces ya compartidos. Los QR de las mesas **no deberían depender del slug** (por ejemplo, `/t/{tableToken}` en vez de `/r/{slug}/t/{tableToken}`), o habría que guardar los slugs anteriores para redirigir. Hay que decidirlo antes de imprimir los primeros QR.
 
 ---
 

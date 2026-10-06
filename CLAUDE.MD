@@ -14,7 +14,9 @@ Multi-tenant SaaS for restaurant orders: **dine-in via table QR**, **pickup** an
 
 Domain rules that always apply:
 
-- **Tenant isolation**: every tenant-scoped collection has `restaurantId`, and repositories always filter by it. Never trust a `restaurantId` sent by the client — take it from the authenticated membership or the resolved public slug.
+- **Tenant isolation**: every tenant-scoped collection has `restaurantId`, and repositories always filter by it (it is the first parameter of every tenant-scoped repository method). Never trust a `restaurantId` sent by the client — take it from the authenticated membership or the resolved public slug.
+- **Tenant routes** live under `/api/restaurants/:restaurantId/...` and use `@UseGuards(RestaurantAccessGuard)` (+ `@RestaurantRoles(...)` when only some roles may act); handlers read the tenant with `@CurrentTenant()`. Non-members get **404** `RESTAURANT_NOT_FOUND` (never 403), so other tenants cannot be probed; members without the role get 403 `FORBIDDEN_ROLE`; suspended restaurants are read-only.
+- **A restaurant always has at least one owner.** Any change to memberships goes through `MembersService` (transaction + `membershipVersion` bump, which prevents two owners demoting each other at once).
 - **Money as integers** in the currency's minor unit, always stored with `currency`. Never use floating point for amounts.
 - **Order items are price snapshots**; the server computes all totals from current product data — clients only send IDs and quantities.
 - **Order status changes go through the state machine** (invalid transition → 409) and are recorded in `statusHistory`.
@@ -77,8 +79,8 @@ When bumping an image version, update it in `compose.yaml` **and** in the Testco
 │   └── workers/              # NestJS standalone app — BullMQ processors
 ├── packages/
 │   ├── types/                # Shared types, DTOs, job payloads, WS event names
-│   ├── schemas/              # Shared Mongoose schemas (created in phase 1)
-│   └── utils/                # Common helpers (created when first needed)
+│   ├── schemas/              # Shared Mongoose schemas (created when the workers first need one)
+│   └── utils/                # Pure helpers shared by api and web (slug rules); has its own unit tests
 ├── infra/
 │   ├── caddy/Caddyfile
 │   ├── docker/               # nest.Dockerfile (api + workers, ARG APP), web.Dockerfile
@@ -517,6 +519,8 @@ The goal: **anything that passes the release gate locally can be deployed to the
 - The smoke test (`infra/scripts/smoke.sh`) runs against the production stack. **Each phase extends it** with the flows it introduces.
   - Phase 0 (implemented): every service healthy, HTTP→HTTPS redirect, web served, `/api/health` ok, `/api/*` routed to the api, signed S3 upload/download through `s3.<domain>`, anonymous S3 access denied, `system:ping` job round trip inside the workers container.
   - Phase 1a (implemented): protected route without session → 401, unknown login → 401, cross-origin POST → 403. **Local stack only** (`DOMAIN=localhost`, creates data): register through Caddy, `Secure`+`HttpOnly` session cookie, cookie authenticates `/me`, verification email delivered to Mailpit.
+  - Phase 1b (implemented, local only): verify the email with the token read from Mailpit, create a restaurant (generated slug, owner role), invite staff and receive the invitation email, anonymous access to the restaurant → 401.
+  - Non-ASCII text in smoke requests must be written as JSON escapes (`\u00e1`): Git Bash on Windows passes non-ASCII arguments to curl in the console code page.
   - On the VPS the smoke test must never create users or send real emails.
   - Phase 1+: login and an authenticated request through Caddy; Socket.IO authenticates and receives an event; enqueuing an email job results in a message in Mailpit (local) or a completed job (VPS).
 
