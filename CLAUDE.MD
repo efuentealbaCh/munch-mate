@@ -117,12 +117,25 @@ Always install dependencies with `pnpm add` from the root or from the correspond
 
 ### Responsibilities
 
-- Authentication: issue and verify JWTs (access + refresh tokens)
+- Authentication: sessions in httpOnly cookies (see below)
 - Business and domain logic
 - CRUD operations on MongoDB via Mongoose (Repository Pattern)
 - Enqueue async jobs in BullMQ
 - Real-time events through the Socket.IO gateway
 - Rate limiting per IP/user (`@nestjs/throttler` with Redis storage, so limits are shared across replicas)
+
+### Authentication
+
+Web and api share the same origin (Caddy routes `/api/*`), so the session lives in cookies the browser JS never sees.
+
+- **Access token**: short-lived JWT (15 min) in cookie `mm_at` — `HttpOnly; Secure; SameSite=Lax; Path=/`.
+- **Refresh token**: opaque random value in cookie `mm_rt` — `HttpOnly; Secure; SameSite=Strict; Path=/api/auth`. Stored **hashed** in a `sessions` collection (TTL index), **rotated on every use**; reusing an already-rotated token revokes the whole session family (theft detection). Logout and password change revoke sessions server-side.
+- **Never** put tokens in `localStorage`, response bodies or URLs.
+- **CSRF**: `SameSite` cookies plus an `Origin` check on every state-changing request (`POST/PUT/PATCH/DELETE`) — reject when it does not match `APP_URL`.
+- **Socket.IO** authenticates from the same cookie in the handshake (same origin, no token in JS).
+- **Passwords**: hashed with **argon2id** (`argon2` package). It is a native module: approve it in `allowBuilds` and verify it loads in the Alpine image.
+- **Email verification**: **mandatory for owners** (cannot create or publish a restaurant until verified), **optional for customers**. Verification and invitation tokens are random, single-use, stored hashed, expire in 24 h, and are delivered through the `email` queue.
+- Login, register and password-reset endpoints have stricter rate limits than the rest of the API.
 
 ### Bootstrap
 
@@ -401,7 +414,6 @@ NODE_ENV            development | production
 MONGODB_URI
 VALKEY_URL          redis://:password@valkey:6379
 JWT_ACCESS_SECRET
-JWT_REFRESH_SECRET
 S3_ENDPOINT         http://garage:3900
 S3_PUBLIC_ENDPOINT  https://s3.<domain>
 S3_REGION

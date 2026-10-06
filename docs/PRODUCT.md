@@ -18,7 +18,7 @@ El proyecto tiene dos objetivos: ser un **MVP real y desplegable** y, de paso, e
 | **Owner** | Su restaurante | Configura el restaurante, el menú, las mesas, las zonas de delivery y el staff |
 | **Staff — caja** | Su restaurante | Acepta o rechaza pedidos y marca los pagos |
 | **Staff — cocina** | Su restaurante | Ve la cola de pedidos y cambia los estados de preparación |
-| **Staff — repartidor** | Su restaurante | Ve sus entregas asignadas y las marca como entregadas |
+| **Staff — repartidor** | Su restaurante | Ve sus entregas asignadas y las marca como entregadas. Es opcional: un restaurante puede no tener repartidores en el sistema |
 | **Cliente invitado** | Un pedido | Pide sin registrarse y sigue su pedido con un link privado |
 | **Cliente registrado** | Toda la plataforma | Igual que el invitado, más historial y datos guardados. La cuenta es global, no por restaurante |
 
@@ -103,7 +103,8 @@ pending ──► accepted ──► preparing ──► ready ──┬──�
 | `products` | ✔ | `categoryId`, `name`, `description`, `price`, `imageKey`, `available`, `modifierGroups[]` (embebidos) |
 | `tables` | ✔ | `label`, `token` (único, va en el QR), `active` |
 | `delivery_zones` | ✔ | `name`, `fee`, `minOrder`, `active` |
-| `orders` | ✔ | `number` (correlativo por restaurante), `channel`, `status`, `statusHistory[]`, `paymentStatus`, `paymentMethod`, `items[]` (snapshot), `subtotal`, `deliveryFee`, `total`, `customer` (snapshot), `customerId?`, `tableId?`, `delivery?`, `riderId?`, `accessToken` |
+| `orders` | ✔ | `number` (global por restaurante), `ticketNumber` (diario), `businessDate`, `channel`, `status`, `statusHistory[]`, `paymentStatus`, `paymentMethod`, `items[]` (snapshot), `subtotal`, `deliveryFee`, `total`, `customer` (snapshot), `customerId?`, `tableId?`, `delivery?`, `riderId?`, `accessToken` |
+| `counters` | ✔ | `_id` (`order:{restaurantId}` / `ticket:{restaurantId}:{businessDate}`), `seq` |
 | `customer_addresses` | — | `userId`, `label`, `address`, `reference`, `zoneHint` |
 | `push_subscriptions` | — | `userId`, `endpoint`, `keys` |
 
@@ -127,7 +128,7 @@ pending ──► accepted ──► preparing ──► ready ──┬──�
 | Fase | Entregable | Lista cuando… |
 | --- | --- | --- |
 | **0. Fundaciones** | Monorepo, Dockerfiles, compose (base, dev y prod), Caddy, `/api/health`, Testcontainers, `smoke.sh`, CI | `pnpm stack:up` + `pnpm smoke` pasan y el stack está desplegado vacío en el VPS |
-| **1. Identidad y tenants** | Registro y login (JWT + refresh), restaurantes, memberships, guards por rol, invitación de staff (primer job `email`) | Un owner crea su restaurante e invita a un cocinero |
+| **1. Identidad y tenants** | Registro y login (sesión en cookies httpOnly, verificación de email para owners), restaurantes, memberships, guards por rol, invitación de staff (primer job `email`) | Un owner crea su restaurante e invita a un cocinero |
 | **2. Menú** | Categorías, productos, modificadores, subida de fotos a Garage, menú público | El menú se ve en `/r/{slug}` con fotos |
 | **3. Pedidos en mesa** | Mesas, QR (primer job `pdf`), carrito, checkout `dine_in`, tablero en vivo, seguimiento | Un pedido desde el QR aparece en cocina sin recargar |
 | **4. Retiro** | Checkout `pickup`, email de confirmación con comprobante PDF, marcado de pago | Flujo completo de retiro con email recibido |
@@ -138,9 +139,12 @@ Cada fase termina con sus tests, `smoke` actualizado y despliegue al VPS.
 
 ---
 
-## Supuestos pendientes de confirmar
+## Decisiones confirmadas
 
-- Moneda y país por defecto: **CLP / Chile** (se configura por restaurante)
-- **Una sucursal por restaurante** en el MVP
-- El repartidor es **staff del restaurante**, no hay repartidores de plataforma
-- Correlativo de pedido: **diario por restaurante** (#1, #2… se reinicia cada día) o **global por restaurante**
+- **Moneda y país**: CLP / Chile por defecto (configurable por restaurante), zona horaria `America/Santiago`.
+- **Una sucursal por restaurante** en el MVP. Una cadena registra cada local como un restaurante.
+- **Repartidores**: staff propio del restaurante con rol `rider`. **Asignar un repartidor es opcional**: si el restaurante usa delivery externo o informal, nadie se asigna y el staff cambia los estados (`out_for_delivery` → `delivered`). No hay repartidores de plataforma.
+- **Numeración de pedidos, dos números por pedido:**
+  - `number`: correlativo **global por restaurante**, nunca se reinicia. Se usa en el comprobante, en soporte y en reportes.
+  - `ticketNumber`: correlativo **diario por restaurante**, vuelve a 1 a medianoche en la zona horaria del restaurante. Es el número que se muestra en cocina y al cliente. Más adelante se puede agregar una hora de corte configurable.
+  - Ambos salen de contadores atómicos (`$inc`) en la colección `counters`, sin riesgo de duplicados con pedidos simultáneos.
