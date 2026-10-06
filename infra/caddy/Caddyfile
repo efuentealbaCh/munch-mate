@@ -1,0 +1,20 @@
+# DOMAIN=localhost makes Caddy issue certificates from its local CA (used by `pnpm stack:up`);
+# a real domain gets Let's Encrypt certificates automatically.
+{$DOMAIN} {
+	encode zstd gzip
+
+	handle /api/* {
+		reverse_proxy api:3000
+	}
+	handle /socket.io/* {
+		reverse_proxy api:3000
+	}
+	handle {
+		reverse_proxy web:3000
+	}
+}
+
+# S3 endpoint for presigned URLs only. Buckets are private: every request needs a valid signature.
+s3.{$DOMAIN} {
+	reverse_proxy garage:3900
+}

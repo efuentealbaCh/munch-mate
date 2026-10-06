@@ -1,0 +1,19 @@
+# Garage single-node configuration. Contains no secrets:
+# rpc_secret and admin token come from GARAGE_RPC_SECRET / GARAGE_ADMIN_TOKEN (see compose.yaml).
+metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
+db_engine = "lmdb"
+
+# Single node: one copy of each object. Off-VPS backups are what protect the data.
+replication_factor = 1
+
+rpc_bind_addr = "[::]:3901"
+rpc_public_addr = "127.0.0.1:3901"
+
+[s3_api]
+# Must match S3_REGION used by the S3 clients.
+s3_region = "garage"
+api_bind_addr = "[::]:3900"
+
+[admin]
+api_bind_addr = "[::]:3903"

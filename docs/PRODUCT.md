@@ -1,0 +1,146 @@
+# Munch Mate — Definición de producto
+
+> Documento vivo. Define qué se construye y en qué orden. Las reglas técnicas están en `CLAUDE.md`.
+
+## Visión
+
+Plataforma SaaS multi-restaurante para recibir y gestionar pedidos por **QR en la mesa**, **retiro en local** y **delivery**. La cocina y el staff ven los pedidos **en tiempo real**, y el cliente sigue el estado de su pedido en vivo.
+
+El proyecto tiene dos objetivos: ser un **MVP real y desplegable** y, de paso, ejercitar todo el stack (tiempo real, colas, almacenamiento S3, PDF, email, push).
+
+---
+
+## Actores
+
+| Actor | Alcance | Qué hace |
+| --- | --- | --- |
+| **Platform admin** | Toda la plataforma | Da de alta y suspende restaurantes |
+| **Owner** | Su restaurante | Configura el restaurante, el menú, las mesas, las zonas de delivery y el staff |
+| **Staff — caja** | Su restaurante | Acepta o rechaza pedidos y marca los pagos |
+| **Staff — cocina** | Su restaurante | Ve la cola de pedidos y cambia los estados de preparación |
+| **Staff — repartidor** | Su restaurante | Ve sus entregas asignadas y las marca como entregadas |
+| **Cliente invitado** | Un pedido | Pide sin registrarse y sigue su pedido con un link privado |
+| **Cliente registrado** | Toda la plataforma | Igual que el invitado, más historial y datos guardados. La cuenta es global, no por restaurante |
+
+Un usuario de staff puede tener varios roles dentro del mismo restaurante.
+
+---
+
+## Canales de pedido
+
+| Canal | Entrada | Identificación | Pago (MVP) |
+| --- | --- | --- | --- |
+| `dine_in` | QR de la mesa → `/r/{slug}/t/{tableToken}` | La mesa | En el local |
+| `pickup` | `/r/{slug}` | Nombre y teléfono | En el local, al retirar |
+| `delivery` | `/r/{slug}` | Nombre, teléfono y dirección | Contra entrega |
+
+---
+
+## Ciclo de vida del pedido
+
+```
+                ┌──────────► rejected
+                │
+pending ──► accepted ──► preparing ──► ready ──┬──► served            (dine_in)
+   │            │                              ├──► picked_up         (pickup)
+   │            │                              └──► out_for_delivery ──► delivered  (delivery)
+   └────────────┴──► cancelled
+```
+
+- Solo se puede cancelar en `pending` o `accepted`. Después de eso, el pedido ya está en cocina.
+- **El estado de pago va aparte del estado del pedido**: `unpaid` → `paid`, con método `cash`, `card_pos` o `transfer`. El staff lo marca a mano.
+- Cada cambio de estado queda registrado en un historial con quién lo hizo y cuándo, y se emite por WebSocket.
+
+---
+
+## Alcance del MVP
+
+### Restaurante (panel `/admin`)
+- Perfil con nombre, slug, logo, horario, moneda y zona horaria
+- **Menú**: categorías, productos con foto, precio y disponibilidad, y **grupos de modificadores** (por ejemplo "Tamaño" obligatorio con una opción, "Extras" opcional con varias)
+- **Mesas**: CRUD y un PDF con los QR para imprimir
+- **Delivery**: zonas definidas como lista de comunas o sectores, cada una con su costo de envío y pedido mínimo
+- **Staff**: invitación por email y asignación de roles
+- **Tablero de pedidos en vivo**, filtrado por canal y estado, con sonido y push al entrar un pedido nuevo
+
+### Cliente (público `/r/{slug}`)
+- Menú navegable, carrito y checkout según el canal
+- Página de seguimiento del pedido en tiempo real
+- Email de confirmación y **comprobante en PDF**. Es un documento interno, **no una boleta electrónica tributaria**
+- Cuenta opcional: historial de pedidos y direcciones guardadas
+
+### Uso del stack
+
+| Pieza | Dónde se usa |
+| --- | --- |
+| Socket.IO | Tablero de cocina y caja, seguimiento del pedido |
+| BullMQ `email` | Confirmación de pedido, invitación de staff, verificación de cuenta |
+| BullMQ `pdf` | Comprobante de pedido, hoja de QR de mesas |
+| BullMQ `notif` | Push al staff (pedido nuevo) y al cliente (pedido listo) |
+| Garage (S3) | Fotos de productos, logos, PDF generados |
+| Transacciones Mongo | Crear un pedido junto con su snapshot de precios |
+
+### Fuera del MVP
+- Pagos online (pasarela)
+- Boleta o factura electrónica (SII)
+- Seguimiento GPS del repartidor y zonas dibujadas en un mapa
+- Varias sucursales por restaurante
+- Inventario y stock
+- Reservas
+- Reportes avanzados (en el MVP solo hay un resumen de ventas del día)
+- Varios idiomas
+
+---
+
+## Modelo de datos inicial (propuesta, falta validarla)
+
+| Colección | Tenant | Campos clave |
+| --- | --- | --- |
+| `restaurants` | — | `slug` (único), `name`, `logoKey`, `currency`, `timezone`, `openingHours`, `status` |
+| `users` | — | `email` (único), `passwordHash`, `name`, `platformRole?` |
+| `memberships` | ✔ | `userId`, `restaurantId`, `roles[]` (`owner`, `cashier`, `kitchen`, `rider`) |
+| `menu_categories` | ✔ | `name`, `position`, `active` |
+| `products` | ✔ | `categoryId`, `name`, `description`, `price`, `imageKey`, `available`, `modifierGroups[]` (embebidos) |
+| `tables` | ✔ | `label`, `token` (único, va en el QR), `active` |
+| `delivery_zones` | ✔ | `name`, `fee`, `minOrder`, `active` |
+| `orders` | ✔ | `number` (correlativo por restaurante), `channel`, `status`, `statusHistory[]`, `paymentStatus`, `paymentMethod`, `items[]` (snapshot), `subtotal`, `deliveryFee`, `total`, `customer` (snapshot), `customerId?`, `tableId?`, `delivery?`, `riderId?`, `accessToken` |
+| `customer_addresses` | — | `userId`, `label`, `address`, `reference`, `zoneHint` |
+| `push_subscriptions` | — | `userId`, `endpoint`, `keys` |
+
+"Tenant ✔" significa que el documento lleva `restaurantId` y que toda consulta lo filtra.
+
+---
+
+## Reglas de dominio
+
+- **Aislamiento de tenant**: toda consulta sobre una colección con tenant filtra por `restaurantId`, y ese filtro lo aplica el repository, no el controller.
+- **Dinero en enteros** en la unidad mínima de la moneda (CLP = pesos, USD = centavos), junto con `currency`. Nunca se usa `float`.
+- **Snapshot de precios**: los ítems del pedido copian nombre, precio y modificadores al momento de comprar. Si después cambia el menú, el pedido no cambia.
+- **El servidor calcula los totales** a partir de los productos. Lo que manda el cliente es solo la intención: IDs y cantidades.
+- **Los pedidos de invitados** se consultan con `accessToken` (link privado), nunca solo con el número de pedido.
+- Las transiciones de estado se validan contra la máquina de estados. Una transición inválida devuelve 409.
+
+---
+
+## Hoja de ruta
+
+| Fase | Entregable | Lista cuando… |
+| --- | --- | --- |
+| **0. Fundaciones** | Monorepo, Dockerfiles, compose (base, dev y prod), Caddy, `/api/health`, Testcontainers, `smoke.sh`, CI | `pnpm stack:up` + `pnpm smoke` pasan y el stack está desplegado vacío en el VPS |
+| **1. Identidad y tenants** | Registro y login (JWT + refresh), restaurantes, memberships, guards por rol, invitación de staff (primer job `email`) | Un owner crea su restaurante e invita a un cocinero |
+| **2. Menú** | Categorías, productos, modificadores, subida de fotos a Garage, menú público | El menú se ve en `/r/{slug}` con fotos |
+| **3. Pedidos en mesa** | Mesas, QR (primer job `pdf`), carrito, checkout `dine_in`, tablero en vivo, seguimiento | Un pedido desde el QR aparece en cocina sin recargar |
+| **4. Retiro** | Checkout `pickup`, email de confirmación con comprobante PDF, marcado de pago | Flujo completo de retiro con email recibido |
+| **5. Delivery** | Zonas, checkout `delivery`, asignación de repartidor, vista del repartidor | Pedido entregado y marcado como pagado contra entrega |
+| **6. Clientes y push** | Cuentas de cliente, historial, direcciones, web push | El cliente recibe push al quedar listo su pedido |
+
+Cada fase termina con sus tests, `smoke` actualizado y despliegue al VPS.
+
+---
+
+## Supuestos pendientes de confirmar
+
+- Moneda y país por defecto: **CLP / Chile** (se configura por restaurante)
+- **Una sucursal por restaurante** en el MVP
+- El repartidor es **staff del restaurante**, no hay repartidores de plataforma
+- Correlativo de pedido: **diario por restaurante** (#1, #2… se reinicia cada día) o **global por restaurante**
