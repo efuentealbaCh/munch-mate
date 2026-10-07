@@ -5,6 +5,7 @@ import { InjectConnection } from "@nestjs/mongoose";
 import type { Connection } from "mongoose";
 import { apiError } from "../../common/errors/api-error";
 import { MediaService } from "../../infra/storage/media.service";
+import { RealtimeService } from "../realtime/realtime.service";
 import { MembershipsRepository } from "./memberships.repository";
 import type { TenantContext } from "./restaurant-access.guard";
 import { normalizeRequestedSlug, toRestaurantView } from "./restaurant.views";
@@ -30,6 +31,7 @@ export class RestaurantsService {
     private readonly memberships: MembershipsRepository,
     @InjectConnection() private readonly connection: Connection,
     private readonly media: MediaService,
+    private readonly realtime: RealtimeService,
   ) {}
 
   /**
@@ -115,6 +117,16 @@ export class RestaurantsService {
     const previous = await this.restaurants.setLogoKey(tenant.restaurantId, null);
     await this.media.deleteImage("logo", previous ?? null);
     return this.get(tenant);
+  }
+
+  /** Opens or closes the restaurant for orders and tells every connected staff screen. */
+  async setAcceptingOrders(tenant: TenantContext, acceptingOrders: boolean): Promise<RestaurantView> {
+    const updated = await this.restaurants.setAcceptingOrders(tenant.restaurantId, acceptingOrders);
+    if (!updated) throw notFound();
+    this.realtime
+      .toRestaurant(tenant.restaurantId)
+      .emit("restaurant.accepting", { restaurantId: tenant.restaurantId, acceptingOrders });
+    return toRestaurantView(updated, tenant.roles, this.media);
   }
 
   /** Live check for the slug field of the create/edit forms. */

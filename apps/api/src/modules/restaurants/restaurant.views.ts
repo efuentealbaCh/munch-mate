@@ -17,6 +17,7 @@ export function toRestaurantView(
     description: restaurant.description,
     phone: restaurant.phone,
     logo: media.logoImage(restaurant.logoKey),
+    acceptingOrders: restaurant.acceptingOrders,
     currency: restaurant.currency,
     timezone: restaurant.timezone,
     status: restaurant.status,

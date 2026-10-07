@@ -1,5 +1,6 @@
 import type { Connection } from "mongoose";
 import type { MediaService } from "../../infra/storage/media.service";
+import type { RealtimeService } from "../realtime/realtime.service";
 
 import type { MembershipsRepository } from "./memberships.repository";
 import { baseSlugFor, RestaurantsService } from "./restaurants.service";
@@ -7,6 +8,7 @@ import { type RestaurantsRepository, SlugTakenError } from "./restaurants.reposi
 
 /** Views only need the logo URL builder. */
 const fakeMedia = { logoImage: () => null } as unknown as MediaService;
+const fakeRealtime = { toRestaurant: () => ({ emit: () => true }) } as unknown as RealtimeService;
 
 describe("baseSlugFor", () => {
   it.each([
@@ -43,6 +45,7 @@ describe("RestaurantsService.create", () => {
       memberships as unknown as MembershipsRepository,
       connection as unknown as Connection,
       fakeMedia,
+      fakeRealtime,
     );
     return { service, created, memberships };
   }
@@ -118,6 +121,7 @@ describe("RestaurantsService queries and updates", () => {
       memberships as unknown as MembershipsRepository,
       {} as Connection,
       fakeMedia,
+      fakeRealtime,
     );
     return { service, restaurants };
   }

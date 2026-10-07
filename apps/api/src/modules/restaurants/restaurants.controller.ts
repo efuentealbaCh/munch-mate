@@ -5,7 +5,7 @@ import { ImageUpload, requireImage, type UploadedImageFile } from "../../common/
 import type { AuthUser } from "../auth/auth.types";
 import { CurrentUser } from "../auth/decorators";
 import { VerifiedEmailGuard } from "../auth/verified-email.guard";
-import { CreateRestaurantDto, SlugQueryDto, UpdateRestaurantDto } from "./dto/restaurants.dto";
+import { AcceptingOrdersDto, CreateRestaurantDto, SlugQueryDto, UpdateRestaurantDto } from "./dto/restaurants.dto";
 import {
   CurrentTenant,
   RestaurantAccessGuard,
@@ -48,6 +48,17 @@ export class RestaurantsController {
   @RestaurantRoles("owner")
   update(@CurrentTenant() tenant: TenantContext, @Body() dto: UpdateRestaurantDto): Promise<RestaurantView> {
     return this.restaurants.update(tenant, dto);
+  }
+
+  /** Open/closed switch for orders: floor staff can flip it at opening and closing time. */
+  @Put(":restaurantId/accepting-orders")
+  @UseGuards(RestaurantAccessGuard)
+  @RestaurantRoles("owner", "cashier", "kitchen")
+  setAcceptingOrders(
+    @CurrentTenant() tenant: TenantContext,
+    @Body() dto: AcceptingOrdersDto,
+  ): Promise<RestaurantView> {
+    return this.restaurants.setAcceptingOrders(tenant, dto.acceptingOrders);
   }
 
   /** Multipart upload, field `file`. Re-encoded to square WebP (see image-processor). */

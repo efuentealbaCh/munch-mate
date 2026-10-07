@@ -23,6 +23,10 @@ export class Restaurant {
   @Prop({ type: String, default: null })
   logoKey!: string | null;
 
+  /** Manual open/closed switch: customers can only place orders while true. Starts closed. */
+  @Prop({ default: false })
+  acceptingOrders!: boolean;
+
   /** ISO 4217. Amounts are stored as integers in the currency's minor unit (CLP has none). */
   @Prop({ required: true, default: "CLP" })
   currency!: string;

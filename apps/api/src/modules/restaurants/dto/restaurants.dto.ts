@@ -5,6 +5,7 @@ import {
   ArrayMinSize,
   ArrayUnique,
   IsArray,
+  IsBoolean,
   IsEmail,
   IsIn,
   IsOptional,
@@ -82,4 +83,9 @@ export class InviteDto extends RolesDto {
   @IsEmail({}, { message: "email no es un correo válido" })
   @MaxLength(254)
   email!: string;
+}
+
+export class AcceptingOrdersDto {
+  @IsBoolean()
+  acceptingOrders!: boolean;
 }

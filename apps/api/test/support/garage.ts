@@ -6,6 +6,7 @@ import { GenericContainer, type StartedTestContainer, Wait } from "testcontainer
 
 const GARAGE_IMAGE = "dxflrs/garage:v2.4.1";
 const MEDIA_BUCKET = "munchmate-media";
+const PRIVATE_BUCKET = "munchmate";
 /** Must match `root_domain` of [s3_web] in infra/garage/garage.toml. */
 const WEB_ROOT_DOMAIN = ".web.garage.localhost";
 
@@ -17,6 +18,7 @@ export interface StartedGarage {
     S3_REGION: string;
     S3_ACCESS_KEY_ID: string;
     S3_SECRET_ACCESS_KEY: string;
+    S3_BUCKET: string;
     S3_MEDIA_BUCKET: string;
     MEDIA_PUBLIC_URL: string;
   };
@@ -61,6 +63,8 @@ export async function startGarage(): Promise<StartedGarage> {
   const accessKeyId = `GK${randomBytes(12).toString("hex")}`;
   const secretAccessKey = randomBytes(32).toString("hex");
   await garage("key", "import", "--yes", "-n", "test", accessKeyId, secretAccessKey);
+  await garage("bucket", "create", PRIVATE_BUCKET);
+  await garage("bucket", "allow", "--read", "--write", "--owner", PRIVATE_BUCKET, "--key", accessKeyId);
   await garage("bucket", "create", MEDIA_BUCKET);
   await garage("bucket", "website", "--allow", MEDIA_BUCKET);
   await garage("bucket", "allow", "--read", "--write", "--owner", MEDIA_BUCKET, "--key", accessKeyId);
@@ -72,6 +76,7 @@ export async function startGarage(): Promise<StartedGarage> {
       S3_REGION: "garage",
       S3_ACCESS_KEY_ID: accessKeyId,
       S3_SECRET_ACCESS_KEY: secretAccessKey,
+      S3_BUCKET: PRIVATE_BUCKET,
       S3_MEDIA_BUCKET: MEDIA_BUCKET,
       MEDIA_PUBLIC_URL: `http://${MEDIA_BUCKET}${WEB_ROOT_DOMAIN}:${container.getMappedPort(3902)}`,
     },

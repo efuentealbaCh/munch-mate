@@ -34,5 +34,7 @@ import { Product, ProductSchema } from "./schemas/product.schema";
     ProductsRepository,
     ModifierGroupsRepository,
   ],
+  // The orders module prices carts against the current menu.
+  exports: [CategoriesRepository, ProductsRepository, ModifierGroupsRepository],
 })
 export class MenuModule {}

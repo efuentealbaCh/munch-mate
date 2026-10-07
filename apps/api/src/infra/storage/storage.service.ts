@@ -1,16 +1,18 @@
-import { DeleteObjectsCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { DeleteObjectsCommand, GetObjectCommand, NoSuchKey, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { Injectable, type OnApplicationShutdown } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import type { ApiEnv } from "../../config/env.validation";
 
 /**
- * Object storage on Garage through the S3 API. Writes go to the public media bucket;
- * reads happen in the browser through MEDIA_PUBLIC_URL (Garage's website endpoint), never through the api.
+ * Object storage on Garage through the S3 API.
+ * - Public media bucket: written by the api, read by browsers through MEDIA_PUBLIC_URL (website endpoint).
+ * - Private bucket: written by the workers (PDFs), read only by the api for authorized users.
  */
 @Injectable()
 export class StorageService implements OnApplicationShutdown {
   private readonly client: S3Client;
   private readonly mediaBucket: string;
+  private readonly privateBucket: string;
   readonly mediaPublicUrl: string;
 
   constructor(config: ConfigService<ApiEnv, true>) {
@@ -24,6 +26,7 @@ export class StorageService implements OnApplicationShutdown {
       },
     });
     this.mediaBucket = config.get("S3_MEDIA_BUCKET", { infer: true });
+    this.privateBucket = config.get("S3_BUCKET", { infer: true });
     this.mediaPublicUrl = config.get("MEDIA_PUBLIC_URL", { infer: true });
   }
 
@@ -51,6 +54,20 @@ export class StorageService implements OnApplicationShutdown {
         Delete: { Objects: keys.map((Key) => ({ Key })), Quiet: true },
       }),
     );
+  }
+
+  /**
+   * Reads an object of the private bucket (e.g. a generated PDF) for the api to stream to an authorized user.
+   * @returns null when the object does not exist.
+   */
+  async getPrivate(key: string): Promise<Buffer | null> {
+    try {
+      const result = await this.client.send(new GetObjectCommand({ Bucket: this.privateBucket, Key: key }));
+      return Buffer.from(await result.Body!.transformToByteArray());
+    } catch (error) {
+      if (error instanceof NoSuchKey) return null;
+      throw error;
+    }
   }
 
   /** Browser URL of a public object. */

@@ -18,6 +18,8 @@ export const TEST_APP_URL = "http://localhost:3100";
 
 export interface TestContext {
   app: NestExpressApplication;
+  /** Base URL of the listening server (only with `listen: true`), for Socket.IO clients. */
+  baseUrl: string;
   mongo: StartedMongoDBContainer;
   valkey: StartedTestContainer;
   garage: StartedGarage;
@@ -30,7 +32,7 @@ export interface TestContext {
  * Starts MongoDB (replica set), Valkey and Garage in Docker and boots the full AppModule against them,
  * configured exactly like production through `configureApp`.
  */
-export async function createTestApp(): Promise<TestContext> {
+export async function createTestApp(options: { listen?: boolean } = {}): Promise<TestContext> {
   const [mongo, valkey, garage] = await Promise.all([
     new MongoDBContainer(MONGO_IMAGE).start(),
     new GenericContainer(VALKEY_IMAGE)
@@ -48,6 +50,7 @@ export async function createTestApp(): Promise<TestContext> {
   process.env.VALKEY_URL = valkeyUrl;
   process.env.APP_URL = TEST_APP_URL;
   process.env.JWT_ACCESS_SECRET = "test-secret-".padEnd(64, "x");
+  process.env.ORDER_TOKEN_SECRET = "order-secret-".padEnd(64, "y");
   Object.assign(process.env, garage.env);
 
   // ConfigModule.forRoot() validates the environment when app.module is first loaded, so it must be
@@ -56,10 +59,18 @@ export async function createTestApp(): Promise<TestContext> {
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
   const app = moduleRef.createNestApplication<NestExpressApplication>({ bufferLogs: true });
   configureApp(app);
-  await app.init();
+  // Real-time tests need a real port (Socket.IO); the rest use supertest on the in-memory server.
+  let baseUrl = "";
+  if (options.listen) {
+    await app.listen(0, "127.0.0.1");
+    baseUrl = await app.getUrl();
+  } else {
+    await app.init();
+  }
 
   return {
     app,
+    baseUrl,
     mongo,
     valkey,
     garage,

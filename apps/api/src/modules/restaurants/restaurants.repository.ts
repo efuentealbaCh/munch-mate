@@ -11,6 +11,7 @@ export interface RestaurantRecord {
   description: string;
   phone: string;
   logoKey: string | null;
+  acceptingOrders: boolean;
   currency: string;
   timezone: string;
   status: RestaurantStatus;
@@ -103,6 +104,14 @@ export class RestaurantsRepository {
     }
   }
 
+  /** @returns The updated restaurant, or null if it does not exist. */
+  async setAcceptingOrders(id: string, acceptingOrders: boolean): Promise<RestaurantRecord | null> {
+    const doc = await this.restaurants
+      .findByIdAndUpdate(id, { $set: { acceptingOrders } }, { returnDocument: "after" })
+      .lean();
+    return doc ? toRecord(doc) : null;
+  }
+
   /** Forces a write conflict between concurrent owner-membership transactions (see Restaurant.membershipVersion). */
   async bumpMembershipVersion(id: string, session: ClientSession): Promise<void> {
     await this.restaurants.updateOne({ _id: id }, { $inc: { membershipVersion: 1 } }, { session });
@@ -126,6 +135,7 @@ function toRecord(doc: Restaurant & { _id: Types.ObjectId }): RestaurantRecord {
     description: doc.description ?? "",
     phone: doc.phone ?? "",
     logoKey: doc.logoKey ?? null,
+    acceptingOrders: doc.acceptingOrders ?? false,
     currency: doc.currency,
     timezone: doc.timezone,
     status: doc.status,
