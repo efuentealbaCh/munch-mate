@@ -1,8 +1,11 @@
-import { type EmailJob, type PingJob, type PingJobResult, QUEUES } from "@app/types";
+import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { type EmailJob, type PingJob, type PingJobResult, type QrSheetJob, QUEUES } from "@app/types";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { MongoDBContainer, type StartedMongoDBContainer } from "@testcontainers/mongodb";
 import { Queue, QueueEvents } from "bullmq";
+import { Redis } from "ioredis";
 import { GenericContainer, type StartedTestContainer, Wait } from "testcontainers";
+import { type StartedGarage, startGarage } from "../test/garage";
 import { HealthServer } from "./health/health.server";
 
 // Same images as compose.yaml / compose.dev.yaml, so tests run against the production versions.
@@ -21,6 +24,7 @@ describe("workers (integration)", () => {
   let mongo: StartedMongoDBContainer;
   let valkey: StartedTestContainer;
   let mailpit: StartedTestContainer;
+  let garage: StartedGarage;
   let app: TestingModule;
   let valkeyUrl: string;
   const queues: { close(): Promise<void> }[] = [];
@@ -38,7 +42,7 @@ describe("workers (integration)", () => {
     fetch(`http://${mailpit.getHost()}:${mailpit.getMappedPort(8025)}/api/v1${path}`);
 
   beforeAll(async () => {
-    [mongo, valkey, mailpit] = await Promise.all([
+    [mongo, valkey, mailpit, garage] = await Promise.all([
       new MongoDBContainer(MONGO_IMAGE).start(),
       new GenericContainer(VALKEY_IMAGE)
         .withCommand(["valkey-server", "--requirepass", VALKEY_PASSWORD, "--maxmemory-policy", "noeviction"])
@@ -49,6 +53,7 @@ describe("workers (integration)", () => {
         .withExposedPorts(1025, 8025)
         .withWaitStrategy(Wait.forHttp("/livez", 8025))
         .start(),
+      startGarage(),
     ]);
 
     valkeyUrl = `redis://:${VALKEY_PASSWORD}@${valkey.getHost()}:${valkey.getMappedPort(6379)}`;
@@ -62,6 +67,7 @@ describe("workers (integration)", () => {
       SMTP_PORT: String(mailpit.getMappedPort(1025)),
       SMTP_SECURE: "false",
       MAIL_FROM: "Munch Mate <no-reply@munchmate.test>",
+      ...garage.env,
     });
 
     // ConfigModule.forRoot() validates the environment when app.module is first loaded, so it must be
@@ -74,7 +80,7 @@ describe("workers (integration)", () => {
   afterAll(async () => {
     await Promise.all(queues.map((q) => q.close()));
     await app?.close();
-    await Promise.allSettled([mongo?.stop(), valkey?.stop(), mailpit?.stop()]);
+    await Promise.allSettled([mongo?.stop(), valkey?.stop(), mailpit?.stop(), garage?.container.stop()]);
   });
 
   describe("system queue", () => {
@@ -92,6 +98,46 @@ describe("workers (integration)", () => {
       const job = await queue.add("unknown" as "ping", { sentAt: new Date().toISOString() });
 
       await expect(job.waitUntilFinished(events, 10_000)).rejects.toThrow('Unknown job "unknown"');
+    });
+  });
+
+  describe("pdf queue", () => {
+    it("renders the QR sheet into the private bucket and announces it in real time", async () => {
+      const { queue, events } = await producer<QrSheetJob, { key: string }>(QUEUES.PDF);
+      const restaurantId = "665f1f77bcf86cd799439011";
+      const outputKey = `restaurants/${restaurantId}/qr-sheets/test.pdf`;
+      // Listen on Valkey the way the Socket.IO adapter of the api does.
+      const subscriber = new Redis(valkeyUrl);
+      const announced = new Promise<string>((resolve) => {
+        subscriber.on("pmessage", (_pattern: string, channel: string) => resolve(channel));
+      });
+      await subscriber.psubscribe("socket.io#*");
+
+      const job = await queue.add("qr-sheet", {
+        restaurantId,
+        restaurantName: "Sanguchería",
+        tables: [
+          { label: "Mesa 1", url: "https://munchmate.test/m/abcdefghjk" },
+          { label: "Mesa 2", url: "https://munchmate.test/m/mnpqrstuvw" },
+        ],
+        outputKey,
+      });
+      await job.waitUntilFinished(events, 20_000);
+
+      const s3 = new S3Client({
+        endpoint: garage.env.S3_ENDPOINT,
+        region: garage.env.S3_REGION,
+        forcePathStyle: true,
+        credentials: { accessKeyId: garage.env.S3_ACCESS_KEY_ID, secretAccessKey: garage.env.S3_SECRET_ACCESS_KEY },
+      });
+      const object = await s3.send(new GetObjectCommand({ Bucket: garage.env.S3_BUCKET, Key: outputKey }));
+      const pdf = Buffer.from(await object.Body!.transformToByteArray());
+      expect(pdf.subarray(0, 5).toString()).toBe("%PDF-");
+      expect(object.ContentType).toBe("application/pdf");
+      expect(await announced).toContain(`restaurant:${restaurantId}`);
+
+      s3.destroy();
+      subscriber.disconnect();
     });
   });
 
@@ -125,7 +171,7 @@ describe("workers (integration)", () => {
       status: "ok",
       mongo: "up",
       valkey: "up",
-      queues: { [QUEUES.SYSTEM]: "running", [QUEUES.EMAIL]: "running" },
+      queues: { [QUEUES.SYSTEM]: "running", [QUEUES.EMAIL]: "running", [QUEUES.PDF]: "running" },
     });
   });
 });
