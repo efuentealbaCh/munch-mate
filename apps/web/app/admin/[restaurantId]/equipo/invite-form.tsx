@@ -14,7 +14,30 @@ import { teamApi } from "@/lib/endpoints";
 import { hasCode } from "@/lib/errors";
 import { type InviteValues, inviteSchema } from "@/lib/validation";
 
-export function InviteForm({ restaurantId, onInvited }: { restaurantId: string; onInvited(): void }) {
+interface InviteFormProps {
+  restaurantId: string;
+  onInvited(): void;
+}
+
+/**
+ * After each successful invite the form is remounted (new key) instead of calling `reset()`: resetting the
+ * controlled role checkboxes re-validated the emptied form and flagged "Elige al menos un rol".
+ */
+export function InviteForm(props: InviteFormProps) {
+  const [generation, setGeneration] = useState(0);
+  return (
+    <InviteFormFields
+      key={generation}
+      {...props}
+      onInvited={() => {
+        setGeneration((g) => g + 1);
+        props.onInvited();
+      }}
+    />
+  );
+}
+
+function InviteFormFields({ restaurantId, onInvited }: InviteFormProps) {
   const [error, setError] = useState<unknown>(null);
   const form = useForm<InviteValues>({ resolver: zodResolver(inviteSchema), defaultValues: { email: "", roles: [] } });
   const { errors, isSubmitting } = form.formState;
@@ -24,7 +47,6 @@ export function InviteForm({ restaurantId, onInvited }: { restaurantId: string; 
     try {
       const invitation = await teamApi.invite(restaurantId, values);
       toast.success(`Invitación enviada a ${invitation.email}`);
-      form.reset();
       onInvited();
     } catch (failure) {
       if (hasCode(failure, "ALREADY_MEMBER")) {

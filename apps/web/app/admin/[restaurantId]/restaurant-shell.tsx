@@ -1,17 +1,19 @@
 "use client";
 
-import type { RestaurantView } from "@app/types";
-import { ArrowLeftIcon, LayoutDashboardIcon, SearchXIcon, UsersIcon } from "lucide-react";
+import type { RestaurantRole, RestaurantView } from "@app/types";
+import { ArrowLeftIcon, BookOpenIcon, LayoutDashboardIcon, PackageCheckIcon, SearchXIcon, UsersIcon } from "lucide-react";
 import Link from "next/link";
 import { useParams, usePathname } from "next/navigation";
 import { type ReactNode, useCallback, useMemo } from "react";
 import { FormError } from "@/components/form-error";
+import { RestaurantLogo } from "@/components/restaurant-logo";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useApiQuery } from "@/hooks/use-api-query";
 import { restaurantsApi } from "@/lib/endpoints";
 import { hasCode } from "@/lib/errors";
+import { canManageAvailability } from "@/lib/menu";
 import { cn } from "@/lib/utils";
 import { RestaurantContext, type RestaurantContextValue } from "./restaurant-context";
 
@@ -63,11 +65,14 @@ export function RestaurantShell({ children }: { children: ReactNode }) {
               Mis restaurantes
             </Link>
           </Button>
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-2xl font-bold tracking-tight break-words">{restaurant.name}</h1>
-            {restaurant.status === "suspended" ? <Badge variant="destructive">Suspendido</Badge> : null}
+          <div className="flex items-center gap-3">
+            <RestaurantLogo logo={restaurant.logo} size="md" />
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <h1 className="text-2xl font-bold tracking-tight break-words">{restaurant.name}</h1>
+              {restaurant.status === "suspended" ? <Badge variant="destructive">Suspendido</Badge> : null}
+            </div>
           </div>
-          <SectionTabs restaurantId={restaurant.id} isOwner={isOwner} />
+          <SectionTabs restaurantId={restaurant.id} isOwner={isOwner} roles={restaurant.myRoles} />
         </div>
         {children}
       </div>
@@ -75,20 +80,31 @@ export function RestaurantShell({ children }: { children: ReactNode }) {
   );
 }
 
-function SectionTabs({ restaurantId, isOwner }: { restaurantId: string; isOwner: boolean }) {
+function SectionTabs({
+  restaurantId,
+  isOwner,
+  roles,
+}: {
+  restaurantId: string;
+  isOwner: boolean;
+  roles: readonly RestaurantRole[];
+}) {
   const pathname = usePathname();
   const base = `/admin/${restaurantId}`;
+  // Tabs a member cannot use are hidden (the api would answer 403 anyway); direct URLs explain why.
   const tabs = [
-    { href: base, label: "Resumen", icon: LayoutDashboardIcon },
-    // Team management is owner-only (the api would answer 403 anyway).
-    ...(isOwner ? [{ href: `${base}/equipo`, label: "Equipo", icon: UsersIcon }] : []),
-  ];
+    { href: base, label: "Resumen", icon: LayoutDashboardIcon, show: true },
+    { href: `${base}/menu`, label: "Menú", icon: BookOpenIcon, show: isOwner },
+    { href: `${base}/disponibilidad`, label: "Disponibilidad", icon: PackageCheckIcon, show: canManageAvailability(roles) },
+    { href: `${base}/equipo`, label: "Equipo", icon: UsersIcon, show: isOwner },
+  ].filter((tab) => tab.show);
 
   return (
     <nav aria-label="Secciones del restaurante" className="-mx-4 overflow-x-auto border-b px-4">
       <ul className="flex gap-1">
         {tabs.map(({ href, label, icon: Icon }) => {
-          const active = pathname === href;
+          // Sections with sub-pages (Menú → Modificadores) stay highlighted inside them.
+          const active = href === base ? pathname === base : pathname === href || pathname.startsWith(`${href}/`);
           return (
             <li key={href}>
               <Link

@@ -1,5 +1,6 @@
 "use client";
 
+import { ExternalLinkIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -12,6 +13,7 @@ import { useAuth } from "@/lib/auth-context";
 import { teamApi } from "@/lib/endpoints";
 import { errorMessage } from "@/lib/errors";
 import { useRestaurant } from "./restaurant-context";
+import { ProfileForm } from "./profile-form";
 import { SettingsForm } from "./settings-form";
 
 const CARD_SPACING = "[--card-spacing:--spacing(5)] sm:[--card-spacing:--spacing(6)]";
@@ -32,10 +34,20 @@ export function RestaurantOverview() {
           <dl className="grid gap-4 text-sm">
             <div>
               <dt className="text-muted-foreground">Dirección pública</dt>
-              <dd className="font-mono break-all" data-testid="public-url">
-                {host}/r/{restaurant.slug}
+              <dd>
+                <a
+                  href={`/r/${restaurant.slug}`}
+                  target="_blank"
+                  rel="noopener"
+                  className="inline-flex items-start gap-1.5 rounded-sm font-mono break-all text-primary underline-offset-4 outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
+                >
+                  <span data-testid="public-url">
+                    {host}/r/{restaurant.slug}
+                  </span>
+                  <ExternalLinkIcon className="mt-0.5 size-4 shrink-0" aria-hidden />
+                  <span className="sr-only">(se abre en una pestaña nueva)</span>
+                </a>
               </dd>
-              <dd className="mt-1 text-xs text-muted-foreground">El menú público estará disponible pronto.</dd>
             </div>
             <div>
               <dt className="mb-1 text-muted-foreground">Mis roles</dt>
@@ -58,18 +70,31 @@ export function RestaurantOverview() {
       </Card>
 
       {isOwner ? (
-        <Card className={CARD_SPACING}>
-          <CardHeader>
-            <CardTitle>
-              <h2>Configuración</h2>
-            </CardTitle>
-            <CardDescription>Nombre y dirección web del restaurante.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {/* Remount after each save so the form starts from the stored values. */}
-            <SettingsForm key={`${restaurant.name}|${restaurant.slug}`} />
-          </CardContent>
-        </Card>
+        <div className="flex flex-col gap-6">
+          <Card className={CARD_SPACING}>
+            <CardHeader>
+              <CardTitle>
+                <h2>Configuración</h2>
+              </CardTitle>
+              <CardDescription>Nombre y dirección web del restaurante.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {/* Remount after each save so the form starts from the stored values. */}
+              <SettingsForm key={`${restaurant.name}|${restaurant.slug}`} />
+            </CardContent>
+          </Card>
+          <Card className={CARD_SPACING}>
+            <CardHeader>
+              <CardTitle>
+                <h2>Perfil público</h2>
+              </CardTitle>
+              <CardDescription>Lo que ven tus clientes arriba del menú.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ProfileForm key={`${restaurant.description}|${restaurant.phone}`} />
+            </CardContent>
+          </Card>
+        </div>
       ) : (
         <LeaveCard />
       )}

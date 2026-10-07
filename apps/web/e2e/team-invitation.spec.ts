@@ -37,6 +37,9 @@ test("owner invites a cook, who signs up from the link and joins with the kitche
   const pending = page.getByRole("list", { name: "Invitaciones pendientes" });
   await expect(pending.getByText(cookEmail)).toBeVisible();
   await expect(pending).toContainText("Invitado por Dueña Equipo");
+  // After a successful invite the form is cleared without showing validation errors.
+  await expect(inviteForm.getByLabel("Correo")).toHaveValue("");
+  await expect(inviteForm.getByText("Elige al menos un rol")).toHaveCount(0);
 
   // The cook opens the emailed link in a fresh browser.
   const invitationLink = await waitForEmailLink(cookEmail, "/invitacion");

@@ -57,16 +57,27 @@ export async function waitForEmailLink(to: string, path: string, timeoutMs = 20_
 
 /**
  * Registers a user through the api with the given request context (a page's `request` shares its cookies).
- * Registration is rate-limited (5/min per IP), so specs register as few users as possible.
+ * Registration is rate-limited (5/min per IP), so specs register as few users as possible; when the whole
+ * suite still hits the limit, this waits for the window to reset (Retry-After) and tries once more.
+ * Callers that may wait need a test timeout above 60 s.
  */
 export async function registerViaApi(
   api: APIRequestContext,
   user: { name: string; email: string; password?: string },
 ): Promise<void> {
-  const response = await api.post("/api/auth/register", {
-    data: { name: user.name, email: user.email, password: user.password ?? PASSWORD },
-    headers: ORIGIN_HEADER,
-  });
+  const post = () =>
+    api.post("/api/auth/register", {
+      data: { name: user.name, email: user.email, password: user.password ?? PASSWORD },
+      headers: ORIGIN_HEADER,
+    });
+  // After a long wait the pooled keep-alive socket may already be closed by the server: retry once.
+  const send = () => post().catch((error: unknown) => (/ECONNRESET|socket hang up/.test(String(error)) ? post() : Promise.reject(error)));
+  let response = await send();
+  if (response.status() === 429) {
+    const seconds = Number(response.headers()["retry-after"] ?? "60");
+    await new Promise((resolve) => setTimeout(resolve, (Number.isFinite(seconds) ? seconds + 1 : 61) * 1000));
+    response = await send();
+  }
   expect(response.status(), await response.text()).toBe(201);
 }
 

@@ -1,10 +1,12 @@
-import { RESTAURANT_ROLES } from "@app/types";
+import { MENU_LIMITS, RESTAURANT_ROLES } from "@app/types";
 import { slugProblem } from "@app/utils";
 import { z } from "zod";
+import { modifierRulesProblem } from "./menu";
+import { parsePriceInput } from "./money";
 import { SLUG_PROBLEM_MESSAGES } from "./slug-field";
 
 /**
- * Form schemas. Bounds mirror the api DTOs (apps/api/src/modules/{auth,restaurants}/dto) so most mistakes
+ * Form schemas. Bounds mirror the api DTOs (apps/api/src/modules/{auth,restaurants,menu}/dto) so most mistakes
  * are caught before the request; the api remains the real validation.
  */
 
@@ -65,9 +67,90 @@ export const restaurantSchema = z.object({ name: restaurantName, slug });
 
 export const inviteSchema = z.object({ email, roles });
 
+/** Same pattern as the api (UpdateRestaurantDto.phone); empty clears it. */
+export const PHONE_PATTERN = /^$|^\+?[0-9 ()-]{6,20}$/;
+
+export const restaurantProfileSchema = z.object({
+  description: z.string().trim().max(300, "La descripción no puede superar los 300 caracteres"),
+  phone: z.string().trim().regex(PHONE_PATTERN, "Ingresa un teléfono válido, ej. +56 9 1234 5678"),
+});
+
+const menuName = z
+  .string()
+  .trim()
+  .min(1, "Ingresa un nombre")
+  .max(MENU_LIMITS.nameMax, `El nombre no puede superar los ${MENU_LIMITS.nameMax} caracteres`);
+
+const menuDescription = z
+  .string()
+  .trim()
+  .max(MENU_LIMITS.descriptionMax, `La descripción no puede superar los ${MENU_LIMITS.descriptionMax} caracteres`);
+
+/** Price typed by the owner ("3.990" or "3990"); converted with parsePriceInput on submit. */
+const priceText = (emptyMessage: string) =>
+  z.string().superRefine((value, ctx) => {
+    if (value.trim() === "") {
+      ctx.addIssue({ code: "custom", message: emptyMessage });
+      return;
+    }
+    const amount = parsePriceInput(value);
+    if (amount === null) ctx.addIssue({ code: "custom", message: "Usa solo números, ej. 3.990" });
+    else if (amount > MENU_LIMITS.priceMax) {
+      ctx.addIssue({ code: "custom", message: `El máximo es ${MENU_LIMITS.priceMax.toLocaleString("es-CL")}` });
+    }
+  });
+
+export const categorySchema = z.object({ name: menuName, description: menuDescription, active: z.boolean() });
+
+export const productSchema = z.object({
+  categoryId: z.string().min(1, "Elige una categoría"),
+  name: menuName,
+  description: menuDescription,
+  price: priceText("Ingresa el precio"),
+  visible: z.boolean(),
+  modifierGroupIds: z
+    .array(z.string())
+    .max(MENU_LIMITS.groupsPerProductMax, `Un producto puede tener hasta ${MENU_LIMITS.groupsPerProductMax} grupos`),
+});
+
+const selectCount = (min: number) =>
+  z
+    .number({ error: "Ingresa un número" })
+    .int("Usa un número entero")
+    .min(min, `El mínimo es ${min}`)
+    .max(MENU_LIMITS.optionsPerGroupMax, `El máximo es ${MENU_LIMITS.optionsPerGroupMax}`);
+
+export const modifierGroupSchema = z
+  .object({
+    name: menuName,
+    minSelect: selectCount(0),
+    maxSelect: selectCount(1),
+    options: z
+      .array(
+        z.object({
+          /** Present for options that already exist, so the api keeps their id. */
+          optionId: z.string().optional(),
+          name: menuName,
+          priceDelta: priceText("Ingresa el valor extra (0 si no cuesta más)"),
+          available: z.boolean(),
+        }),
+      )
+      .min(1, "Agrega al menos una opción")
+      .max(MENU_LIMITS.optionsPerGroupMax, `Un grupo puede tener hasta ${MENU_LIMITS.optionsPerGroupMax} opciones`),
+  })
+  .superRefine((group, ctx) => {
+    if (!Number.isInteger(group.minSelect) || !Number.isInteger(group.maxSelect)) return;
+    const problem = modifierRulesProblem(group.minSelect, group.maxSelect, group.options.length);
+    if (problem) ctx.addIssue({ code: "custom", path: ["maxSelect"], message: problem });
+  });
+
 export type LoginValues = z.infer<typeof loginSchema>;
 export type RegisterValues = z.infer<typeof registerSchema>;
 export type ForgotPasswordValues = z.infer<typeof forgotPasswordSchema>;
 export type ResetPasswordValues = z.infer<typeof resetPasswordSchema>;
 export type RestaurantValues = z.infer<typeof restaurantSchema>;
 export type InviteValues = z.infer<typeof inviteSchema>;
+export type RestaurantProfileValues = z.infer<typeof restaurantProfileSchema>;
+export type CategoryValues = z.infer<typeof categorySchema>;
+export type ProductValues = z.infer<typeof productSchema>;
+export type ModifierGroupValues = z.infer<typeof modifierGroupSchema>;

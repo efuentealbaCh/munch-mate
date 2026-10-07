@@ -45,8 +45,11 @@ export function parseApiError(status: number, body: unknown): ApiError {
 const NO_REFRESH_PATHS = new Set(["/auth/login", "/auth/register", "/auth/refresh", "/auth/logout"]);
 
 export interface RequestOptions {
-  method?: "GET" | "POST" | "PATCH" | "DELETE";
-  /** Serialized as JSON. */
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  /**
+   * Serialized as JSON, except `FormData`, which is sent as multipart/form-data (file uploads). FormData can
+   * be sent twice, so the refresh-and-retry logic works for uploads too.
+   */
   body?: unknown;
   signal?: AbortSignal;
 }
@@ -91,12 +94,15 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
   let refreshing: Promise<UserProfile | null> | null = null;
 
   async function send(path: string, { method = "GET", body, signal }: RequestOptions): Promise<Response> {
+    // No Content-Type for multipart: fetch sets it with the boundary.
+    const multipart = typeof FormData !== "undefined" && body instanceof FormData;
+    const json = body !== undefined && !multipart;
     try {
       return await doFetch(`${baseUrl}${path}`, {
         method,
         credentials: "same-origin",
-        headers: body === undefined ? { Accept: "application/json" } : { Accept: "application/json", "Content-Type": "application/json" },
-        body: body === undefined ? undefined : JSON.stringify(body),
+        headers: json ? { Accept: "application/json", "Content-Type": "application/json" } : { Accept: "application/json" },
+        body: multipart ? (body as FormData) : json ? JSON.stringify(body) : undefined,
         signal,
       });
     } catch (error) {

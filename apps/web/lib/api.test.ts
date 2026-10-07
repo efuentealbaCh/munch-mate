@@ -192,4 +192,27 @@ describe("api client", () => {
     await expect(client.refreshSession()).resolves.toBeNull();
     await expect(client.refreshSession()).resolves.toEqual(PROFILE);
   });
+
+  it("sends FormData as multipart (no JSON Content-Type) and resends it after a refresh", async () => {
+    const bodies: unknown[] = [];
+    const headers: Array<Record<string, string>> = [];
+    const responses = [unauthenticated, () => json(200, { id: "p1" })];
+    const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === "/api/auth/refresh") return json(200, PROFILE);
+      bodies.push(init?.body);
+      headers.push(init?.headers as Record<string, string>);
+      const next = responses.shift();
+      if (!next) throw new Error("unexpected call");
+      return next();
+    }) as unknown as typeof globalThis.fetch;
+    const client = createApiClient({ fetch, sleep: noSleep });
+    const form = new FormData();
+    form.append("file", new Blob(["x"], { type: "image/jpeg" }), "foto.jpg");
+
+    await expect(client.request("/restaurants/r1/menu/products/p1/image", { method: "PUT", body: form })).resolves.toEqual({
+      id: "p1",
+    });
+    expect(bodies).toEqual([form, form]);
+    for (const sent of headers) expect(sent).toEqual({ Accept: "application/json" });
+  });
 });

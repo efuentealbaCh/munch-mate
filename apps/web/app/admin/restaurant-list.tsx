@@ -3,6 +3,7 @@
 import { ChevronRightIcon, PlusIcon, StoreIcon } from "lucide-react";
 import Link from "next/link";
 import { FormError } from "@/components/form-error";
+import { RestaurantLogo } from "@/components/restaurant-logo";
 import { RoleBadges } from "@/components/role-badges";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -49,9 +50,7 @@ export function RestaurantList() {
                 href={`/admin/${restaurant.id}`}
                 className="group flex h-full items-start gap-4 rounded-xl bg-card p-5 ring-1 ring-foreground/10 transition-shadow outline-none hover:shadow-md hover:ring-primary/30 focus-visible:ring-3 focus-visible:ring-ring/50"
               >
-                <span className="flex size-11 shrink-0 items-center justify-center rounded-lg bg-brand-soft text-brand-soft-foreground" aria-hidden>
-                  <StoreIcon className="size-5" />
-                </span>
+                <RestaurantLogo logo={restaurant.logo} />
                 <span className="flex min-w-0 flex-1 flex-col gap-2">
                   <span className="flex items-center gap-2">
                     <span className="truncate text-base font-semibold">{restaurant.name}</span>

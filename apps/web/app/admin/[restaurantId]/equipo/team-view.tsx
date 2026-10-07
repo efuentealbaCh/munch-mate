@@ -1,9 +1,7 @@
 "use client";
 
-import { LockIcon } from "lucide-react";
-import Link from "next/link";
 import { useCallback } from "react";
-import { Button } from "@/components/ui/button";
+import { AccessDenied } from "@/components/access-denied";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useApiQuery } from "@/hooks/use-api-query";
 import { teamApi } from "@/lib/endpoints";
@@ -16,7 +14,14 @@ const CARD_SPACING = "[--card-spacing:--spacing(5)] sm:[--card-spacing:--spacing
 
 export function TeamView() {
   const { restaurant, isOwner } = useRestaurant();
-  if (!isOwner) return <OwnersOnly restaurantId={restaurant.id} />;
+  if (!isOwner) {
+    return (
+      <AccessDenied
+        restaurantId={restaurant.id}
+        description="Solo los dueños del restaurante pueden administrar el equipo."
+      />
+    );
+  }
   return <OwnerTeam restaurantId={restaurant.id} />;
 }
 
@@ -60,21 +65,6 @@ function OwnerTeam({ restaurantId }: { restaurantId: string }) {
           </CardContent>
         </Card>
       </div>
-    </div>
-  );
-}
-
-function OwnersOnly({ restaurantId }: { restaurantId: string }) {
-  return (
-    <div className="flex flex-col items-center gap-4 rounded-xl border border-dashed bg-card px-6 py-12 text-center" role="status">
-      <LockIcon className="size-8 text-muted-foreground" aria-hidden />
-      <div className="flex flex-col gap-1">
-        <h2 className="text-lg font-semibold">Solo para dueños</h2>
-        <p className="text-sm text-muted-foreground">Solo los dueños del restaurante pueden administrar el equipo.</p>
-      </div>
-      <Button asChild variant="outline">
-        <Link href={`/admin/${restaurantId}`}>Volver al resumen</Link>
-      </Button>
     </div>
   );
 }
