@@ -20,6 +20,7 @@
     "stack:up": "docker compose -f compose.yaml -f compose.prod.yaml -f compose.local.yaml up -d --build --wait",
     "stack:init": "sh infra/scripts/garage-init.sh compose.yaml compose.prod.yaml compose.local.yaml",
     "stack:down": "docker compose -f compose.yaml -f compose.prod.yaml -f compose.local.yaml down",
-    "smoke": "sh infra/scripts/smoke.sh"
+    "smoke": "sh infra/scripts/smoke.sh",
+    "seed:demo": "node infra/scripts/seed-demo.mjs"
   }
 }

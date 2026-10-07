@@ -53,3 +53,15 @@ fi
 # 4. Permissions (idempotent).
 garage bucket allow --read --write --owner "$S3_BUCKET" --key "$S3_ACCESS_KEY_ID" > /dev/null
 echo "✓ key has read/write/owner on $S3_BUCKET"
+
+# 5. Public media bucket (menu photos, logos): readable by anyone through the website endpoint only.
+MEDIA_BUCKET="${S3_MEDIA_BUCKET:-munchmate-media}"
+if garage bucket info "$MEDIA_BUCKET" > /dev/null 2>&1; then
+  echo "• bucket $MEDIA_BUCKET already exists"
+else
+  garage bucket create "$MEDIA_BUCKET" > /dev/null
+  echo "✓ bucket $MEDIA_BUCKET created"
+fi
+garage bucket website --allow "$MEDIA_BUCKET" > /dev/null
+garage bucket allow --read --write --owner "$MEDIA_BUCKET" --key "$S3_ACCESS_KEY_ID" > /dev/null
+echo "✓ $MEDIA_BUCKET is public (website) and writable by the app key"

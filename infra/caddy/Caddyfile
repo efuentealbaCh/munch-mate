@@ -14,6 +14,19 @@
 	}
 }
 
+# Public media (menu photos, logos): Garage's read-only website endpoint for the media bucket only.
+# Garage chooses the bucket from the Host header, so it is rewritten to "<bucket>.<root_domain>"
+# (root_domain from infra/garage/garage.toml). Objects are immutable: their keys change on every upload.
+media.{$DOMAIN} {
+	@read method GET HEAD
+	handle @read {
+		reverse_proxy garage:3902 {
+			header_up Host {$S3_MEDIA_BUCKET}.web.garage.localhost
+		}
+	}
+	respond 405
+}
+
 # S3 endpoint for presigned URLs only. Buckets are private: every request needs a valid signature.
 s3.{$DOMAIN} {
 	reverse_proxy garage:3900

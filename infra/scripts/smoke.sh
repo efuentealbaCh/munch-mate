@@ -23,7 +23,9 @@ if [ "$DOMAIN" = "localhost" ]; then
   COMPOSE="$COMPOSE -f compose.local.yaml"
   EXPECTED_SERVICES="$EXPECTED_SERVICES mailpit"
   # Caddy's internal CA is not trusted by the host, and s3.localhost may not resolve.
-  CURL="$CURL -k --resolve s3.localhost:443:127.0.0.1"
+  # -4: Docker Desktop on Windows intermittently hangs connections forwarded over IPv6 (::1), and curl
+  # tries ::1 first for localhost.
+  CURL="$CURL -4 -k --resolve s3.localhost:443:127.0.0.1 --resolve media.localhost:443:127.0.0.1"
 fi
 SIGNED="--aws-sigv4 aws:amz:$S3_REGION:s3 --user $S3_ACCESS_KEY_ID:$S3_SECRET_ACCESS_KEY -H x-amz-content-sha256:UNSIGNED-PAYLOAD"
 
@@ -110,6 +112,17 @@ esac
 code=$(status -H "Origin: https://evil.example" -H "Content-Type: application/json" -d '{}' "$BASE/api/auth/login")
 if [ "$code" = "403" ]; then pass "cross-origin POST rejected (403)"; else fail "cross-origin POST returned $code"; fi
 
+# Phase 2, safe everywhere: public menu routing and the read-only media host.
+body=$($CURL "$BASE/api/public/restaurants/smoke-no-existe/menu" || true)
+case "$body" in
+  *'"MENU_NOT_FOUND"'*) pass "unknown public menu → 404" ;;
+  *) fail "unknown public menu: $body" ;;
+esac
+code=$(status "https://media.$DOMAIN/smoke-no-existe.webp")
+if [ "$code" = "404" ]; then pass "media host answers (404 for unknown file)"; else fail "media host returned $code"; fi
+code=$(status -X POST "https://media.$DOMAIN/x")
+if [ "$code" = "405" ]; then pass "media host is read-only (405)"; else fail "media POST returned $code"; fi
+
 # 8. Full registration flow — local stack only (creates a user and sends an email to Mailpit).
 if [ "$LOCAL" = true ]; then
   jar=$(mktemp)
@@ -172,6 +185,37 @@ if [ "$LOCAL" = true ]; then
 
   code=$(status "$BASE/api/restaurants/$restaurant_id")
   if [ "$code" = "401" ]; then pass "restaurant requires a session (401)"; else fail "anonymous restaurant read returned $code"; fi
+
+  # Phase 2: build a one-product menu with a photo and read it back publicly.
+  slug=$(printf '%s' "$body" | sed -n 's/.*"slug":"\([a-z0-9-]*\)".*/\1/p')
+  menu="$BASE/api/restaurants/$restaurant_id/menu"
+  category_id=$($CURL -b "$jar" -H "Origin: $BASE" -H "Content-Type: application/json" \
+    -d '{"name":"Smoke"}' "$menu/categories" | sed -n 's/.*"id":"\([0-9a-f]\{24\}\)".*/\1/p')
+  product_id=$($CURL -b "$jar" -H "Origin: $BASE" -H "Content-Type: application/json" \
+    -d "{\"categoryId\":\"$category_id\",\"name\":\"Smoke Completo\",\"price\":3990}" "$menu/products" |
+    sed -n 's/.*"id":"\([0-9a-f]\{24\}\)".*/\1/p')
+  if [ -n "$product_id" ]; then pass "category and product created"; else fail "could not create category/product"; fi
+
+  # Relative path on purpose: Git Bash does not translate "/tmp/..." inside curl -F "file=@...".
+  image=".smoke-photo-$$.jpg"
+  # 240x240 JPEG, embedded so the smoke test needs no image tools.
+  printf '%s' '/9j/2wBDAA0JCgsKCA0LCgsODg0PEyAVExISEyccHhcgLikxMC4pLSwzOko+MzZGNywtQFdBRkxOUlNSMj5aYVpQYEpRUk//2wBDAQ4ODhMREyYVFSZPNS01T09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT0//wAARCADwAPADASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFgEBAQEAAAAAAAAAAAAAAAAAAAUG/8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAwDAQACEQMRAD8AmgIjTgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP/Z' |
+    base64 -d > "$image"
+  body=$($CURL -b "$jar" -H "Origin: $BASE" -X PUT -F "file=@$image;type=image/jpeg" "$menu/products/$product_id/image" || true)
+  photo_url=$(printf '%s' "$body" | sed -n 's/.*"md":"\([^"]*\)".*/\1/p')
+  case "$photo_url" in
+    "https://media.$DOMAIN/"*-md.webp) pass "photo uploaded and re-encoded" ;;
+    *) fail "photo upload: $body" ;;
+  esac
+  content_type=$($CURL -o /dev/null -w '%{content_type}' "$photo_url" || true)
+  if [ "$content_type" = "image/webp" ]; then pass "photo served publicly by media host"; else fail "photo fetch content-type '$content_type'"; fi
+
+  if $CURL "$BASE/api/public/restaurants/$slug/menu" | grep -q '"Smoke Completo"'; then
+    pass "public menu shows the product"
+  else
+    fail "public menu for $slug does not show the product"
+  fi
+  rm -f "$image"
   rm -f "$jar" "$headers"
 fi
 

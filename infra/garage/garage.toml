@@ -17,3 +17,12 @@ api_bind_addr = "[::]:3900"
 
 [admin]
 api_bind_addr = "[::]:3903"
+
+# Public, read-only website endpoint for the media bucket (menu photos, logos).
+# Garage picks the bucket from the Host header: "<bucket><root_domain>". A *.localhost root domain
+# resolves to 127.0.0.1 in browsers, so the same config works in dev (port 3902 published) and behind
+# Caddy in prod (which rewrites Host, see infra/caddy/Caddyfile).
+[s3_web]
+bind_addr = "[::]:3902"
+root_domain = ".web.garage.localhost"
+index = "index.html"

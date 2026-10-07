@@ -96,14 +96,15 @@ pending ──► accepted ──► preparing ──► ready ──┬──�
 
 | Colección | Tenant | Campos clave |
 | --- | --- | --- |
-| `restaurants` | — | `slug` (único), `name`, `currency`, `timezone`, `status`, `createdBy`, `membershipVersion` ✅ · pendientes: `logoKey`, `openingHours` |
+| `restaurants` | — | `slug` (único), `name`, `description`, `phone`, `logoKey`, `currency`, `timezone`, `status`, `createdBy`, `membershipVersion` ✅ · pendiente: `openingHours` (fase 3) |
 | `users` | — | `email` (único), `passwordHash`, `name`, `emailVerifiedAt`, `platformRole?` ✅ |
 | `sessions` | — | `userId`, `familyId`, `tokenHash`, `expiresAt`, `rotatedAt`, `revokedAt` ✅ |
 | `one_time_tokens` | — | `type` (`verify_email` / `password_reset`), `tokenHash`, `userId`, `expiresAt`, `usedAt` ✅ |
 | `memberships` | ✔ | `userId`, `restaurantId`, `roles[]` (`owner`, `cashier`, `kitchen`, `rider`) ✅ |
 | `invitations` | ✔ | `email`, `roles[]`, `tokenHash`, `invitedBy`, `expiresAt`, `acceptedAt`, `revokedAt` ✅ |
-| `menu_categories` | ✔ | `name`, `position`, `active` |
-| `products` | ✔ | `categoryId`, `name`, `description`, `price`, `imageKey`, `available`, `modifierGroups[]` (embebidos) |
+| `menu_categories` | ✔ | `name`, `description`, `position`, `active` ✅ |
+| `products` | ✔ | `categoryId`, `name`, `description`, `price`, `imageKey`, `available` (agotado), `visible`, `modifierGroupIds[]`, `position` ✅ |
+| `modifier_groups` | ✔ | `name`, `minSelect`, `maxSelect`, `options[]` (`name`, `priceDelta`, `available`) — biblioteca reutilizable entre productos ✅ |
 | `tables` | ✔ | `label`, `token` (único, va en el QR), `active` |
 | `delivery_zones` | ✔ | `name`, `fee`, `minOrder`, `active` |
 | `orders` | ✔ | `number` (global por restaurante), `ticketNumber` (diario), `businessDate`, `channel`, `status`, `statusHistory[]`, `paymentStatus`, `paymentMethod`, `items[]` (snapshot), `subtotal`, `deliveryFee`, `total`, `customer` (snapshot), `customerId?`, `tableId?`, `delivery?`, `riderId?`, `accessToken` |

@@ -17,6 +17,9 @@ Domain rules that always apply:
 - **Tenant isolation**: every tenant-scoped collection has `restaurantId`, and repositories always filter by it (it is the first parameter of every tenant-scoped repository method). Never trust a `restaurantId` sent by the client — take it from the authenticated membership or the resolved public slug.
 - **Tenant routes** live under `/api/restaurants/:restaurantId/...` and use `@UseGuards(RestaurantAccessGuard)` (+ `@RestaurantRoles(...)` when only some roles may act); handlers read the tenant with `@CurrentTenant()`. Non-members get **404** `RESTAURANT_NOT_FOUND` (never 403), so other tenants cannot be probed; members without the role get 403 `FORBIDDEN_ROLE`; suspended restaurants are read-only.
 - **A restaurant always has at least one owner.** Any change to memberships goes through `MembersService` (transaction + `membershipVersion` bump, which prevents two owners demoting each other at once).
+- **Menu permissions**: reading the admin menu → any member; marking products/options "agotado" (`available`) → owner, cashier, kitchen; everything else (prices, names, photos, categories, modifier groups, order) → owner only.
+- **Modifier groups are a reusable library**: products reference them by id (`modifierGroupIds`, in display order); editing a group affects every product using it. References to categories or groups must belong to the same restaurant (rejected with 400 otherwise). Options keep their ids across edits.
+- **Two flags on products**: `available=false` = "Agotado" (shown, not orderable); `visible=false` = hidden from the public menu. Categories have `active`. The public menu (`GET /api/public/restaurants/:slug/menu`) only shows active categories, visible products and non-empty categories.
 - **Money as integers** in the currency's minor unit, always stored with `currency`. Never use floating point for amounts.
 - **Order items are price snapshots**; the server computes all totals from current product data — clients only send IDs and quantities.
 - **Order status changes go through the state machine** (invalid transition → 409) and are recorded in `statusHistory`.
@@ -66,6 +69,7 @@ When bumping an image version, update it in `compose.yaml` **and** in the Testco
 - **BullMQ 6** no longer exposes `worker.client`; health checks use their own ioredis connection.
 - **Git Bash on Windows** rewrites absolute paths passed to containers (`/garage` → `C:/Program Files/Git/garage`). Shell scripts export `MSYS_NO_PATHCONV=1`. Run the `infra/scripts/*.sh` (and the pnpm scripts that call them) from Git Bash, WSL or Linux.
 - ioredis `quit()` never resolves while Valkey is unreachable: shutdown code must `disconnect()` when the client is not `ready`.
+- **Docker Desktop on Windows intermittently hangs/resets connections forwarded over IPv6 (`::1`)**, and `localhost` resolves to `::1` first. Everything that talks to local containers forces IPv4: Jest `setupFiles` (`ipv4-first.js`, `dns.setDefaultResultOrder("ipv4first")`), `curl -4` in `smoke.sh`, `--host-resolver-rules` in the Playwright config. Not an issue on Linux.
 
 ---
 
@@ -359,9 +363,19 @@ const s3 = new S3Client({
 
 ### Storage rules
 
-- Buckets are private. Clients upload/download through **presigned URLs**, signed against `S3_PUBLIC_ENDPOINT` (`https://s3.<domain>`), not the internal one.
-- First-time setup (`infra/scripts/garage-init.sh`): assign the layout, create the bucket and the app key, and grant it read/write on the bucket. Run once per environment.
-- Store only object keys in MongoDB, never full URLs.
+Two buckets:
+
+| Bucket | Access | Content |
+| ------ | ------ | ------- |
+| `S3_BUCKET` (`munchmate`) | **Private**: only signed requests (presigned URLs via `s3.<domain>` when clients need them) | PDFs and anything not public (phase 3+) |
+| `S3_MEDIA_BUCKET` (`munchmate-media`) | **Public read** through Garage's website endpoint, served at `media.<domain>` (Caddy rewrites the Host to `<bucket>.web.garage.localhost`); read-only (405 on writes) | Menu photos, logos |
+
+- **Images are uploaded through the api, never directly to Garage**: multipart field `file`, max 8 MB (`MENU_LIMITS`), re-encoded by `infra/storage/image-processor.ts` (sharp) to WebP variants. Re-encoding strips EXIF/GPS metadata, applies orientation, validates the real bytes (the client's content type is ignored) and limits pixels (decompression bombs). Products: 4:3 `sm/md/lg` (160/480/960 px); logos: square `sm/md` (96/256 px, letterboxed).
+- Use `MediaService` (`storeImage` / `deleteImage` / `productImage` / `logoImage`): it stores `<prefix>/<random id>-<variant>.webp` and the document keeps only the base key. Every upload gets a new random id, so objects are **immutable** and served with `Cache-Control: public, max-age=31536000, immutable`. Deleting old variants is best effort (logged, never fails the request).
+- Key prefixes are tenant-scoped: `restaurants/<restaurantId>/products/<productId>/…`, `restaurants/<restaurantId>/logo/…`.
+- Store only object keys in MongoDB, never full URLs; URLs are built with `MEDIA_PUBLIC_URL`.
+- In dev, media is served at `http://munchmate-media.web.garage.localhost:3902` (browsers resolve `*.localhost`; Node may not — tests connect to 127.0.0.1 with the Host header, see `apps/api/test/support/garage.ts`).
+- First-time setup (`infra/scripts/garage-init.sh`, idempotent): layout, app key, private bucket, public media bucket (website enabled).
 
 ---
 
@@ -437,9 +451,10 @@ MONGODB_URI
 VALKEY_URL          redis://:password@valkey:6379
 APP_URL             https://<domain> (http://localhost:3100 in dev) — email links, CSRF origin, cookie Secure flag
 JWT_ACCESS_SECRET   ≥ 32 chars
-S3_ENDPOINT         http://garage:3900            (phase 2)
-S3_PUBLIC_ENDPOINT  https://s3.<domain>           (phase 2)
-S3_REGION / S3_BUCKET / S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY   (phase 2)
+S3_ENDPOINT         http://garage:3900 (http://localhost:3900 in dev)
+S3_REGION / S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY
+S3_MEDIA_BUCKET     public media bucket (munchmate-media)
+MEDIA_PUBLIC_URL    https://media.<domain> (dev: http://munchmate-media.web.garage.localhost:3902)
 ```
 
 ### workers
@@ -501,6 +516,7 @@ pnpm test:web            # Playwright browser flows — needs `pnpm stack:up` ru
 pnpm stack:up            # compose.yaml + compose.prod.yaml + compose.local.yaml (Mailpit), DOMAIN=localhost, builds images
 pnpm stack:init          # same as infra:init, for this stack (needed only on fresh volumes)
 pnpm smoke               # infra/scripts/smoke.sh against https://localhost
+pnpm seed:demo           # 3 demo restaurants with full menus and photos (demo@munchmate.local / "munchmate demo 2026"); idempotent
 pnpm stack:down
 
 # Deploy (from main, after CI pushed the images)
@@ -534,6 +550,7 @@ The goal: **anything that passes the release gate locally can be deployed to the
   - Phase 0 (implemented): every service healthy, HTTP→HTTPS redirect, web served, `/api/health` ok, `/api/*` routed to the api, signed S3 upload/download through `s3.<domain>`, anonymous S3 access denied, `system:ping` job round trip inside the workers container.
   - Phase 1a (implemented): protected route without session → 401, unknown login → 401, cross-origin POST → 403. **Local stack only** (`DOMAIN=localhost`, creates data): register through Caddy, `Secure`+`HttpOnly` session cookie, cookie authenticates `/me`, verification email delivered to Mailpit.
   - Phase 1b (implemented, local only): verify the email with the token read from Mailpit, create a restaurant (generated slug, owner role), invite staff and receive the invitation email, anonymous access to the restaurant → 401.
+  - Phase 2 (implemented): unknown public menu → 404, media host answers and is read-only (405). Local only: create category + product, upload a photo (re-encoded, served by `media.<domain>` as `image/webp`), public menu shows the product.
   - Non-ASCII text in smoke requests must be written as JSON escapes (`\u00e1`): Git Bash on Windows passes non-ASCII arguments to curl in the console code page.
   - On the VPS the smoke test must never create users or send real emails.
 - Registration is rate-limited to 5/min per IP. `pnpm smoke` registers 1 user and `pnpm test:web` 4: running both plus manual tests within the same minute hits 429 — wait a minute between heavy runs.
