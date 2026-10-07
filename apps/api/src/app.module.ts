@@ -11,10 +11,12 @@ import { OriginGuard } from "./common/security/origin.guard";
 import { type ApiEnv, envValidationSchema } from "./config/env.validation";
 import { QueueModule } from "./infra/queue/queue.module";
 import { RedisModule, VALKEY } from "./infra/redis/redis.module";
+import { StorageModule } from "./infra/storage/storage.module";
 import { ValkeyThrottlerStorage } from "./infra/redis/valkey-throttler.storage";
 import { AccessTokenGuard } from "./modules/auth/access-token.guard";
 import { AuthModule } from "./modules/auth/auth.module";
 import { HealthModule } from "./modules/health/health.module";
+import { MenuModule } from "./modules/menu/menu.module";
 import { RestaurantsModule } from "./modules/restaurants/restaurants.module";
 
 @Module({
@@ -60,6 +62,7 @@ import { RestaurantsModule } from "./modules/restaurants/restaurants.module";
     }),
     RedisModule,
     QueueModule,
+    StorageModule,
     ThrottlerModule.forRootAsync({
       inject: [VALKEY],
       useFactory: (valkey: Redis) => ({
@@ -71,6 +74,7 @@ import { RestaurantsModule } from "./modules/restaurants/restaurants.module";
     HealthModule,
     AuthModule,
     RestaurantsModule,
+    MenuModule,
   ],
   providers: [
     // Global guards run in this order: rate limit → CSRF origin check → session.

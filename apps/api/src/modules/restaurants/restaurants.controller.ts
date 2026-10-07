@@ -1,6 +1,7 @@
 import type { RestaurantView, SlugAvailability } from "@app/types";
-import { Body, Controller, Get, Patch, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Patch, Post, Put, Query, UploadedFile, UseGuards } from "@nestjs/common";
 import { Throttle } from "@nestjs/throttler";
+import { ImageUpload, requireImage, type UploadedImageFile } from "../../common/upload/image-upload";
 import type { AuthUser } from "../auth/auth.types";
 import { CurrentUser } from "../auth/decorators";
 import { VerifiedEmailGuard } from "../auth/verified-email.guard";
@@ -47,5 +48,25 @@ export class RestaurantsController {
   @RestaurantRoles("owner")
   update(@CurrentTenant() tenant: TenantContext, @Body() dto: UpdateRestaurantDto): Promise<RestaurantView> {
     return this.restaurants.update(tenant, dto);
+  }
+
+  /** Multipart upload, field `file`. Re-encoded to square WebP (see image-processor). */
+  @Put(":restaurantId/logo")
+  @UseGuards(RestaurantAccessGuard)
+  @RestaurantRoles("owner")
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @ImageUpload()
+  setLogo(
+    @CurrentTenant() tenant: TenantContext,
+    @UploadedFile() file: UploadedImageFile | undefined,
+  ): Promise<RestaurantView> {
+    return this.restaurants.setLogo(tenant, requireImage(file));
+  }
+
+  @Delete(":restaurantId/logo")
+  @UseGuards(RestaurantAccessGuard)
+  @RestaurantRoles("owner")
+  removeLogo(@CurrentTenant() tenant: TenantContext): Promise<RestaurantView> {
+    return this.restaurants.removeLogo(tenant);
   }
 }

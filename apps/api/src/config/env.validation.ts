@@ -11,6 +11,16 @@ export const envValidationSchema = z.object({
   APP_URL: z.url({ protocol: /^https?$/ }).transform((url) => url.replace(/\/+$/, "")),
   /** HS256 secret for access tokens. Rotating it logs every user out within 15 minutes. */
   JWT_ACCESS_SECRET: z.string().min(32, "must be at least 32 characters"),
+
+  // Object storage (Garage, S3-compatible).
+  S3_ENDPOINT: z.url({ protocol: /^https?$/ }),
+  S3_REGION: z.string().min(1),
+  S3_ACCESS_KEY_ID: z.string().min(1),
+  S3_SECRET_ACCESS_KEY: z.string().min(1),
+  /** Public bucket served by Garage's website endpoint (menu photos, logos). */
+  S3_MEDIA_BUCKET: z.string().min(3),
+  /** Base URL browsers load media from; object keys are appended to it. */
+  MEDIA_PUBLIC_URL: z.url({ protocol: /^https?$/ }).transform((url) => url.replace(/\/+$/, "")),
 });
 
 export type ApiEnv = z.infer<typeof envValidationSchema>;

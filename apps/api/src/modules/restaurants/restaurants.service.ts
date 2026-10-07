@@ -4,10 +4,16 @@ import { ConflictException, Injectable, NotFoundException } from "@nestjs/common
 import { InjectConnection } from "@nestjs/mongoose";
 import type { Connection } from "mongoose";
 import { apiError } from "../../common/errors/api-error";
+import { MediaService } from "../../infra/storage/media.service";
 import { MembershipsRepository } from "./memberships.repository";
 import type { TenantContext } from "./restaurant-access.guard";
 import { normalizeRequestedSlug, toRestaurantView } from "./restaurant.views";
-import { type RestaurantRecord, RestaurantsRepository, SlugTakenError } from "./restaurants.repository";
+import {
+  type RestaurantChanges,
+  type RestaurantRecord,
+  RestaurantsRepository,
+  SlugTakenError,
+} from "./restaurants.repository";
 
 /** Attempts to grab a generated slug before giving up, in case concurrent creations race for it. */
 const MAX_SLUG_ATTEMPTS = 5;
@@ -23,6 +29,7 @@ export class RestaurantsService {
     private readonly restaurants: RestaurantsRepository,
     private readonly memberships: MembershipsRepository,
     @InjectConnection() private readonly connection: Connection,
+    private readonly media: MediaService,
   ) {}
 
   /**
@@ -60,31 +67,54 @@ export class RestaurantsService {
     const byId = new Map(restaurants.map((r) => [r.id, r]));
     return memberships.flatMap((m) => {
       const restaurant = byId.get(m.restaurantId);
-      return restaurant ? [toRestaurantView(restaurant, m.roles)] : [];
+      return restaurant ? [toRestaurantView(restaurant, m.roles, this.media)] : [];
     });
   }
 
   async get(tenant: TenantContext): Promise<RestaurantView> {
-    return toRestaurantView(await this.load(tenant.restaurantId), tenant.roles);
+    return toRestaurantView(await this.load(tenant.restaurantId), tenant.roles, this.media);
   }
 
   /**
-   * Renames or changes the slug. A slug change breaks links already shared, so the UI must warn first.
+   * Updates the profile. A slug change breaks links already shared, so the UI must warn first.
    * @throws BadRequestException INVALID_SLUG, ConflictException SLUG_TAKEN.
    */
-  async update(tenant: TenantContext, changes: { name?: string; slug?: string }): Promise<RestaurantView> {
-    const update: { name?: string; slug?: string } = {};
+  async update(tenant: TenantContext, changes: RestaurantChanges): Promise<RestaurantView> {
+    const update: RestaurantChanges = {};
     if (changes.name !== undefined) update.name = changes.name;
+    if (changes.description !== undefined) update.description = changes.description;
+    if (changes.phone !== undefined) update.phone = changes.phone;
     if (changes.slug !== undefined) update.slug = normalizeRequestedSlug(changes.slug);
 
     try {
       const updated = await this.restaurants.update(tenant.restaurantId, update);
       if (!updated) throw notFound();
-      return toRestaurantView(updated, tenant.roles);
+      return toRestaurantView(updated, tenant.roles, this.media);
     } catch (error) {
       if (error instanceof SlugTakenError) throw slugTaken(await this.nextFreeSlug(error.slug));
       throw error;
     }
+  }
+
+  /**
+   * Replaces the logo with a processed upload and deletes the previous files.
+   * @throws UnprocessableEntityException INVALID_IMAGE.
+   */
+  async setLogo(tenant: TenantContext, file: Buffer): Promise<RestaurantView> {
+    const key = await this.media.storeImage("logo", `restaurants/${tenant.restaurantId}/logo`, file);
+    const previous = await this.restaurants.setLogoKey(tenant.restaurantId, key);
+    if (previous === undefined) {
+      await this.media.deleteImage("logo", key);
+      throw notFound();
+    }
+    await this.media.deleteImage("logo", previous);
+    return this.get(tenant);
+  }
+
+  async removeLogo(tenant: TenantContext): Promise<RestaurantView> {
+    const previous = await this.restaurants.setLogoKey(tenant.restaurantId, null);
+    await this.media.deleteImage("logo", previous ?? null);
+    return this.get(tenant);
   }
 
   /** Live check for the slug field of the create/edit forms. */
@@ -100,7 +130,7 @@ export class RestaurantsService {
     return this.connection.transaction(async (session) => {
       const restaurant = await this.restaurants.create({ name, slug, createdBy: ownerId }, session);
       await this.memberships.create(restaurant.id, ownerId, ["owner"], session);
-      return toRestaurantView(restaurant, ["owner"]);
+      return toRestaurantView(restaurant, ["owner"], this.media);
     });
   }
 

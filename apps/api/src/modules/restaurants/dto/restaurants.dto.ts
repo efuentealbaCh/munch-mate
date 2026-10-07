@@ -10,6 +10,7 @@ import {
   IsOptional,
   IsString,
   Length,
+  Matches,
   MaxLength,
 } from "class-validator";
 
@@ -39,6 +40,19 @@ export class UpdateRestaurantDto {
   @IsString()
   @Length(2, 100, NAME_MESSAGE)
   name?: string;
+
+  @IsOptional()
+  @Transform(trim)
+  @IsString()
+  @MaxLength(300, { message: "description no puede superar 300 caracteres" })
+  description?: string;
+
+  /** Empty string clears it. */
+  @IsOptional()
+  @Transform(trim)
+  @IsString()
+  @Matches(/^$|^\+?[0-9 ()-]{6,20}$/, { message: "phone debe ser un teléfono válido, ej. +56 9 1234 5678" })
+  phone?: string;
 
   @IsOptional()
   @IsString()

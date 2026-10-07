@@ -5,6 +5,12 @@ const validEnv = {
   VALKEY_URL: "redis://:pass@valkey:6379",
   APP_URL: "https://munchmate.cl",
   JWT_ACCESS_SECRET: "a".repeat(64),
+  S3_ENDPOINT: "http://garage:3900",
+  S3_REGION: "garage",
+  S3_ACCESS_KEY_ID: "GK123",
+  S3_SECRET_ACCESS_KEY: "secret",
+  S3_MEDIA_BUCKET: "munchmate-media",
+  MEDIA_PUBLIC_URL: "https://media.munchmate.cl/",
 };
 
 /** Returns the names of the variables that failed validation. */

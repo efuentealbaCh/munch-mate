@@ -6,6 +6,7 @@ import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { GenericContainer, type StartedTestContainer, Wait } from "testcontainers";
 import { configureApp } from "../../src/app.setup";
+import { type StartedGarage, startGarage } from "./garage";
 
 // Same images as compose.yaml, so tests run against the production versions.
 const MONGO_IMAGE = "mongo:8.0.32";
@@ -19,23 +20,25 @@ export interface TestContext {
   app: NestExpressApplication;
   mongo: StartedMongoDBContainer;
   valkey: StartedTestContainer;
+  garage: StartedGarage;
   valkeyUrl: string;
   /** Closes the app and stops the containers that are still running. */
   close(): Promise<void>;
 }
 
 /**
- * Starts MongoDB (replica set) and Valkey in Docker and boots the full AppModule against them,
+ * Starts MongoDB (replica set), Valkey and Garage in Docker and boots the full AppModule against them,
  * configured exactly like production through `configureApp`.
  */
 export async function createTestApp(): Promise<TestContext> {
-  const [mongo, valkey] = await Promise.all([
+  const [mongo, valkey, garage] = await Promise.all([
     new MongoDBContainer(MONGO_IMAGE).start(),
     new GenericContainer(VALKEY_IMAGE)
       .withCommand(["valkey-server", "--requirepass", VALKEY_PASSWORD, "--maxmemory-policy", "noeviction"])
       .withExposedPorts(6379)
       .withWaitStrategy(Wait.forLogMessage("Ready to accept connections"))
       .start(),
+    startGarage(),
   ]);
   const valkeyUrl = `redis://:${VALKEY_PASSWORD}@${valkey.getHost()}:${valkey.getMappedPort(6379)}`;
 
@@ -45,6 +48,7 @@ export async function createTestApp(): Promise<TestContext> {
   process.env.VALKEY_URL = valkeyUrl;
   process.env.APP_URL = TEST_APP_URL;
   process.env.JWT_ACCESS_SECRET = "test-secret-".padEnd(64, "x");
+  Object.assign(process.env, garage.env);
 
   // ConfigModule.forRoot() validates the environment when app.module is first loaded, so it must be
   // required only after the container URLs are in process.env.
@@ -58,10 +62,11 @@ export async function createTestApp(): Promise<TestContext> {
     app,
     mongo,
     valkey,
+    garage,
     valkeyUrl,
     async close() {
       await app.close();
-      await Promise.allSettled([mongo.stop(), valkey.stop()]);
+      await Promise.allSettled([mongo.stop(), valkey.stop(), garage.container.stop()]);
     },
   };
 }

@@ -12,6 +12,17 @@ export class Restaurant {
   @Prop({ required: true, unique: true })
   slug!: string;
 
+  /** Short text under the name in the public menu. */
+  @Prop({ default: "", trim: true, maxlength: 300 })
+  description!: string;
+
+  @Prop({ default: "", trim: true, maxlength: 20 })
+  phone!: string;
+
+  /** Base key of the logo in the media bucket (variants `<key>-<size>.webp`). */
+  @Prop({ type: String, default: null })
+  logoKey!: string | null;
+
   /** ISO 4217. Amounts are stored as integers in the currency's minor unit (CLP has none). */
   @Prop({ required: true, default: "CLP" })
   currency!: string;

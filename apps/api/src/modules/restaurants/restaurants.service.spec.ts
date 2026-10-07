@@ -1,7 +1,12 @@
 import type { Connection } from "mongoose";
+import type { MediaService } from "../../infra/storage/media.service";
+
 import type { MembershipsRepository } from "./memberships.repository";
 import { baseSlugFor, RestaurantsService } from "./restaurants.service";
 import { type RestaurantsRepository, SlugTakenError } from "./restaurants.repository";
+
+/** Views only need the logo URL builder. */
+const fakeMedia = { logoImage: () => null } as unknown as MediaService;
 
 describe("baseSlugFor", () => {
   it.each([
@@ -37,6 +42,7 @@ describe("RestaurantsService.create", () => {
       restaurants as unknown as RestaurantsRepository,
       memberships as unknown as MembershipsRepository,
       connection as unknown as Connection,
+      fakeMedia,
     );
     return { service, created, memberships };
   }
@@ -111,6 +117,7 @@ describe("RestaurantsService queries and updates", () => {
       restaurants as unknown as RestaurantsRepository,
       memberships as unknown as MembershipsRepository,
       {} as Connection,
+      fakeMedia,
     );
     return { service, restaurants };
   }

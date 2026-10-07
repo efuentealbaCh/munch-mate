@@ -11,6 +11,8 @@ const CODE_BY_STATUS: Partial<Record<number, string>> = {
   [HttpStatus.NOT_FOUND]: "NOT_FOUND",
   [HttpStatus.CONFLICT]: "CONFLICT",
   [HttpStatus.TOO_MANY_REQUESTS]: "RATE_LIMITED",
+  [HttpStatus.PAYLOAD_TOO_LARGE]: "FILE_TOO_LARGE",
+  [HttpStatus.UNPROCESSABLE_ENTITY]: "UNPROCESSABLE",
   [HttpStatus.SERVICE_UNAVAILABLE]: "SERVICE_UNAVAILABLE",
 };
 
@@ -49,6 +51,10 @@ export class HttpExceptionFilter implements ExceptionFilter {
 
 function toApiErrorBody(status: number, payload: string | object, fallbackMessage: string): ApiErrorBody {
   const fallbackCode = CODE_BY_STATUS[status] ?? "ERROR";
+  // Thrown by multer/body-parser with an English message; uploads are the realistic cause.
+  if (status === HttpStatus.PAYLOAD_TOO_LARGE) {
+    return { statusCode: status, code: fallbackCode, message: "El archivo supera el tamaño máximo permitido (8 MB)" };
+  }
   if (typeof payload === "string") {
     return { statusCode: status, code: fallbackCode, message: payload };
   }

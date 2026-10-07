@@ -2,13 +2,21 @@ import type { RestaurantRole, RestaurantView } from "@app/types";
 import { BadRequestException } from "@nestjs/common";
 import { type SlugProblem, slugProblem } from "@app/utils";
 import { apiError } from "../../common/errors/api-error";
+import type { MediaService } from "../../infra/storage/media.service";
 import type { RestaurantRecord } from "./restaurants.repository";
 
-export function toRestaurantView(restaurant: RestaurantRecord, myRoles: RestaurantRole[]): RestaurantView {
+export function toRestaurantView(
+  restaurant: RestaurantRecord,
+  myRoles: RestaurantRole[],
+  media: MediaService,
+): RestaurantView {
   return {
     id: restaurant.id,
     name: restaurant.name,
     slug: restaurant.slug,
+    description: restaurant.description,
+    phone: restaurant.phone,
+    logo: media.logoImage(restaurant.logoKey),
     currency: restaurant.currency,
     timezone: restaurant.timezone,
     status: restaurant.status,

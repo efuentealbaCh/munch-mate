@@ -8,10 +8,20 @@ export interface RestaurantRecord {
   id: string;
   name: string;
   slug: string;
+  description: string;
+  phone: string;
+  logoKey: string | null;
   currency: string;
   timezone: string;
   status: RestaurantStatus;
   createdBy: string;
+}
+
+export interface RestaurantChanges {
+  name?: string;
+  slug?: string;
+  description?: string;
+  phone?: string;
 }
 
 /** Thrown when the unique index on `slug` rejects a write. */
@@ -66,7 +76,23 @@ export class RestaurantsRepository {
   }
 
   /** @throws SlugTakenError when changing to a slug another restaurant uses. */
-  async update(id: string, changes: { name?: string; slug?: string }): Promise<RestaurantRecord | null> {
+  async findBySlug(slug: string): Promise<RestaurantRecord | null> {
+    const doc = await this.restaurants.findOne({ slug }).lean();
+    return doc ? toRecord(doc) : null;
+  }
+
+  /**
+   * Replaces the logo key atomically.
+   * @returns The previous key (to delete its files), or undefined if the restaurant does not exist.
+   */
+  async setLogoKey(id: string, logoKey: string | null): Promise<string | null | undefined> {
+    const previous = await this.restaurants
+      .findByIdAndUpdate(id, { $set: { logoKey } }, { returnDocument: "before" })
+      .lean();
+    return previous ? (previous.logoKey ?? null) : undefined;
+  }
+
+  async update(id: string, changes: RestaurantChanges): Promise<RestaurantRecord | null> {
     try {
       const doc = await this.restaurants
         .findByIdAndUpdate(id, { $set: changes }, { returnDocument: "after", runValidators: true })
@@ -97,6 +123,9 @@ function toRecord(doc: Restaurant & { _id: Types.ObjectId }): RestaurantRecord {
     id: doc._id.toString(),
     name: doc.name,
     slug: doc.slug,
+    description: doc.description ?? "",
+    phone: doc.phone ?? "",
+    logoKey: doc.logoKey ?? null,
     currency: doc.currency,
     timezone: doc.timezone,
     status: doc.status,

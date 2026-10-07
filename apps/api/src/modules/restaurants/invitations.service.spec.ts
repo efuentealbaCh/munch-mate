@@ -1,6 +1,8 @@
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import type { ConfigService } from "@nestjs/config";
 import type { Connection } from "mongoose";
+import type { MediaService } from "../../infra/storage/media.service";
+
 import { hashToken } from "../../common/crypto/tokens";
 import type { ApiEnv } from "../../config/env.validation";
 import type { EmailQueue } from "../../infra/queue/email.queue";
@@ -9,6 +11,9 @@ import type { InvitationsRepository } from "./invitations.repository";
 import { InvitationsService } from "./invitations.service";
 import type { MembershipsRepository } from "./memberships.repository";
 import type { RestaurantsRepository } from "./restaurants.repository";
+
+/** Views only need the logo URL builder. */
+const fakeMedia = { logoImage: () => null } as unknown as MediaService;
 
 const restaurant = { id: "r1", name: "Sanguchería", slug: "s", currency: "CLP", timezone: "America/Santiago", status: "active" as const, createdBy: "u1" };
 const owner = { id: "u1", name: "Dueña", email: "duena@example.com", emailVerifiedAt: new Date() };
@@ -55,6 +60,7 @@ function setup(options: { invitation?: typeof pending | null; markAccepted?: boo
     users as unknown as UsersRepository,
     emails as unknown as EmailQueue,
     connection as unknown as Connection,
+    fakeMedia,
     config,
   );
   return { service, invitations, memberships, users, emails, session };
