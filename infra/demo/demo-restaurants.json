@@ -422,7 +422,17 @@
             }
           ]
         }
-      ]
+      ],
+      "tables": [
+        "Mesa 1",
+        "Mesa 2",
+        "Mesa 3",
+        "Mesa 4",
+        "Mesa 5",
+        "Mesa 6",
+        "Barra"
+      ],
+      "acceptingOrders": true
     },
     {
       "name": "Pizzería Forno Rosso",
@@ -657,7 +667,20 @@
             }
           ]
         }
-      ]
+      ],
+      "tables": [
+        "Mesa 1",
+        "Mesa 2",
+        "Mesa 3",
+        "Mesa 4",
+        "Mesa 5",
+        "Mesa 6",
+        "Mesa 7",
+        "Mesa 8",
+        "Terraza 1",
+        "Terraza 2"
+      ],
+      "acceptingOrders": true
     },
     {
       "name": "Café Brote",
@@ -882,7 +905,15 @@
             }
           ]
         }
-      ]
+      ],
+      "tables": [
+        "Mesa 1",
+        "Mesa 2",
+        "Mesa 3",
+        "Mesa 4",
+        "Ventana"
+      ],
+      "acceptingOrders": true
     }
   ]
 }

@@ -23,7 +23,9 @@ Domain rules that always apply:
 - **Money as integers** in the currency's minor unit, always stored with `currency`. Never use floating point for amounts.
 - **Order items are price snapshots**; the server computes all totals from current product data — clients only send IDs and quantities.
 - **Order status changes go through the state machine** (invalid transition → 409) and are recorded in `statusHistory`.
-- Guest orders are accessed only with their `accessToken`, never by order number alone.
+- Guest orders are accessed only with their `accessToken`, never by order number alone. The token is derived (HMAC with `ORDER_TOKEN_SECRET`) from the browser's `clientOrderId`, only its hash is stored, and it always travels in request bodies (`/api/public/orders/lookup`), never in api URLs.
+- **Order creation is idempotent per `clientOrderId`**: a retried submission returns the same order and token. Carts are priced by `priceOrder()` (`modules/orders/order-pricing.ts`) against the current menu — sold-out items, hidden products and modifier rules are enforced there.
+- **The state machine lives in `@app/utils` (`checkTransition` / `nextStatuses`)**, shared by the api (enforcement) and the web (which buttons to show). Transitions use a conditional update on the current status, so two staff members cannot apply conflicting changes (409 `ORDER_CHANGED`).
 
 ---
 
@@ -70,6 +72,7 @@ When bumping an image version, update it in `compose.yaml` **and** in the Testco
 - **Git Bash on Windows** rewrites absolute paths passed to containers (`/garage` → `C:/Program Files/Git/garage`). Shell scripts export `MSYS_NO_PATHCONV=1`. Run the `infra/scripts/*.sh` (and the pnpm scripts that call them) from Git Bash, WSL or Linux.
 - ioredis `quit()` never resolves while Valkey is unreachable: shutdown code must `disconnect()` when the client is not `ready`.
 - **Docker Desktop on Windows intermittently hangs/resets connections forwarded over IPv6 (`::1`)**, and `localhost` resolves to `::1` first. Everything that talks to local containers forces IPv4: Jest `setupFiles` (`ipv4-first.js`, `dns.setDefaultResultOrder("ipv4first")`), `curl -4` in `smoke.sh`, `--host-resolver-rules` in the Playwright config. Not an issue on Linux.
+- **Ports 80/443 must be free** for `pnpm stack:up` (XAMPP/IIS/another Apache take them on IPv4 and answer instead of Caddy — the smoke test then fails with Apache error pages).
 
 ---
 
@@ -242,8 +245,10 @@ workers ──(@socket.io/redis-emitter)─────────────�
 
 ### WebSocket rules
 
-- Authenticate in the handshake middleware (`socket.handshake.auth.token`) — reject before `connection`.
-- Each socket joins the room `user:{userId}`; emit to rooms, never store socket IDs in the database.
+- Same origin as the app (`/socket.io` through Caddy). `RedisIoAdapter` **rejects handshakes whose `Origin` is not `APP_URL`**: browsers send cookies on WebSocket upgrades, so this prevents cross-site WebSocket hijacking.
+- **Staff** authenticate with the same httpOnly `mm_at` cookie as the REST api (read in `handleConnection`, no token in JS) and join `restaurant:<id>` via `restaurant.subscribe` — membership is checked like `RestaurantAccessGuard`. **Customers** are anonymous and join `order:<id>` via `order.subscribe` with their tracking token.
+- Emit with `RealtimeService` (`toRestaurant(id)` / `toOrder(id)`); never store socket IDs in the database. Events: `order.created`, `order.updated` (staff), `order.status` (customer, public view), `restaurant.accepting`, `qr-sheet.ready`.
+- Known limitation: a staff socket keeps its subscription until it disconnects, even if the membership is revoked meanwhile; the web reconnects on refresh, which re-checks.
 - Event names and payload types live in `packages/types` — shared by api, workers and web.
 - Workers never import the gateway: they emit through `@socket.io/redis-emitter` on the same Valkey.
 - MongoDB Change Streams are available (replica set) — use them only when an event must react to writes made outside the api; otherwise emit explicitly from the service.
@@ -551,6 +556,7 @@ The goal: **anything that passes the release gate locally can be deployed to the
   - Phase 1a (implemented): protected route without session → 401, unknown login → 401, cross-origin POST → 403. **Local stack only** (`DOMAIN=localhost`, creates data): register through Caddy, `Secure`+`HttpOnly` session cookie, cookie authenticates `/me`, verification email delivered to Mailpit.
   - Phase 1b (implemented, local only): verify the email with the token read from Mailpit, create a restaurant (generated slug, owner role), invite staff and receive the invitation email, anonymous access to the restaurant → 401.
   - Phase 2 (implemented): unknown public menu → 404, media host answers and is read-only (405). Local only: create category + product, upload a photo (re-encoded, served by `media.<domain>` as `image/webp`), public menu shows the product.
+  - Phase 3 (implemented): unknown table QR → 404, Socket.IO handshake through Caddy, foreign-origin handshake → 403. Local only: open the restaurant, create a table, order from its QR (server-priced total), the board lists and accepts it, customer tracking sees `accepted`, the workers generate the QR-sheet PDF.
   - Non-ASCII text in smoke requests must be written as JSON escapes (`\u00e1`): Git Bash on Windows passes non-ASCII arguments to curl in the console code page.
   - On the VPS the smoke test must never create users or send real emails.
 - Registration is rate-limited to 5/min per IP. `pnpm smoke` registers 1 user and `pnpm test:web` 4: running both plus manual tests within the same minute hits 429 — wait a minute between heavy runs.

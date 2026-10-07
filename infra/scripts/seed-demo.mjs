@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Creates the demo restaurants of infra/demo/demo-restaurants.json through the public api, exactly as a
 // user would: register (or log in), verify the email via Mailpit, create restaurants, profile, logo,
-// modifier groups, categories and products with photos.
+// modifier groups, categories and products with photos, tables, and open the restaurant for orders.
 //
 // Usage (from the repo root, with the local stack or `pnpm dev` running):
 //   node infra/scripts/seed-demo.mjs
@@ -202,8 +202,18 @@ async function seedRestaurant(spec, existing) {
     }
   }
   process.stdout.write("\n");
-  console.log(`✓ ${spec.name} → /r/${restaurant.slug} (${created} productos nuevos)`);
-  return restaurant;
+
+  // Phase 3: tables (matched by label) and open for orders, so the demo can be ordered from right away.
+  const tables = await api("GET", `${base}/tables`);
+  for (const label of spec.tables ?? []) {
+    if (!tables.some((t) => t.label === label)) tables.push(await api("POST", `${base}/tables`, { label }));
+  }
+  if (spec.acceptingOrders !== undefined && restaurant.acceptingOrders !== spec.acceptingOrders) {
+    await api("PUT", `${base}/accepting-orders`, { acceptingOrders: spec.acceptingOrders });
+  }
+
+  console.log(`✓ ${spec.name} → /r/${restaurant.slug} (${created} productos nuevos, ${tables.length} mesas)`);
+  return { ...restaurant, tables };
 }
 
 try {
@@ -216,7 +226,12 @@ try {
   console.log("\nDemo lista:");
   console.log(`  Cuenta:      ${EMAIL} / ${PASSWORD}`);
   console.log(`  Panel:       ${BASE_URL}/admin`);
-  for (const r of restaurants) console.log(`  Menú público: ${BASE_URL}/r/${r.slug}`);
+  for (const r of restaurants) {
+    console.log(`  ${r.name}`);
+    console.log(`    Menú público: ${BASE_URL}/r/${r.slug}`);
+    const first = r.tables?.[0];
+    if (first) console.log(`    Pedir desde ${first.label}: ${BASE_URL}/m/${first.token}`);
+  }
 } catch (error) {
   console.error(`\n✗ ${error.message}`);
   process.exit(1);

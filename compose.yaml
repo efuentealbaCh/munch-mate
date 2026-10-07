@@ -83,10 +83,12 @@ services:
       <<: *node-app-env
       APP_URL: https://${DOMAIN:?set in .env}
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?set in .env}
+      ORDER_TOKEN_SECRET: ${ORDER_TOKEN_SECRET:?set in .env}
       S3_ENDPOINT: http://garage:3900
       S3_REGION: ${S3_REGION:?set in .env}
       S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?set in .env}
       S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?set in .env}
+      S3_BUCKET: ${S3_BUCKET:-munchmate}
       S3_MEDIA_BUCKET: ${S3_MEDIA_BUCKET:-munchmate-media}
       MEDIA_PUBLIC_URL: https://media.${DOMAIN}
     depends_on:
@@ -116,7 +118,15 @@ services:
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASS: ${SMTP_PASS:-}
       MAIL_FROM: ${MAIL_FROM:?set in .env}
-    depends_on: *node-app-depends
+      S3_ENDPOINT: http://garage:3900
+      S3_REGION: ${S3_REGION:?set in .env}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?set in .env}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?set in .env}
+      S3_BUCKET: ${S3_BUCKET:-munchmate}
+    depends_on:
+      <<: *node-app-depends
+      garage:
+        condition: service_healthy
     # Let in-flight jobs finish on deploy/restart before Docker sends SIGKILL (default is 10s).
     stop_grace_period: 30s
     healthcheck:

@@ -30,7 +30,7 @@ Un usuario de staff puede tener varios roles dentro del mismo restaurante.
 
 | Canal | Entrada | Identificación | Pago (MVP) |
 | --- | --- | --- | --- |
-| `dine_in` | QR de la mesa → `/r/{slug}/t/{tableToken}` | La mesa | En el local |
+| `dine_in` | QR de la mesa → `/m/{tableToken}` | La mesa | En el local |
 | `pickup` | `/r/{slug}` | Nombre y teléfono | En el local, al retirar |
 | `delivery` | `/r/{slug}` | Nombre, teléfono y dirección | Contra entrega |
 
@@ -105,16 +105,16 @@ pending ──► accepted ──► preparing ──► ready ──┬──�
 | `menu_categories` | ✔ | `name`, `description`, `position`, `active` ✅ |
 | `products` | ✔ | `categoryId`, `name`, `description`, `price`, `imageKey`, `available` (agotado), `visible`, `modifierGroupIds[]`, `position` ✅ |
 | `modifier_groups` | ✔ | `name`, `minSelect`, `maxSelect`, `options[]` (`name`, `priceDelta`, `available`) — biblioteca reutilizable entre productos ✅ |
-| `tables` | ✔ | `label`, `token` (único, va en el QR), `active` |
+| `tables` | ✔ | `label`, `token` (único, va en el QR `/m/{token}`, regenerable), `active` ✅ |
 | `delivery_zones` | ✔ | `name`, `fee`, `minOrder`, `active` |
-| `orders` | ✔ | `number` (global por restaurante), `ticketNumber` (diario), `businessDate`, `channel`, `status`, `statusHistory[]`, `paymentStatus`, `paymentMethod`, `items[]` (snapshot), `subtotal`, `deliveryFee`, `total`, `customer` (snapshot), `customerId?`, `tableId?`, `delivery?`, `riderId?`, `accessToken` |
-| `counters` | ✔ | `_id` (`order:{restaurantId}` / `ticket:{restaurantId}:{businessDate}`), `seq` |
+| `orders` | ✔ | `number` (global), `ticketNumber` (diario), `businessDate`, `channel`, `status`, `statusHistory[]` (con quién y motivo), `paymentStatus`, `paymentMethod`, `items[]` (snapshot de precios y modificadores), `subtotal`, `total`, `currency`, `customerName`, `note`, `tableId`, `tableLabel` (snapshot), `accessTokenHash`, `clientOrderId` ✅ · pendientes: `deliveryFee`, `customerId`, `delivery`, `riderId` (fases 4–6) |
+| `counters` | ✔ | `_id` (`order:{restaurantId}` / `ticket:{restaurantId}:{businessDate}`), `seq` ✅ |
 | `customer_addresses` | — | `userId`, `label`, `address`, `reference`, `zoneHint` |
 | `push_subscriptions` | — | `userId`, `endpoint`, `keys` |
 
 "Tenant ✔" significa que el documento lleva `restaurantId` y que toda consulta lo filtra. ✅ = implementado.
 
-> **Pendiente para la Fase 3:** el owner puede cambiar el slug, y eso rompe los enlaces ya compartidos. Los QR de las mesas **no deberían depender del slug** (por ejemplo, `/t/{tableToken}` en vez de `/r/{slug}/t/{tableToken}`), o habría que guardar los slugs anteriores para redirigir. Hay que decidirlo antes de imprimir los primeros QR.
+> **Resuelto en la Fase 3:** los QR de mesa usan `/m/{tableToken}`, independiente del slug: cambiar la dirección del restaurante ya no rompe los QR impresos. Un código se puede regenerar si se filtra.
 
 ---
 
