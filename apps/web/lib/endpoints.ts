@@ -1,14 +1,23 @@
 import type {
   AdminMenuView,
+  CreatedOrder,
+  CreateDineInOrderInput,
   InvitationPreview,
   InvitationView,
   MemberView,
   MenuCategoryView,
   ModifierGroupView,
+  OrderStatus,
+  OrderView,
+  PaymentMethod,
   ProductView,
+  PublicMenu,
+  PublicOrderView,
   RestaurantRole,
   RestaurantView,
   SlugAvailability,
+  TableContext,
+  TableView,
   UserProfile,
 } from "@app/types";
 import { api } from "./api";
@@ -48,6 +57,9 @@ export const restaurantsApi = {
   setLogo: (id: string, file: File) =>
     api.request<RestaurantView>(`${restaurantPath(id)}/logo`, { method: "PUT", body: imageForm(file) }),
   removeLogo: (id: string) => api.request<RestaurantView>(`${restaurantPath(id)}/logo`, { method: "DELETE" }),
+  /** Opens/closes the restaurant for orders (owner, cashier, kitchen). */
+  setAcceptingOrders: (id: string, acceptingOrders: boolean) =>
+    api.request<RestaurantView>(`${restaurantPath(id)}/accepting-orders`, { method: "PUT", body: { acceptingOrders } }),
   slugAvailability: (slug: string, signal?: AbortSignal) =>
     api.request<SlugAvailability>(`/restaurants/slug-availability?slug=${encodeURIComponent(slug)}`, { signal }),
 };
@@ -158,4 +170,66 @@ export const menuApi = {
       `${menuPath(restaurantId)}/modifier-groups/${segment(groupId)}/options/${segment(optionId)}/availability`,
       { method: "PATCH", body: { available } },
     ),
+};
+
+/** Staff side of orders (owner, cashier, kitchen; payments: owner, cashier). */
+export const ordersApi = {
+  /** active = not final, oldest first; today = this business day, newest first. */
+  list: (restaurantId: string, scope: "active" | "today") =>
+    api.request<OrderView[]>(`${restaurantPath(restaurantId)}/orders?scope=${scope}`),
+  get: (restaurantId: string, orderId: string) =>
+    api.request<OrderView>(`${restaurantPath(restaurantId)}/orders/${segment(orderId)}`),
+  /** @throws ApiError INVALID_TRANSITION / ORDER_CHANGED (409), REASON_REQUIRED (400), FORBIDDEN_ROLE (403). */
+  changeStatus: (restaurantId: string, orderId: string, status: OrderStatus, reason?: string) =>
+    api.request<OrderView>(`${restaurantPath(restaurantId)}/orders/${segment(orderId)}/status`, {
+      method: "POST",
+      body: reason ? { status, reason } : { status },
+    }),
+  markPaid: (restaurantId: string, orderId: string, method: PaymentMethod) =>
+    api.request<OrderView>(`${restaurantPath(restaurantId)}/orders/${segment(orderId)}/payment`, {
+      method: "POST",
+      body: { method },
+    }),
+};
+
+const tablesPath = (restaurantId: string) => `${restaurantPath(restaurantId)}/tables`;
+
+/** Table management (owner; the list is also readable by cashier and kitchen). */
+export const tablesApi = {
+  list: (restaurantId: string) => api.request<TableView[]>(tablesPath(restaurantId)),
+  create: (restaurantId: string, label: string) =>
+    api.request<TableView>(tablesPath(restaurantId), { method: "POST", body: { label } }),
+  update: (restaurantId: string, tableId: string, body: { label?: string; active?: boolean }) =>
+    api.request<TableView>(`${tablesPath(restaurantId)}/${segment(tableId)}`, { method: "PATCH", body }),
+  delete: (restaurantId: string, tableId: string) =>
+    api.request<void>(`${tablesPath(restaurantId)}/${segment(tableId)}`, { method: "DELETE" }),
+  /** The old QR stops working at once. */
+  regenerateToken: (restaurantId: string, tableId: string) =>
+    api.request<TableView>(`${tablesPath(restaurantId)}/${segment(tableId)}/regenerate-token`, { method: "POST" }),
+  /** Starts the PDF with every active table's QR. @throws ApiError NO_ACTIVE_TABLES. */
+  requestQrSheet: (restaurantId: string) =>
+    api.request<{ jobId: string }>(`${tablesPath(restaurantId)}/qr-sheet`, { method: "POST" }),
+  /**
+   * @returns The PDF once ready, or null while the workers are still generating it (202).
+   * @throws ApiError QR_SHEET_NOT_FOUND, QR_SHEET_FAILED.
+   */
+  async qrSheet(restaurantId: string, jobId: string): Promise<Blob | null> {
+    const response = await api.requestResponse(`${tablesPath(restaurantId)}/qr-sheet/${segment(jobId)}`);
+    if (response.status === 202) return null;
+    return response.blob();
+  },
+};
+
+/** Customer side (no session). Tracking tokens travel in the body, never in the URL. */
+export const publicOrdersApi = {
+  create: (tableToken: string, body: CreateDineInOrderInput) =>
+    api.request<CreatedOrder>(`/public/tables/${segment(tableToken)}/orders`, { method: "POST", body }),
+  lookup: (accessToken: string) =>
+    api.request<PublicOrderView>("/public/orders/lookup", { method: "POST", body: { accessToken } }),
+  /** @throws ApiError ORDER_NOT_CANCELLABLE once the restaurant took the order. */
+  cancel: (accessToken: string) =>
+    api.request<PublicOrderView>("/public/orders/cancel", { method: "POST", body: { accessToken } }),
+  /** Fresh menu after a sold-out error (the page itself is server-rendered). */
+  menu: (slug: string) => api.request<PublicMenu>(`/public/restaurants/${segment(slug)}/menu`),
+  table: (tableToken: string) => api.request<TableContext>(`/public/tables/${segment(tableToken)}`),
 };

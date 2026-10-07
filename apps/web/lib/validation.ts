@@ -1,9 +1,10 @@
-import { MENU_LIMITS, RESTAURANT_ROLES } from "@app/types";
+import { MENU_LIMITS, ORDER_LIMITS, RESTAURANT_ROLES } from "@app/types";
 import { slugProblem } from "@app/utils";
 import { z } from "zod";
 import { modifierRulesProblem } from "./menu";
 import { parsePriceInput } from "./money";
 import { SLUG_PROBLEM_MESSAGES } from "./slug-field";
+import { BULK_TABLES_MAX, TABLE_LABEL_MAX } from "./tables";
 
 /**
  * Form schemas. Bounds mirror the api DTOs (apps/api/src/modules/{auth,restaurants,menu}/dto) so most mistakes
@@ -144,6 +145,54 @@ export const modifierGroupSchema = z
     if (problem) ctx.addIssue({ code: "custom", path: ["maxSelect"], message: problem });
   });
 
+/** Customer checkout (CreateDineInOrderDto): both fields optional. */
+export const checkoutSchema = z.object({
+  customerName: z
+    .string()
+    .trim()
+    .max(ORDER_LIMITS.customerNameMax, `El nombre puede tener hasta ${ORDER_LIMITS.customerNameMax} caracteres`),
+  note: z.string().trim().max(ORDER_LIMITS.noteMax, `El comentario puede tener hasta ${ORDER_LIMITS.noteMax} caracteres`),
+});
+
+/** Rejecting needs a reason: the customer sees it (ChangeStatusDto.reason). */
+export const rejectSchema = z.object({
+  reason: z
+    .string()
+    .trim()
+    .min(1, "Indica el motivo: el cliente lo verá")
+    .max(ORDER_LIMITS.rejectReasonMax, `El motivo puede tener hasta ${ORDER_LIMITS.rejectReasonMax} caracteres`),
+});
+
+const tableLabel = z
+  .string()
+  .trim()
+  .min(1, "Ingresa un nombre, ej. Mesa 4")
+  .max(TABLE_LABEL_MAX, `El nombre puede tener hasta ${TABLE_LABEL_MAX} caracteres`);
+
+/** TableDto / UpdateTableDto. */
+export const tableSchema = z.object({ label: tableLabel });
+
+const tableNumber = z
+  .number({ error: "Ingresa un número" })
+  .int("Usa un número entero")
+  .min(0, "Usa números desde 0")
+  .max(9999, "Usa números hasta 9999");
+
+/** "Agregar varias": prefix + range (the labels themselves are checked by bulkLabels). */
+export const bulkTablesSchema = z
+  .object({
+    prefix: z.string().trim().max(TABLE_LABEL_MAX - 5, "El prefijo es demasiado largo"),
+    from: tableNumber,
+    to: tableNumber,
+  })
+  .superRefine((value, ctx) => {
+    if (value.to < value.from) {
+      ctx.addIssue({ code: "custom", path: ["to"], message: "Debe ser mayor o igual al número inicial" });
+    } else if (value.to - value.from + 1 > BULK_TABLES_MAX) {
+      ctx.addIssue({ code: "custom", path: ["to"], message: `Puedes agregar hasta ${BULK_TABLES_MAX} mesas a la vez` });
+    }
+  });
+
 export type LoginValues = z.infer<typeof loginSchema>;
 export type RegisterValues = z.infer<typeof registerSchema>;
 export type ForgotPasswordValues = z.infer<typeof forgotPasswordSchema>;
@@ -154,3 +203,7 @@ export type RestaurantProfileValues = z.infer<typeof restaurantProfileSchema>;
 export type CategoryValues = z.infer<typeof categorySchema>;
 export type ProductValues = z.infer<typeof productSchema>;
 export type ModifierGroupValues = z.infer<typeof modifierGroupSchema>;
+export type CheckoutValues = z.infer<typeof checkoutSchema>;
+export type RejectValues = z.infer<typeof rejectSchema>;
+export type TableValues = z.infer<typeof tableSchema>;
+export type BulkTablesValues = z.infer<typeof bulkTablesSchema>;

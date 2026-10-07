@@ -30,3 +30,8 @@ export function forwardedForHeader(incoming: string | null | undefined): Record<
 export function publicMenuUrl(baseUrl: string, slug: string): string {
   return `${baseUrl}/api/public/restaurants/${encodeURIComponent(slug)}/menu`;
 }
+
+/** Table context for a QR code (the token is encoded: it comes straight from the URL). */
+export function publicTableUrl(baseUrl: string, tableToken: string): string {
+  return `${baseUrl}/api/public/tables/${encodeURIComponent(tableToken)}`;
+}

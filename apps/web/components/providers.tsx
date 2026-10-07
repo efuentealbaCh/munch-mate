@@ -2,14 +2,13 @@
 
 import type { ReactNode } from "react";
 import { Toaster } from "@/components/ui/sonner";
-import { AuthProvider } from "@/lib/auth-context";
 
-/** Client-side providers shared by every page. */
+/** Client-side providers shared by every page, public ones included (no session here: see SessionProviders). */
 export function Providers({ children }: { children: ReactNode }) {
   return (
-    <AuthProvider>
+    <>
       {children}
       <Toaster position="top-center" richColors closeButton />
-    </AuthProvider>
+    </>
   );
 }

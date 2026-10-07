@@ -144,7 +144,7 @@ test("owner builds a menu with a modifier group and a photo, and customers see i
     await expect(detail).toContainText("Obligatorio · elige 1");
     await expect(detail).toContainText("Grande");
     await expect(detail).toContainText("+$800");
-    await expect(detail).toContainText("Muy pronto podrás pedir desde aquí");
+    await expect(detail).toContainText("Para pedir, escanea el código QR de tu mesa");
   } finally {
     await visitor.context.close();
   }

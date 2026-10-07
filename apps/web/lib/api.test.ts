@@ -215,4 +215,24 @@ describe("api client", () => {
     expect(bodies).toEqual([form, form]);
     for (const sent of headers) expect(sent).toEqual({ Accept: "application/json" });
   });
+
+  it("requestResponse returns the raw response (PDF, 202) after the same refresh logic", async () => {
+    const pdf = () => new Response(new Blob(["%PDF-1.7"], { type: "application/pdf" }), { status: 200 });
+    const { fetch, calls } = fakeFetch({
+      "GET /api/restaurants/r1/tables/qr-sheet/j1": [unauthenticated, () => json(202, { status: "pending" }), pdf],
+      "POST /api/auth/refresh": [() => json(200, PROFILE)],
+    });
+    const client = createApiClient({ fetch, sleep: noSleep });
+    expect((await client.requestResponse("/restaurants/r1/tables/qr-sheet/j1")).status).toBe(202);
+    const ready = await client.requestResponse("/restaurants/r1/tables/qr-sheet/j1");
+    expect(await (await ready.blob()).text()).toBe("%PDF-1.7");
+    expect(calls.filter((c) => c.includes("refresh"))).toHaveLength(1);
+  });
+
+  it("requestResponse throws ApiError on error statuses", async () => {
+    const { fetch } = fakeFetch({
+      "GET /api/x": [() => json(422, { statusCode: 422, code: "QR_SHEET_FAILED", message: "No se pudo generar el PDF" })],
+    });
+    await expect(createApiClient({ fetch }).requestResponse("/x")).rejects.toMatchObject({ code: "QR_SHEET_FAILED" });
+  });
 });

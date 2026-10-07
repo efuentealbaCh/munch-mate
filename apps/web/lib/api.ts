@@ -72,6 +72,11 @@ export interface ApiClient {
    */
   request<T>(path: string, options?: RequestOptions): Promise<T>;
   /**
+   * Same as {@link request} (refresh on 401, ApiError on non-2xx) but returns the raw successful Response,
+   * for bodies that are not JSON (PDF downloads) or when the status matters (202 vs 200).
+   */
+  requestResponse(path: string, options?: RequestOptions): Promise<Response>;
+  /**
    * Rotates the session cookies. Concurrent callers share one request.
    * @returns The fresh profile, or null when there is no valid session (logged out).
    * @throws ApiError only for network/unexpected failures.
@@ -145,7 +150,7 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
     return refreshing;
   }
 
-  async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  async function requestResponse(path: string, options: RequestOptions = {}): Promise<Response> {
     let response = await send(path, options);
 
     if (response.status === 401 && !NO_REFRESH_PATHS.has(path)) {
@@ -160,11 +165,16 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
     }
 
     if (!response.ok) throw await toError(response);
-    return (await readBody(response)) as T;
+    return response;
+  }
+
+  async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+    return (await readBody(await requestResponse(path, options))) as T;
   }
 
   return {
     request,
+    requestResponse,
     refreshSession,
     onSessionExpired(listener) {
       expiredListeners.add(listener);

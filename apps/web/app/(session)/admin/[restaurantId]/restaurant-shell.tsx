@@ -1,7 +1,16 @@
 "use client";
 
 import type { RestaurantRole, RestaurantView } from "@app/types";
-import { ArrowLeftIcon, BookOpenIcon, LayoutDashboardIcon, PackageCheckIcon, SearchXIcon, UsersIcon } from "lucide-react";
+import {
+  ArrowLeftIcon,
+  BookOpenIcon,
+  ClipboardListIcon,
+  LayoutDashboardIcon,
+  PackageCheckIcon,
+  QrCodeIcon,
+  SearchXIcon,
+  UsersIcon,
+} from "lucide-react";
 import Link from "next/link";
 import { useParams, usePathname } from "next/navigation";
 import { type ReactNode, useCallback, useMemo } from "react";
@@ -14,14 +23,20 @@ import { useApiQuery } from "@/hooks/use-api-query";
 import { restaurantsApi } from "@/lib/endpoints";
 import { hasCode } from "@/lib/errors";
 import { canManageAvailability } from "@/lib/menu";
+import { canWorkOrders } from "@/lib/orders-board";
 import { cn } from "@/lib/utils";
 import { RestaurantContext, type RestaurantContextValue } from "./restaurant-context";
+import { RestaurantRealtimeProvider } from "./restaurant-realtime";
 
 /** Loads the restaurant once for every page under /admin/[restaurantId] and renders the section tabs. */
 export function RestaurantShell({ children }: { children: ReactNode }) {
   const { restaurantId } = useParams<{ restaurantId: string }>();
   const load = useCallback(() => restaurantsApi.get(restaurantId), [restaurantId]);
   const { data, error, loading, reload, setData } = useApiQuery<RestaurantView>(load);
+  const setAccepting = useCallback(
+    (acceptingOrders: boolean) => setData((current) => current && { ...current, acceptingOrders }),
+    [setData],
+  );
 
   const context = useMemo<RestaurantContextValue | null>(
     () =>
@@ -57,25 +72,29 @@ export function RestaurantShell({ children }: { children: ReactNode }) {
   const { restaurant, isOwner } = context;
   return (
     <RestaurantContext.Provider value={context}>
-      <div className="flex flex-col gap-6">
-        <div className="flex flex-col gap-3">
-          <Button asChild variant="ghost" size="sm" className="-ml-2 self-start">
-            <Link href="/admin">
-              <ArrowLeftIcon aria-hidden data-icon="inline-start" />
-              Mis restaurantes
-            </Link>
-          </Button>
-          <div className="flex items-center gap-3">
-            <RestaurantLogo logo={restaurant.logo} size="md" />
-            <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <h1 className="text-2xl font-bold tracking-tight break-words">{restaurant.name}</h1>
-              {restaurant.status === "suspended" ? <Badge variant="destructive">Suspendido</Badge> : null}
+      {/* Reconnected after a gap: the open/closed state may have changed meanwhile. */}
+      <RestaurantRealtimeProvider restaurantId={restaurant.id} onAccepting={setAccepting} onResync={reload}>
+        <div className="flex flex-col gap-6">
+          <div className="flex flex-col gap-3">
+            <Button asChild variant="ghost" size="sm" className="-ml-2 self-start">
+              <Link href="/admin">
+                <ArrowLeftIcon aria-hidden data-icon="inline-start" />
+                Mis restaurantes
+              </Link>
+            </Button>
+            <div className="flex items-center gap-3">
+              <RestaurantLogo logo={restaurant.logo} size="md" />
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <h1 className="text-2xl font-bold tracking-tight break-words">{restaurant.name}</h1>
+                {restaurant.status === "suspended" ? <Badge variant="destructive">Suspendido</Badge> : null}
+                <OpenBadge open={restaurant.acceptingOrders} />
+              </div>
             </div>
+            <SectionTabs restaurantId={restaurant.id} isOwner={isOwner} roles={restaurant.myRoles} />
           </div>
-          <SectionTabs restaurantId={restaurant.id} isOwner={isOwner} roles={restaurant.myRoles} />
+          {children}
         </div>
-        {children}
-      </div>
+      </RestaurantRealtimeProvider>
     </RestaurantContext.Provider>
   );
 }
@@ -94,8 +113,10 @@ function SectionTabs({
   // Tabs a member cannot use are hidden (the api would answer 403 anyway); direct URLs explain why.
   const tabs = [
     { href: base, label: "Resumen", icon: LayoutDashboardIcon, show: true },
+    { href: `${base}/pedidos`, label: "Pedidos", icon: ClipboardListIcon, show: canWorkOrders(roles) },
     { href: `${base}/menu`, label: "Menú", icon: BookOpenIcon, show: isOwner },
     { href: `${base}/disponibilidad`, label: "Disponibilidad", icon: PackageCheckIcon, show: canManageAvailability(roles) },
+    { href: `${base}/mesas`, label: "Mesas", icon: QrCodeIcon, show: isOwner },
     { href: `${base}/equipo`, label: "Equipo", icon: UsersIcon, show: isOwner },
   ].filter((tab) => tab.show);
 
@@ -123,6 +144,20 @@ function SectionTabs({
         })}
       </ul>
     </nav>
+  );
+}
+
+/** Whether customers can order right now (the switch lives on the Pedidos screen). */
+function OpenBadge({ open }: { open: boolean }) {
+  return (
+    <Badge
+      variant={open ? "secondary" : "outline"}
+      className={open ? "bg-success/10 text-success" : "text-muted-foreground"}
+      data-testid="open-badge"
+    >
+      <span className={cn("size-1.5 rounded-full", open ? "bg-success" : "bg-muted-foreground")} aria-hidden />
+      {open ? "Recibiendo pedidos" : "Cerrado"}
+    </Badge>
   );
 }
 
