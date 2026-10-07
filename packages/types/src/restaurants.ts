@@ -1,3 +1,5 @@
+import type { LogoImage } from "./menu";
+
 /** Roles a user can hold inside one restaurant (stored in memberships). */
 export const RESTAURANT_ROLES = ["owner", "cashier", "kitchen", "rider"] as const;
 export type RestaurantRole = (typeof RESTAURANT_ROLES)[number];
@@ -17,6 +19,10 @@ export interface RestaurantView {
   id: string;
   name: string;
   slug: string;
+  /** Short text shown under the name in the public menu. */
+  description: string;
+  phone: string;
+  logo: LogoImage | null;
   currency: string;
   timezone: string;
   status: RestaurantStatus;
