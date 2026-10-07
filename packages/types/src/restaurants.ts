@@ -23,6 +23,8 @@ export interface RestaurantView {
   description: string;
   phone: string;
   logo: LogoImage | null;
+  /** Manual "open/closed" switch: customers can only place orders while true. */
+  acceptingOrders: boolean;
   currency: string;
   timezone: string;
   status: RestaurantStatus;
