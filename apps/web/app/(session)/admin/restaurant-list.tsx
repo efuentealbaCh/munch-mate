@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useApiQuery } from "@/hooks/use-api-query";
 import { restaurantsApi } from "@/lib/endpoints";
+import { restaurantHomeHref } from "@/lib/orders-board";
 
 export function RestaurantList() {
   const { data, error, loading, reload } = useApiQuery(restaurantsApi.list);
@@ -47,7 +48,7 @@ export function RestaurantList() {
           {data?.map((restaurant) => (
             <li key={restaurant.id}>
               <Link
-                href={`/admin/${restaurant.id}`}
+                href={restaurantHomeHref(restaurant)}
                 className="group flex h-full items-start gap-4 rounded-xl bg-card p-5 ring-1 ring-foreground/10 transition-shadow outline-none hover:shadow-md hover:ring-primary/30 focus-visible:ring-3 focus-visible:ring-ring/50"
               >
                 <RestaurantLogo logo={restaurant.logo} />

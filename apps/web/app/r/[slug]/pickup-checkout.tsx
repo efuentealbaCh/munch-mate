@@ -3,8 +3,9 @@
 import { ORDER_LIMITS } from "@app/types";
 import { zodResolver } from "@hookform/resolvers/zod";
 import Link from "next/link";
-import { useForm } from "react-hook-form";
-import { CartLines, CartSheet, type LineProblem } from "@/components/cart-sheet";
+import type { ReactNode } from "react";
+import { type UseFormRegisterReturn, useForm } from "react-hook-form";
+import { CartLines, type LineProblem } from "@/components/cart-sheet";
 import { FormError } from "@/components/form-error";
 import { FormField } from "@/components/form-field";
 import { SubmitButton } from "@/components/submit-button";
@@ -16,12 +17,10 @@ import { hasCode } from "@/lib/errors";
 import { formatPrice } from "@/lib/money";
 import { type PickupCheckoutValues, pickupCheckoutSchema } from "@/lib/validation";
 
-interface PickupCartSheetProps {
-  open: boolean;
-  onOpenChange(open: boolean): void;
+/** What both checkout forms (pickup and delivery) receive from the ordering page. */
+export interface CheckoutFormProps {
   lines: CartLine[];
   currency: string;
-  restaurantName: string;
   canOrder: boolean;
   /** Why ordering is not possible right now (shown under the disabled button). */
   closedMessage: string;
@@ -29,30 +28,13 @@ interface PickupCartSheetProps {
   /** Error not tied to a line (closed restaurant, too many orders, network, validation). */
   error: unknown;
   problem: LineProblem | null;
-  checkout: PickupCheckoutValues;
-  onCheckoutChange(values: PickupCheckoutValues): void;
   onQuantity(key: string, quantity: number): void;
   onRemove(key: string): void;
   onRemoveProduct(productId: string): void;
-  onSubmit(values: PickupCheckoutValues): void;
 }
 
-/** Cart review and pickup checkout: lines, name, phone, optional email and comment, "Pedir para retirar". */
-export function PickupCartSheet(props: PickupCartSheetProps) {
-  return (
-    <CartSheet
-      open={props.open}
-      onOpenChange={props.onOpenChange}
-      submitting={props.submitting}
-      description={`Para retirar en ${props.restaurantName} · revisa antes de enviar.`}
-      empty={props.lines.length === 0}
-    >
-      <PickupCheckout {...props} />
-    </CartSheet>
-  );
-}
-
-function PickupCheckout({
+/** Pickup form: lines, name, phone, optional email and comment, "Pedir para retirar". */
+export function PickupCheckout({
   lines,
   currency,
   canOrder,
@@ -66,7 +48,11 @@ function PickupCheckout({
   onRemove,
   onRemoveProduct,
   onSubmit,
-}: PickupCartSheetProps) {
+}: CheckoutFormProps & {
+  checkout: PickupCheckoutValues;
+  onCheckoutChange(values: PickupCheckoutValues): void;
+  onSubmit(values: PickupCheckoutValues): void;
+}) {
   const form = useForm<PickupCheckoutValues>({ resolver: zodResolver(pickupCheckoutSchema), defaultValues: checkout });
   const { errors } = form.formState;
   const total = cartTotal(lines);
@@ -75,7 +61,7 @@ function PickupCheckout({
     <form
       noValidate
       onSubmit={form.handleSubmit(onSubmit)}
-      // Keeps the contact data when the sheet is closed and reopened.
+      // Keeps the contact data when the sheet is closed and reopened (or the channel changes).
       onChange={() => onCheckoutChange(form.getValues())}
       className="flex flex-col"
       aria-label="Pedir para retirar"
@@ -94,71 +80,127 @@ function PickupCheckout({
       </p>
 
       <div className="flex flex-col gap-4 px-4 pt-4">
-        <FormField id="pickup-name" label="Tu nombre" error={errors.customerName?.message} description="Lo dices al retirar.">
-          {(control) => (
-            <Input
-              {...control}
-              autoComplete="name"
-              maxLength={ORDER_LIMITS.customerNameMax}
-              aria-required
-              {...form.register("customerName")}
-            />
-          )}
-        </FormField>
-        <FormField
-          id="pickup-phone"
-          label="Teléfono"
-          error={errors.customerPhone?.message}
-          description="Para avisarte si hay algún problema con tu pedido."
-        >
-          {(control) => (
-            <Input
-              {...control}
-              type="tel"
-              inputMode="tel"
-              autoComplete="tel"
-              placeholder="+56 9 1234 5678"
-              maxLength={30}
-              aria-required
-              {...form.register("customerPhone")}
-            />
-          )}
-        </FormField>
-        <FormField
-          id="pickup-email"
-          label="Correo (opcional)"
-          error={errors.customerEmail?.message}
-          description="Te enviamos el comprobante cuando el local acepte tu pedido."
-        >
-          {(control) => (
-            <Input
-              {...control}
-              type="email"
-              inputMode="email"
-              autoComplete="email"
-              maxLength={ORDER_LIMITS.customerEmailMax}
-              {...form.register("customerEmail")}
-            />
-          )}
-        </FormField>
-        <FormField id="pickup-note" label="Comentario para el local (opcional)" error={errors.note?.message}>
-          {(control) => <Textarea {...control} rows={2} maxLength={ORDER_LIMITS.noteMax} {...form.register("note")} />}
-        </FormField>
+        <ContactFields
+          idPrefix="pickup"
+          nameDescription="Lo dices al retirar."
+          register={{
+            customerName: form.register("customerName"),
+            customerPhone: form.register("customerPhone"),
+            customerEmail: form.register("customerEmail"),
+          }}
+          errors={{
+            customerName: errors.customerName?.message,
+            customerPhone: errors.customerPhone?.message,
+            customerEmail: errors.customerEmail?.message,
+          }}
+        />
+        <NoteField id="pickup-note" register={form.register("note")} error={errors.note?.message} />
       </div>
 
-      <SheetFooter className="sticky bottom-0 mt-2 border-t bg-popover">
-        <FormError error={error}>
-          {hasCode(error, "TOO_MANY_ACTIVE_ORDERS") ? (
-            <Link href="/pedido" className="mt-1 inline-block font-medium underline underline-offset-4">
-              Ver mis pedidos
-            </Link>
-          ) : null}
-        </FormError>
-        <SubmitButton size="lg" pending={submitting} disabled={!canOrder || problem !== null}>
-          Pedir para retirar · {formatPrice(total, currency)}
-        </SubmitButton>
-        {!canOrder ? <p className="text-center text-sm text-muted-foreground">{closedMessage}</p> : null}
-      </SheetFooter>
+      <CheckoutFooter error={error} pending={submitting} disabled={!canOrder || problem !== null} closedMessage={canOrder ? null : closedMessage}>
+        Pedir para retirar · {formatPrice(total, currency)}
+      </CheckoutFooter>
     </form>
+  );
+}
+
+type ContactField = "customerName" | "customerPhone" | "customerEmail";
+
+/** Name, phone and optional email: the same fields (and rules) for pickup and delivery. */
+export function ContactFields({
+  idPrefix,
+  nameDescription,
+  register,
+  errors,
+}: {
+  idPrefix: string;
+  nameDescription: string;
+  register: { [K in ContactField]: UseFormRegisterReturn<K> };
+  errors: { [K in ContactField]?: string };
+}) {
+  return (
+    <>
+      <FormField id={`${idPrefix}-name`} label="Tu nombre" error={errors.customerName} description={nameDescription}>
+        {(control) => (
+          <Input {...control} autoComplete="name" maxLength={ORDER_LIMITS.customerNameMax} aria-required {...register.customerName} />
+        )}
+      </FormField>
+      <FormField
+        id={`${idPrefix}-phone`}
+        label="Teléfono"
+        error={errors.customerPhone}
+        description="Para avisarte si hay algún problema con tu pedido."
+      >
+        {(control) => (
+          <Input
+            {...control}
+            type="tel"
+            inputMode="tel"
+            autoComplete="tel"
+            placeholder="+56 9 1234 5678"
+            maxLength={30}
+            aria-required
+            {...register.customerPhone}
+          />
+        )}
+      </FormField>
+      <FormField
+        id={`${idPrefix}-email`}
+        label="Correo (opcional)"
+        error={errors.customerEmail}
+        description="Te enviamos el comprobante cuando el local acepte tu pedido."
+      >
+        {(control) => (
+          <Input
+            {...control}
+            type="email"
+            inputMode="email"
+            autoComplete="email"
+            maxLength={ORDER_LIMITS.customerEmailMax}
+            {...register.customerEmail}
+          />
+        )}
+      </FormField>
+    </>
+  );
+}
+
+export function NoteField({ id, register, error }: { id: string; register: UseFormRegisterReturn<"note">; error?: string }) {
+  return (
+    <FormField id={id} label="Comentario para el local (opcional)" error={error}>
+      {(control) => <Textarea {...control} rows={2} maxLength={ORDER_LIMITS.noteMax} {...register} />}
+    </FormField>
+  );
+}
+
+/** Sticky footer: api error (with "Ver mis pedidos" on too many orders), submit, and why it is disabled. */
+export function CheckoutFooter({
+  error,
+  pending,
+  disabled,
+  closedMessage,
+  children,
+}: {
+  error: unknown;
+  pending: boolean;
+  disabled: boolean;
+  /** Shown under the button when the restaurant does not take orders right now. */
+  closedMessage: string | null;
+  children: ReactNode;
+}) {
+  return (
+    <SheetFooter className="sticky bottom-0 mt-2 border-t bg-popover">
+      <FormError error={error}>
+        {hasCode(error, "TOO_MANY_ACTIVE_ORDERS") ? (
+          <Link href="/pedido" className="mt-1 inline-block font-medium underline underline-offset-4">
+            Ver mis pedidos
+          </Link>
+        ) : null}
+      </FormError>
+      <SubmitButton size="lg" pending={pending} disabled={disabled}>
+        {children}
+      </SubmitButton>
+      {closedMessage ? <p className="text-center text-sm text-muted-foreground">{closedMessage}</p> : null}
+    </SheetFooter>
   );
 }

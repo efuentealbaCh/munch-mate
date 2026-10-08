@@ -1,8 +1,15 @@
-import { MENU_LIMITS, ORDER_LIMITS, RESTAURANT_ROLES } from "@app/types";
+import {
+  DELIVERY_ZONE_LIMITS,
+  MENU_LIMITS,
+  ORDER_LIMITS,
+  PAYMENT_METHODS,
+  type PublicDeliveryZone,
+  RESTAURANT_ROLES,
+} from "@app/types";
 import { normalizePhone, slugProblem } from "@app/utils";
 import { z } from "zod";
 import { modifierRulesProblem } from "./menu";
-import { parsePriceInput } from "./money";
+import { formatPrice, parsePriceInput } from "./money";
 import { SLUG_PROBLEM_MESSAGES } from "./slug-field";
 import { BULK_TABLES_MAX, TABLE_LABEL_MAX } from "./tables";
 
@@ -87,8 +94,11 @@ const menuDescription = z
   .trim()
   .max(MENU_LIMITS.descriptionMax, `La descripción no puede superar los ${MENU_LIMITS.descriptionMax} caracteres`);
 
-/** Price typed by the owner ("3.990" or "3990"); converted with parsePriceInput on submit. */
-const priceText = (emptyMessage: string) =>
+/**
+ * Price typed by the owner ("3.990" or "3990"); converted with parsePriceInput on submit.
+ * @param max Upper bound of the matching api DTO (menu prices by default).
+ */
+const priceText = (emptyMessage: string, max: number = MENU_LIMITS.priceMax) =>
   z.string().superRefine((value, ctx) => {
     if (value.trim() === "") {
       ctx.addIssue({ code: "custom", message: emptyMessage });
@@ -96,8 +106,8 @@ const priceText = (emptyMessage: string) =>
     }
     const amount = parsePriceInput(value);
     if (amount === null) ctx.addIssue({ code: "custom", message: "Usa solo números, ej. 3.990" });
-    else if (amount > MENU_LIMITS.priceMax) {
-      ctx.addIssue({ code: "custom", message: `El máximo es ${MENU_LIMITS.priceMax.toLocaleString("es-CL")}` });
+    else if (amount > max) {
+      ctx.addIssue({ code: "custom", message: `El máximo es ${max.toLocaleString("es-CL")}` });
     }
   });
 
@@ -180,6 +190,79 @@ export const pickupCheckoutSchema = z.object({
   note: z.string().trim().max(ORDER_LIMITS.noteMax, `El comentario puede tener hasta ${ORDER_LIMITS.noteMax} caracteres`),
 });
 
+/** Same bound as ExpectedPaymentDto.cashAmount. */
+export const CASH_AMOUNT_MAX = 100_000_000;
+
+/** What the delivery checkout needs to check amounts: the cart subtotal and the zones offered. */
+export interface DeliveryCheckoutContext {
+  subtotal: number;
+  zones: readonly PublicDeliveryZone[];
+  currency: string;
+}
+
+/**
+ * Delivery checkout (CreateDeliveryOrderDto): the pickup contact fields plus the zone, the address and how
+ * the customer will pay. Built per cart because two rules depend on amounts: the zone's minimum (subtotal,
+ * without the fee) and the cash amount, which must cover subtotal + fee. The api checks both again
+ * (BELOW_MINIMUM_ORDER, CASH_AMOUNT_TOO_LOW).
+ */
+export function deliveryCheckoutSchema({ subtotal, zones, currency }: DeliveryCheckoutContext) {
+  return pickupCheckoutSchema
+    .extend({
+      zoneId: z.string().min(1, "Elige tu comuna o zona"),
+      address: z
+        .string()
+        .trim()
+        .min(3, "Indica la calle y el número")
+        .max(ORDER_LIMITS.addressMax, `La dirección puede tener hasta ${ORDER_LIMITS.addressMax} caracteres`),
+      unit: z.string().trim().max(ORDER_LIMITS.addressUnitMax, `Usa hasta ${ORDER_LIMITS.addressUnitMax} caracteres`),
+      reference: z
+        .string()
+        .trim()
+        .max(ORDER_LIMITS.addressReferenceMax, `La referencia puede tener hasta ${ORDER_LIMITS.addressReferenceMax} caracteres`),
+      // Boolean(): a `value !== ""` arrow would be inferred as a type guard and drop "" from the form values.
+      paymentMethod: z.union([z.enum(PAYMENT_METHODS), z.literal("")]).refine((value) => Boolean(value), "Elige cómo vas a pagar"),
+      // Free text ("20.000"); blank = the customer did not say (the rider brings change anyway).
+      cashAmount: z.string(),
+    })
+    .superRefine((values, ctx) => {
+      const zone = zones.find((z) => z.id === values.zoneId);
+      if (values.zoneId && !zone) {
+        ctx.addIssue({ code: "custom", path: ["zoneId"], message: "Esta zona ya no está disponible. Elige otra." });
+        return;
+      }
+      if (!zone) return;
+      if (subtotal < zone.minOrder) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["zoneId"],
+          message: `El pedido mínimo para ${zone.name} es ${formatPrice(zone.minOrder, currency)} (sin el envío)`,
+        });
+      }
+      if (values.paymentMethod !== "cash" || values.cashAmount.trim() === "") return;
+      const amount = parsePriceInput(values.cashAmount);
+      const total = subtotal + zone.fee;
+      if (amount === null || amount > CASH_AMOUNT_MAX) {
+        ctx.addIssue({ code: "custom", path: ["cashAmount"], message: "Usa solo números, ej. 20.000" });
+      } else if (amount < total) {
+        ctx.addIssue({ code: "custom", path: ["cashAmount"], message: `Debe cubrir el total (${formatPrice(total, currency)})` });
+      }
+    });
+}
+
+/** Owner's delivery zone (DeliveryZoneDto). Amounts are typed like prices and converted on submit. */
+export const deliveryZoneSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(1, "Ingresa la comuna o sector, ej. Providencia")
+    .max(DELIVERY_ZONE_LIMITS.nameMax, `El nombre puede tener hasta ${DELIVERY_ZONE_LIMITS.nameMax} caracteres`),
+  fee: priceText("Ingresa el costo de envío (0 si es gratis)", DELIVERY_ZONE_LIMITS.feeMax),
+  minOrder: priceText("Ingresa el pedido mínimo (0 si no hay)", CASH_AMOUNT_MAX),
+  active: z.boolean(),
+  isHome: z.boolean(),
+});
+
 /** Rejecting needs a reason: the customer sees it (ChangeStatusDto.reason). */
 export const rejectSchema = z.object({
   reason: z
@@ -231,6 +314,8 @@ export type ProductValues = z.infer<typeof productSchema>;
 export type ModifierGroupValues = z.infer<typeof modifierGroupSchema>;
 export type CheckoutValues = z.infer<typeof checkoutSchema>;
 export type PickupCheckoutValues = z.infer<typeof pickupCheckoutSchema>;
+export type DeliveryCheckoutValues = z.infer<ReturnType<typeof deliveryCheckoutSchema>>;
+export type DeliveryZoneValues = z.infer<typeof deliveryZoneSchema>;
 export type RejectValues = z.infer<typeof rejectSchema>;
 export type TableValues = z.infer<typeof tableSchema>;
 export type BulkTablesValues = z.infer<typeof bulkTablesSchema>;

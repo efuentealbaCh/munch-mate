@@ -3,7 +3,10 @@ import { nextStatuses } from "@app/utils";
 import { describe, expect, it } from "vitest";
 import {
   ACTION_LABELS,
+  availableChannelFilters,
+  boardColumns,
   boardTitle,
+  canAssignRider,
   canRegisterPayment,
   canWorkOrders,
   dayTotals,
@@ -11,14 +14,22 @@ import {
   elapsedLabel,
   filterByChannel,
   groupByColumn,
+  handOverStatus,
   isPastReadyTime,
+  isRider,
+  isRiderOnly,
   mergeFetched,
   minutesSince,
   needsPaymentWarning,
   newerOrder,
   pendingCount,
+  restaurantHomeHref,
+  RIDER_ACTION_LABELS,
+  RIDER_ACTOR,
   sortNewestFirst,
+  sortRiderDeliveries,
   upsertOrder,
+  upsertRiderDelivery,
 } from "./orders-board";
 
 const HISTORY: OrderStatus[] = ["pending", "accepted", "preparing", "ready", "served"];
@@ -46,7 +57,13 @@ function order(id: string, status: OrderStatus, overrides: Partial<OrderView> = 
     tableLabel: "Mesa 1",
     estimatedReadyAt: null,
     receiptAvailable: false,
+    deliveryFee: 0,
+    delivery: null,
+    expectedPayment: null,
+    rider: null,
     createdAt: "2026-10-07T12:00:00.000Z",
+    // Same instant for every copy, so ties fall back to the revision (status history and payment).
+    updatedAt: "2026-10-07T12:00:00.000Z",
     ...overrides,
   };
 }
@@ -213,5 +230,139 @@ describe("pickup orders", () => {
   it("counts picked-up orders as sales", () => {
     const totals = dayTotals([pickup("o1", "picked_up", { total: 2000 }), pickup("o2", "cancelled", { total: 500 })]);
     expect(totals).toEqual({ count: 1, total: 2000, paid: 0, dropped: 1 });
+  });
+});
+
+describe("delivery orders", () => {
+  const delivery = (id: string, status: OrderStatus, overrides: Partial<OrderView> = {}) =>
+    order(id, status, {
+      channel: "delivery",
+      tableLabel: null,
+      customerName: "Ana",
+      customerPhone: "+56912345678",
+      deliveryFee: 1990,
+      delivery: { zoneId: "z1", zoneName: "Ñuñoa", address: "Av. Italia 1234", unit: "", reference: "" },
+      expectedPayment: { method: "cash", cashAmount: 20000, change: 3010 },
+      ...overrides,
+    });
+  const staff = { kind: "staff" as const, roles: ["owner" as const] };
+
+  it("labels every delivery action and ends with out for delivery → delivered", () => {
+    for (const status of ["pending", "accepted", "preparing", "ready", "out_for_delivery"] as const) {
+      for (const next of nextStatuses("delivery", status, staff)) expect(ACTION_LABELS[next], `${status} → ${next}`).toBeDefined();
+    }
+    expect(nextStatuses("delivery", "ready", staff)).toEqual(["out_for_delivery"]);
+    expect(nextStatuses("delivery", "out_for_delivery", staff)).toEqual(["delivered"]);
+  });
+
+  it("names the zone and hands over with «delivered»", () => {
+    expect(destinationLabel(delivery("o1", "pending"))).toBe("Delivery · Ñuñoa");
+    expect(destinationLabel(delivery("o1", "pending", { delivery: null }))).toBe("Delivery");
+    expect(handOverStatus("delivery")).toBe("delivered");
+    expect(handOverStatus("pickup")).toBe("picked_up");
+    expect(handOverStatus("dine_in")).toBeNull();
+    expect(needsPaymentWarning(delivery("o1", "out_for_delivery"), "delivered")).toBe(true);
+    expect(needsPaymentWarning(delivery("o1", "ready"), "out_for_delivery")).toBe(false);
+  });
+
+  it("puts orders on the road in their own column, shown only when delivery matters", () => {
+    expect(groupByColumn([delivery("o1", "out_for_delivery")]).out_for_delivery.map((o) => o.id)).toEqual(["o1"]);
+    expect(boardColumns(false).map((c) => c.status)).not.toContain("out_for_delivery");
+    expect(boardColumns(true).at(-1)?.status).toBe("out_for_delivery");
+  });
+
+  it("is late while the promised arrival passed and it is not delivered yet", () => {
+    const eta = "2026-10-07T12:30:00.000Z";
+    const after = Date.parse("2026-10-07T12:31:00.000Z");
+    expect(isPastReadyTime(delivery("o1", "out_for_delivery", { estimatedReadyAt: eta }), after)).toBe(true);
+    expect(isPastReadyTime(delivery("o1", "ready", { estimatedReadyAt: eta }), after)).toBe(true);
+    expect(isPastReadyTime(delivery("o1", "delivered", { estimatedReadyAt: eta }), after)).toBe(false);
+  });
+
+  it("offers only the channel filters in use", () => {
+    const off = { pickupEnabled: false, deliveryEnabled: false };
+    expect(availableChannelFilters(off, [order("o1", "pending")])).toEqual([]);
+    expect(availableChannelFilters({ ...off, deliveryEnabled: true }, []).map((f) => f.value)).toEqual(["all", "dine_in", "delivery"]);
+    expect(availableChannelFilters({ pickupEnabled: true, deliveryEnabled: false }, [delivery("o1", "pending")]).map((f) => f.label)).toEqual([
+      "Todos",
+      "Mesa",
+      "Retiro",
+      "Delivery",
+    ]);
+    const list = [order("o1", "pending"), delivery("o2", "pending")];
+    expect(filterByChannel(list, "delivery").map((o) => o.id)).toEqual(["o2"]);
+  });
+});
+
+describe("riders", () => {
+  const assigned = (id: string, status: OrderStatus, riderId: string | null) =>
+    order(id, status, {
+      channel: "delivery",
+      tableLabel: null,
+      rider: riderId ? { id: riderId, name: "Rodrigo" } : null,
+    });
+
+  it("permissions: owner and cashier assign; riders without floor roles land on their deliveries", () => {
+    expect(canAssignRider(["owner"])).toBe(true);
+    expect(canAssignRider(["cashier"])).toBe(true);
+    expect(canAssignRider(["kitchen"])).toBe(false);
+    expect(canAssignRider(["rider"])).toBe(false);
+    expect(isRider(["kitchen", "rider"])).toBe(true);
+    expect(isRiderOnly(["rider"])).toBe(true);
+    expect(isRiderOnly(["kitchen", "rider"])).toBe(false);
+    expect(canWorkOrders(["rider"])).toBe(false);
+    expect(restaurantHomeHref({ id: "r1", myRoles: ["rider"] })).toBe("/admin/r1/repartos");
+    expect(restaurantHomeHref({ id: "r1", myRoles: ["owner", "rider"] })).toBe("/admin/r1");
+  });
+
+  it("a rider may only take ready orders out and deliver them", () => {
+    expect(nextStatuses("delivery", "pending", RIDER_ACTOR)).toEqual([]);
+    expect(nextStatuses("delivery", "preparing", RIDER_ACTOR)).toEqual([]);
+    expect(nextStatuses("delivery", "ready", RIDER_ACTOR)).toEqual(["out_for_delivery"]);
+    expect(nextStatuses("delivery", "out_for_delivery", RIDER_ACTOR)).toEqual(["delivered"]);
+    expect(RIDER_ACTION_LABELS.out_for_delivery).toBe("Salir a repartir");
+  });
+
+  it("keeps only my deliveries in progress from the restaurant's events", () => {
+    let list = upsertRiderDelivery([], assigned("o1", "ready", "me"), "me");
+    expect(list.map((o) => o.id)).toEqual(["o1"]);
+    list = upsertRiderDelivery(list, assigned("o2", "ready", "other"), "me");
+    expect(list.map((o) => o.id)).toEqual(["o1"]);
+    list = upsertRiderDelivery(list, order("o3", "pending"), "me");
+    expect(list.map((o) => o.id)).toEqual(["o1"]);
+    // Reassigned to someone else, or delivered: it leaves my list.
+    expect(upsertRiderDelivery(list, assigned("o1", "ready", "other"), "me")).toEqual([]);
+    const delivered = {
+      ...assigned("o1", "delivered", "me"),
+      statusHistory: (["pending", "accepted", "preparing", "ready", "out_for_delivery", "delivered"] as const).map((status) => ({
+        status,
+        at: "2026-10-07T12:00:00.000Z",
+        byName: null,
+      })),
+    };
+    expect(upsertRiderDelivery(list, delivered, "me")).toEqual([]);
+  });
+
+  it("sorts what is on the road first", () => {
+    const sorted = sortRiderDeliveries([
+      assigned("o1", "preparing", "me"),
+      assigned("o2", "ready", "me"),
+      assigned("o3", "out_for_delivery", "me"),
+    ]);
+    expect(sorted.map((o) => o.id)).toEqual(["o3", "o2", "o1"]);
+  });
+});
+
+describe("newerOrder by updatedAt", () => {
+  it("keeps the copy written last, even when only the rider changed", () => {
+    const old = order("o1", "ready", { channel: "delivery", rider: null, updatedAt: "2026-10-07T12:00:00.000Z" });
+    const assigned = order("o1", "ready", {
+      channel: "delivery",
+      rider: { id: "r1", name: "Pedro" },
+      updatedAt: "2026-10-07T12:00:05.000Z",
+    });
+
+    expect(newerOrder(assigned, old).rider).toEqual({ id: "r1", name: "Pedro" });
+    expect(newerOrder(old, assigned).rider).toEqual({ id: "r1", name: "Pedro" });
   });
 });

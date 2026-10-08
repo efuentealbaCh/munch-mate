@@ -1,23 +1,27 @@
 "use client";
 
-import { ORDER_CHANNEL_LABELS, type OrderStatus, type OrderView, PAYMENT_METHOD_LABELS } from "@app/types";
+import { type OrderStatus, type OrderView, PAYMENT_METHOD_LABELS } from "@app/types";
 import {
   AlarmClockIcon,
+  BikeIcon,
   ClockIcon,
   DownloadIcon,
   MailIcon,
+  MapPinIcon,
   MessageSquareTextIcon,
   PhoneIcon,
   ShoppingBagIcon,
   UserIcon,
+  WalletIcon,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { formatClockTime, formatPhone, telHref } from "@/lib/format";
 import { formatPrice, formatPriceDelta } from "@/lib/money";
-import { showsReadyEstimate } from "@/lib/order-tracking";
-import { ACTION_LABELS, elapsedLabel, isPastReadyTime, minutesSince } from "@/lib/orders-board";
+import { addressLine, expectedPaymentLabel, mapsSearchUrl } from "@/lib/delivery";
+import { estimateLabel, showsReadyEstimate } from "@/lib/order-tracking";
+import { ACTION_LABELS, destinationLabel, elapsedLabel, isFinalStatus, isPastReadyTime, minutesSince } from "@/lib/orders-board";
 import { cn } from "@/lib/utils";
 
 /** Paid with its method, or "Sin pagar". */
@@ -40,19 +44,35 @@ interface OrderCardProps {
   /** Just arrived: highlighted for a few seconds. */
   fresh: boolean;
   /** A request for this order is in flight (its buttons are disabled). */
-  busy: OrderStatus | "payment" | null;
+  busy: OrderStatus | "payment" | "rider" | null;
   onAction(to: OrderStatus): void;
   onPay(): void;
   /** The receipt PDF is being downloaded. */
   receiptBusy: boolean;
   onReceipt(): void;
+  /** Owner/cashier: may assign a rider to delivery orders. */
+  canAssignRider: boolean;
+  onAssignRider(): void;
 }
 
 /**
- * One order on the kitchen board: big ticket number, where it goes (table or pickup), age, customer, items
- * and the next steps.
+ * One order on the kitchen board: big ticket number, where it goes (table, pickup or delivery zone), age,
+ * customer, delivery address and expected payment, items and the next steps.
  */
-export function OrderCard({ order, actions, canPay, now, fresh, busy, onAction, onPay, receiptBusy, onReceipt }: OrderCardProps) {
+export function OrderCard({
+  order,
+  actions,
+  canPay,
+  now,
+  fresh,
+  busy,
+  onAction,
+  onPay,
+  receiptBusy,
+  onReceipt,
+  canAssignRider,
+  onAssignRider,
+}: OrderCardProps) {
   const minutes = now ? minutesSince(order.createdAt, now) : 0;
   const forward = actions.filter((status) => status !== "rejected" && status !== "cancelled");
   const backward = actions.filter((status) => status === "rejected" || status === "cancelled");
@@ -82,8 +102,8 @@ export function OrderCard({ order, actions, canPay, now, fresh, busy, onAction, 
             ) : null
           ) : (
             <span className="mt-1.5 flex items-center gap-1.5 self-start rounded-md bg-brand-soft px-2 py-0.5 text-base font-semibold" data-testid="order-destination">
-              <ShoppingBagIcon className="size-4" aria-hidden />
-              {ORDER_CHANNEL_LABELS[order.channel]}
+              {order.channel === "delivery" ? <BikeIcon className="size-4" aria-hidden /> : <ShoppingBagIcon className="size-4" aria-hidden />}
+              {destinationLabel(order)}
             </span>
           )}
         </div>
@@ -105,7 +125,7 @@ export function OrderCard({ order, actions, canPay, now, fresh, busy, onAction, 
           data-testid="ready-at"
         >
           <AlarmClockIcon className="size-4" aria-hidden />
-          Listo aprox. {formatClockTime(order.estimatedReadyAt)}
+          {estimateLabel(order.channel)} {formatClockTime(order.estimatedReadyAt)}
           {isPastReadyTime(order, now) ? <span className="font-normal">(atrasado)</span> : null}
         </p>
       ) : null}
@@ -137,6 +157,10 @@ export function OrderCard({ order, actions, canPay, now, fresh, busy, onAction, 
         </div>
       ) : null}
 
+      {order.delivery ? (
+        <DeliveryBlock order={order} canAssignRider={canAssignRider} disabled={disabled} onAssignRider={onAssignRider} />
+      ) : null}
+
       <ul className="flex flex-col gap-1.5 border-t pt-2" aria-label="Productos">
         {order.items.map((item, index) => (
           <li key={`${item.productId}-${index}`} className="flex flex-col">
@@ -161,7 +185,12 @@ export function OrderCard({ order, actions, canPay, now, fresh, busy, onAction, 
       ) : null}
 
       <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-2">
-        <span className="font-bold tabular-nums">{formatPrice(order.total, order.currency)}</span>
+        <span className="flex flex-col">
+          <span className="font-bold tabular-nums">{formatPrice(order.total, order.currency)}</span>
+          {order.deliveryFee > 0 ? (
+            <span className="text-xs text-muted-foreground">incluye envío {formatPrice(order.deliveryFee, order.currency)}</span>
+          ) : null}
+        </span>
         <PaymentBadge order={order} />
       </div>
 
@@ -215,5 +244,71 @@ export function OrderCard({ order, actions, canPay, now, fresh, busy, onAction, 
         </div>
       ) : null}
     </article>
+  );
+}
+
+/** Address (with a map search), expected payment with the change to bring, and the rider. */
+function DeliveryBlock({
+  order,
+  canAssignRider,
+  disabled,
+  onAssignRider,
+}: {
+  order: OrderView;
+  canAssignRider: boolean;
+  disabled: boolean;
+  onAssignRider(): void;
+}) {
+  const delivery = order.delivery;
+  if (!delivery) return null;
+  const change = order.expectedPayment?.change ?? null;
+  return (
+    <div className="flex flex-col gap-2 rounded-lg bg-muted/60 p-2.5 text-sm">
+      <div className="flex items-start gap-1.5" data-testid="order-address">
+        <MapPinIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
+        <span className="flex min-w-0 flex-col">
+          <span className="font-semibold break-words">{addressLine(delivery)}</span>
+          {delivery.reference ? <span className="break-words text-muted-foreground">Ref.: {delivery.reference}</span> : null}
+          <a
+            href={mapsSearchUrl(delivery)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-0.5 inline-flex min-h-8 items-center self-start rounded-md font-medium text-primary underline-offset-4 outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
+          >
+            Ver en el mapa<span className="sr-only"> (se abre en una pestaña nueva)</span>
+          </a>
+        </span>
+      </div>
+      {order.expectedPayment && order.paymentStatus === "unpaid" ? (
+        <p className="flex items-start gap-1.5" data-testid="expected-payment">
+          <WalletIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
+          <span>
+            Paga al recibir: <span className="font-medium">{expectedPaymentLabel(order.expectedPayment, order.currency)}</span>
+            {change !== null && change > 0 ? (
+              <span className="mt-1 block font-bold text-foreground">
+                Llevar vuelto: <span className="tabular-nums">{formatPrice(change, order.currency)}</span>
+              </span>
+            ) : null}
+          </span>
+        </p>
+      ) : null}
+      <div className="flex flex-wrap items-center justify-between gap-2" data-testid="order-rider">
+        <span className="flex items-center gap-1.5">
+          <BikeIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+          {order.rider ? (
+            <span>
+              Repartidor: <span className="font-medium">{order.rider.name}</span>
+            </span>
+          ) : (
+            <span className="text-muted-foreground">Sin repartidor</span>
+          )}
+        </span>
+        {canAssignRider && !isFinalStatus(order.status) ? (
+          <Button size="sm" variant="outline" disabled={disabled} onClick={onAssignRider}>
+            {order.rider ? "Cambiar" : "Asignar repartidor"}
+          </Button>
+        ) : null}
+      </div>
+    </div>
   );
 }

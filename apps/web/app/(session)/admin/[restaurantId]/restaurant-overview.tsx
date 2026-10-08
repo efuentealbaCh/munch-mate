@@ -12,6 +12,7 @@ import { usePublicHost } from "@/hooks/use-slug-availability";
 import { useAuth } from "@/lib/auth-context";
 import { teamApi } from "@/lib/endpoints";
 import { errorMessage } from "@/lib/errors";
+import { DeliverySettings } from "./delivery-settings";
 import { PickupSettings } from "./pickup-settings";
 import { useRestaurant } from "./restaurant-context";
 import { ProfileForm } from "./profile-form";
@@ -62,6 +63,12 @@ export function RestaurantOverview() {
                 <dd data-testid="pickup-status">{restaurant.pickupEnabled ? "Activados" : "Desactivados (lo cambia el dueño)"}</dd>
               </div>
             )}
+            {isOwner ? null : (
+              <div>
+                <dt className="text-muted-foreground">Delivery</dt>
+                <dd data-testid="delivery-status">{restaurant.deliveryEnabled ? "Activado" : "Desactivado (lo cambia el dueño)"}</dd>
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <dt className="text-muted-foreground">Moneda</dt>
@@ -99,6 +106,17 @@ export function RestaurantOverview() {
             </CardHeader>
             <CardContent>
               <PickupSettings />
+            </CardContent>
+          </Card>
+          <Card className={CARD_SPACING}>
+            <CardHeader>
+              <CardTitle>
+                <h2>Delivery</h2>
+              </CardTitle>
+              <CardDescription>Pedidos desde tu menú público con despacho a domicilio.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <DeliverySettings />
             </CardContent>
           </Card>
           <Card className={CARD_SPACING}>

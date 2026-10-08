@@ -10,8 +10,8 @@ import { formatPrice } from "@/lib/money";
 import { cn } from "@/lib/utils";
 
 /**
- * Cart pieces shared by the table page (/m/[token]) and the pickup menu (/r/[slug]); each page brings its
- * own checkout form (dine-in asks for an optional name, pickup for name and phone).
+ * Cart pieces shared by the table page (/m/[token]) and the public menu (/r/[slug]); each page brings its
+ * own checkout form (dine-in asks for an optional name, pickup for name and phone, delivery adds the address).
  */
 
 /** A cart line the api refused (sold out, removed from the menu, invalid options). */
@@ -57,11 +57,15 @@ export function CartSheet({
   );
 }
 
-/** Lines with quantity steppers, the refused-line warning and the estimated total. */
+/**
+ * Lines with quantity steppers, the refused-line warning and the estimated total. With `fee` (delivery) the
+ * summary shows subtotal, shipping and total; `total` must then include the fee.
+ */
 export function CartLines({
   lines,
   currency,
   total,
+  fee,
   problem,
   onQuantity,
   onRemove,
@@ -70,6 +74,8 @@ export function CartLines({
   lines: CartLine[];
   currency: string;
   total: number;
+  /** Delivery fee of the chosen zone (label e.g. "Envío a Ñuñoa"); omitted for table and pickup orders. */
+  fee?: { label: string; amount: number };
   problem: LineProblem | null;
   onQuantity(key: string, quantity: number): void;
   onRemove(key: string): void;
@@ -126,7 +132,23 @@ export function CartLines({
         })}
       </ul>
 
-      <div className="flex items-baseline justify-between border-t px-4 py-3">
+      {fee ? (
+        <dl className="flex flex-col gap-1 border-t px-4 pt-3 text-sm">
+          <div className="flex justify-between gap-3">
+            <dt className="text-muted-foreground">Subtotal</dt>
+            <dd className="tabular-nums" data-testid="cart-subtotal">
+              {formatPrice(total - fee.amount, currency)}
+            </dd>
+          </div>
+          <div className="flex justify-between gap-3">
+            <dt className="text-muted-foreground">{fee.label}</dt>
+            <dd className="tabular-nums" data-testid="cart-fee">
+              {fee.amount > 0 ? formatPrice(fee.amount, currency) : "Gratis"}
+            </dd>
+          </div>
+        </dl>
+      ) : null}
+      <div className={cn("flex items-baseline justify-between px-4 py-3", !fee && "border-t")}>
         <span className="font-semibold">Total</span>
         <span className="text-xl font-bold tabular-nums" data-testid="cart-total">
           {formatPrice(total, currency)}

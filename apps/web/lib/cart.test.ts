@@ -226,6 +226,19 @@ describe("idempotent submission", () => {
     expect(changed.clientOrderId).toBe("id-2");
   });
 
+  it("treats a delivery with another address or payment as a new submission", () => {
+    const base = { items, customerName: "Ana", customerPhone: "+56912345678" };
+    const delivery = {
+      ...base,
+      delivery: { zoneId: "z1", address: "Av. Italia 1234" },
+      payment: { method: "cash" as const, cashAmount: 20000 },
+    };
+    expect(checkoutFingerprint(delivery)).toBe(checkoutFingerprint({ ...delivery }));
+    expect(checkoutFingerprint(delivery)).not.toBe(checkoutFingerprint(base));
+    expect(checkoutFingerprint(delivery)).not.toBe(checkoutFingerprint({ ...delivery, delivery: { zoneId: "z1", address: "Otra 1" } }));
+    expect(checkoutFingerprint(delivery)).not.toBe(checkoutFingerprint({ ...delivery, payment: { method: "transfer" as const } }));
+  });
+
   it("treats a pickup retry with other contact data as a new submission", () => {
     const pickup = { items, customerName: "Ana", customerPhone: "+56912345678" };
     expect(checkoutFingerprint(pickup)).toBe(checkoutFingerprint({ ...pickup }));

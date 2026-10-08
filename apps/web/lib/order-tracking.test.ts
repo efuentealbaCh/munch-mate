@@ -3,6 +3,7 @@ import type { KeyValueStorage } from "./cart";
 import {
   customerStatusHint,
   customerSteps,
+  estimateLabel,
   findMyOrder,
   loadMyOrders,
   MY_ORDERS_KEY,
@@ -114,5 +115,29 @@ describe("pickup tracking", () => {
     expect(showsReadyEstimate({ status: "ready", estimatedReadyAt: eta })).toBe(false);
     expect(showsReadyEstimate({ status: "picked_up", estimatedReadyAt: eta })).toBe(false);
     expect(showsReadyEstimate({ status: "accepted", estimatedReadyAt: null })).toBe(false);
+  });
+});
+
+describe("delivery tracking", () => {
+  it("adds the road to the steps", () => {
+    expect(customerSteps("delivery")).toEqual(["pending", "accepted", "preparing", "ready", "out_for_delivery", "delivered"]);
+    expect(stepIndex("out_for_delivery", "delivery")).toBe(4);
+    expect(stepIndex("out_for_delivery", "pickup")).toBe(-1);
+  });
+
+  it("speaks of the road and the arrival", () => {
+    expect(customerStatusHint("out_for_delivery", "delivery")).toBe("Tu pedido va en camino.");
+    expect(customerStatusHint("ready", "delivery")).toMatch(/sale a reparto/);
+    expect(customerStatusHint("ready", "pickup")).toMatch(/retirarlo/);
+    expect(estimateLabel("delivery")).toBe("Llega aprox.");
+    expect(estimateLabel("pickup")).toBe("Listo aprox.");
+  });
+
+  it("keeps the arrival time until it is delivered", () => {
+    const eta = "2026-10-07T12:30:00.000Z";
+    expect(showsReadyEstimate({ status: "ready", estimatedReadyAt: eta, channel: "delivery" })).toBe(true);
+    expect(showsReadyEstimate({ status: "out_for_delivery", estimatedReadyAt: eta, channel: "delivery" })).toBe(true);
+    expect(showsReadyEstimate({ status: "delivered", estimatedReadyAt: eta, channel: "delivery" })).toBe(false);
+    expect(showsReadyEstimate({ status: "ready", estimatedReadyAt: eta, channel: "pickup" })).toBe(false);
   });
 });

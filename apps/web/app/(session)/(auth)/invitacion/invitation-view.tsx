@@ -15,6 +15,7 @@ import { useAuth } from "@/lib/auth-context";
 import { invitationsApi } from "@/lib/endpoints";
 import { errorMessage, hasCode } from "@/lib/errors";
 import { formatDateTime } from "@/lib/format";
+import { restaurantHomeHref } from "@/lib/orders-board";
 import { withQuery } from "@/lib/safe-next";
 
 export function InvitationView() {
@@ -69,7 +70,8 @@ function InvitationDetails({ token, invitation }: { token: string; invitation: I
       // Accepting also verifies the email: refresh so the session reflects it.
       await syncSession().catch(() => undefined);
       toast.success(`Te uniste a ${restaurant.name}`);
-      router.push(`/admin/${restaurant.id}`);
+      // Riders without floor roles land on their deliveries, everyone else on the summary.
+      router.push(restaurantHomeHref(restaurant));
     } catch (failure) {
       setError(failure);
       setPending(false);

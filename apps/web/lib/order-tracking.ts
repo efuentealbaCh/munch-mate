@@ -99,9 +99,18 @@ export const DINE_IN_STEPS: readonly OrderStatus[] = ["pending", "accepted", "pr
 /** Happy path of a pickup order: ends when the customer picks it up. */
 export const PICKUP_STEPS: readonly OrderStatus[] = ["pending", "accepted", "preparing", "ready", "picked_up"];
 
-/** Steps shown to the customer for a channel (delivery arrives in phase 5; until then it uses pickup's). */
+/** Happy path of a delivery order: after "Listo" it goes out with a rider and ends delivered. */
+export const DELIVERY_STEPS: readonly OrderStatus[] = ["pending", "accepted", "preparing", "ready", "out_for_delivery", "delivered"];
+
+const STEPS_BY_CHANNEL: Record<OrderChannel, readonly OrderStatus[]> = {
+  dine_in: DINE_IN_STEPS,
+  pickup: PICKUP_STEPS,
+  delivery: DELIVERY_STEPS,
+};
+
+/** Steps shown to the customer for a channel. */
 export function customerSteps(channel: OrderChannel): readonly OrderStatus[] {
-  return channel === "dine_in" ? DINE_IN_STEPS : PICKUP_STEPS;
+  return STEPS_BY_CHANNEL[channel];
 }
 
 /**
@@ -131,15 +140,37 @@ const PICKUP_STATUS_HINTS: Partial<Record<OrderStatus, string>> = {
   picked_up: "¡Gracias! Ya retiraste tu pedido.",
 };
 
+/** Delivery wording: the order travels to the customer's address. */
+const DELIVERY_STATUS_HINTS: Partial<Record<OrderStatus, string>> = {
+  ...PICKUP_STATUS_HINTS,
+  ready: "Tu pedido está listo y pronto sale a reparto.",
+  out_for_delivery: "Tu pedido va en camino.",
+  delivered: "¡Entregado! Buen provecho.",
+};
+
+const HINTS_BY_CHANNEL: Record<OrderChannel, Partial<Record<OrderStatus, string>>> = {
+  dine_in: CUSTOMER_STATUS_HINTS,
+  pickup: PICKUP_STATUS_HINTS,
+  delivery: DELIVERY_STATUS_HINTS,
+};
+
 /** Hint under the status for the order's channel. */
 export function customerStatusHint(status: OrderStatus, channel: OrderChannel): string | undefined {
-  return (channel === "dine_in" ? CUSTOMER_STATUS_HINTS : PICKUP_STATUS_HINTS)[status];
+  return HINTS_BY_CHANNEL[channel][status];
 }
 
 /**
- * Whether the "ready at about HH:MM" estimate is still worth showing: once the order is ready (or over) the
- * customer needs "come for it" instead of a time.
+ * Whether the "ready/arrives at about HH:MM" estimate is still worth showing. Pickup: until it is ready (then
+ * the customer needs "come for it" instead of a time). Delivery: the time is the arrival, so until delivered.
  */
-export function showsReadyEstimate(order: { status: OrderStatus; estimatedReadyAt: string | null }): boolean {
-  return order.estimatedReadyAt !== null && (order.status === "accepted" || order.status === "preparing");
+export function showsReadyEstimate(order: { status: OrderStatus; estimatedReadyAt: string | null; channel?: OrderChannel }): boolean {
+  if (order.estimatedReadyAt === null) return false;
+  const statuses: readonly OrderStatus[] =
+    order.channel === "delivery" ? ["accepted", "preparing", "ready", "out_for_delivery"] : ["accepted", "preparing"];
+  return statuses.includes(order.status);
+}
+
+/** "Listo aprox." for pickup (and dine-in), "Llega aprox." for delivery: what the estimate means. */
+export function estimateLabel(channel: OrderChannel): string {
+  return channel === "delivery" ? "Llega aprox." : "Listo aprox.";
 }

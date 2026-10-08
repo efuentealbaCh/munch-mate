@@ -23,14 +23,43 @@ export function canRegisterPayment(roles: readonly RestaurantRole[]): boolean {
   return roles.some((role) => PAYMENT_ROLES.includes(role));
 }
 
+/** Roles that assign deliveries to riders (same as payments: owner and cashier). */
+export const RIDER_ASSIGN_ROLES: readonly RestaurantRole[] = ["owner", "cashier"];
+
+export function canAssignRider(roles: readonly RestaurantRole[]): boolean {
+  return roles.some((role) => RIDER_ASSIGN_ROLES.includes(role));
+}
+
+/** Members with the rider role get the "Repartos" screen (their own deliveries). */
+export function isRider(roles: readonly RestaurantRole[]): boolean {
+  return roles.includes("rider");
+}
+
+/** Riders without any floor role cannot see the board: their home is the "Repartos" screen. */
+export function isRiderOnly(roles: readonly RestaurantRole[]): boolean {
+  return isRider(roles) && !canWorkOrders(roles);
+}
+
+/** Where a member lands when opening a restaurant: riders only → their deliveries; everyone else → summary. */
+export function restaurantHomeHref(restaurant: { id: string; myRoles: readonly RestaurantRole[] }): string {
+  const base = `/admin/${restaurant.id}`;
+  return isRiderOnly(restaurant.myRoles) ? `${base}/repartos` : base;
+}
+
 export const BOARD_COLUMNS = [
   { status: "pending", title: "Pendientes" },
   { status: "accepted", title: "Aceptados" },
   { status: "preparing", title: "En preparación" },
   { status: "ready", title: "Listos" },
+  { status: "out_for_delivery", title: "En reparto" },
 ] as const satisfies ReadonlyArray<{ status: OrderStatus; title: string }>;
 
 export type BoardStatus = (typeof BOARD_COLUMNS)[number]["status"];
+
+/** Board columns to render: "En reparto" only matters when delivery is on (or such orders still exist). */
+export function boardColumns(includeDelivery: boolean): ReadonlyArray<(typeof BOARD_COLUMNS)[number]> {
+  return includeDelivery ? BOARD_COLUMNS : BOARD_COLUMNS.filter((column) => column.status !== "out_for_delivery");
+}
 
 /** Button text for moving an order to each status (the status label itself reads wrong on a button). */
 export const ACTION_LABELS: Partial<Record<OrderStatus, string>> = {
@@ -39,6 +68,8 @@ export const ACTION_LABELS: Partial<Record<OrderStatus, string>> = {
   ready: "Listo",
   served: "Servido",
   picked_up: "Entregar",
+  out_for_delivery: "En reparto",
+  delivered: "Entregado",
   rejected: "Rechazar",
   cancelled: "Cancelar",
 };
@@ -57,19 +88,40 @@ export function isDroppedStatus(status: OrderStatus): boolean {
 
 // ── Channels ────────────────────────────────────────────────────────────────
 
-/** Where the order goes, as the staff read it on a card: "Mesa 4" or "Para retirar". */
-export function destinationLabel(order: Pick<OrderView, "channel" | "tableLabel">): string {
+/** Where the order goes, as the staff read it on a card: "Mesa 4", "Para retirar" or "Delivery · Ñuñoa". */
+export function destinationLabel(order: Pick<OrderView, "channel" | "tableLabel"> & { delivery?: OrderView["delivery"] }): string {
   if (order.channel === "dine_in") return order.tableLabel ?? "Sin mesa";
+  if (order.channel === "delivery" && order.delivery?.zoneName) return `${ORDER_CHANNEL_LABELS.delivery} · ${order.delivery.zoneName}`;
   return ORDER_CHANNEL_LABELS[order.channel];
 }
 
-export type ChannelFilter = "all" | Extract<OrderChannel, "dine_in" | "pickup">;
+export type ChannelFilter = "all" | OrderChannel;
 
 export const CHANNEL_FILTERS = [
   { value: "all", label: "Todos" },
   { value: "dine_in", label: "Mesa" },
   { value: "pickup", label: "Retiro" },
+  { value: "delivery", label: "Delivery" },
 ] as const satisfies ReadonlyArray<{ value: ChannelFilter; label: string }>;
+
+/**
+ * Filters worth offering: "Todos", "Mesa" (tables always exist) and each other channel that is turned on or
+ * still has orders in the lists. With only tables there is nothing to filter (empty result).
+ */
+export function availableChannelFilters(
+  restaurant: { pickupEnabled: boolean; deliveryEnabled: boolean },
+  orders: readonly Pick<OrderView, "channel">[],
+): Array<(typeof CHANNEL_FILTERS)[number]> {
+  const present = new Set(orders.map((order) => order.channel));
+  const shown = CHANNEL_FILTERS.filter(
+    (filter) =>
+      filter.value === "all" ||
+      filter.value === "dine_in" ||
+      (filter.value === "pickup" && (restaurant.pickupEnabled || present.has("pickup"))) ||
+      (filter.value === "delivery" && (restaurant.deliveryEnabled || present.has("delivery"))),
+  );
+  return shown.length > 2 ? shown : [];
+}
 
 export function filterByChannel(orders: readonly OrderView[], filter: ChannelFilter): OrderView[] {
   return filter === "all" ? [...orders] : orders.filter((order) => order.channel === filter);
@@ -80,16 +132,29 @@ export function filterByChannel(orders: readonly OrderView[], filter: ChannelFil
  * must see a warning first and get the chance to register the payment.
  */
 export function needsPaymentWarning(order: Pick<OrderView, "paymentStatus">, to: OrderStatus): boolean {
-  return to === "picked_up" && order.paymentStatus === "unpaid";
+  return (to === "picked_up" || to === "delivered") && order.paymentStatus === "unpaid";
+}
+
+/** The status that hands an order over to the customer in its channel (null for dine-in, which is "Servido"). */
+export function handOverStatus(channel: OrderChannel): Extract<OrderStatus, "picked_up" | "delivered"> | null {
+  if (channel === "pickup") return "picked_up";
+  if (channel === "delivery") return "delivered";
+  return null;
 }
 
 /**
  * The restaurant promised a time and it already passed while the order is not ready yet (shown in red).
  * @param now Current time in ms (0 = unknown → never late).
  */
-export function isPastReadyTime(order: Pick<OrderView, "status" | "estimatedReadyAt">, now: number): boolean {
+export function isPastReadyTime(
+  order: Pick<OrderView, "status" | "estimatedReadyAt"> & { channel?: OrderChannel },
+  now: number,
+): boolean {
   if (!now || !order.estimatedReadyAt) return false;
-  if (order.status !== "accepted" && order.status !== "preparing") return false;
+  // Delivery promises an arrival time: it is still late while ready or on its way.
+  const waiting: readonly OrderStatus[] =
+    order.channel === "delivery" ? ["accepted", "preparing", "ready", "out_for_delivery"] : ["accepted", "preparing"];
+  if (!waiting.includes(order.status)) return false;
   const eta = new Date(order.estimatedReadyAt).getTime();
   return !Number.isNaN(eta) && now > eta;
 }
@@ -101,7 +166,7 @@ const byCreatedAsc = (a: OrderView, b: OrderView) => a.createdAt.localeCompare(b
  * Orders in other statuses are left out.
  */
 export function groupByColumn(orders: readonly OrderView[]): Record<BoardStatus, OrderView[]> {
-  const columns: Record<BoardStatus, OrderView[]> = { pending: [], accepted: [], preparing: [], ready: [] };
+  const columns: Record<BoardStatus, OrderView[]> = { pending: [], accepted: [], preparing: [], ready: [], out_for_delivery: [] };
   for (const order of orders) {
     if (order.status in columns) columns[order.status as BoardStatus].push(order);
   }
@@ -118,9 +183,15 @@ function revision(order: OrderView): number {
   return order.statusHistory.length * 2 + (order.paymentStatus === "paid" ? 1 : 0);
 }
 
-/** @returns The newer of two copies of the same order (`incoming` on ties: it is the latest received). */
+/**
+ * @returns The newer of two copies of the same order: by `updatedAt` (every write bumps it, including rider
+ *   assignments), then by revision; `incoming` on ties (it is the latest received).
+ */
 export function newerOrder(current: OrderView | undefined, incoming: OrderView): OrderView {
-  return current && revision(current) > revision(incoming) ? current : incoming;
+  if (!current) return incoming;
+  const byTime = Date.parse(current.updatedAt) - Date.parse(incoming.updatedAt);
+  if (byTime !== 0 && !Number.isNaN(byTime)) return byTime > 0 ? current : incoming;
+  return revision(current) > revision(incoming) ? current : incoming;
 }
 
 /**
@@ -155,6 +226,36 @@ export function mergeFetched(
   ];
   return activeOnly ? merged.filter((order) => !isFinalStatus(order.status)) : merged;
 }
+
+/**
+ * Applies an order event to a rider's own list. Riders receive every order of the restaurant room, so only
+ * deliveries assigned to them and still in progress stay (an unassigned or reassigned one leaves).
+ */
+export function upsertRiderDelivery(list: readonly OrderView[], incoming: OrderView, riderId: string): OrderView[] {
+  const mine = incoming.channel === "delivery" && incoming.rider?.id === riderId;
+  if (!mine) return list.filter((order) => order.id !== incoming.id);
+  return upsertOrder(list, incoming, true);
+}
+
+const RIDER_STATUS_ORDER: readonly OrderStatus[] = ["out_for_delivery", "ready", "preparing", "accepted", "pending"];
+
+/** A rider's list: what is on the road first, then what is ready to go out, then the rest; oldest first in each. */
+export function sortRiderDeliveries(orders: readonly OrderView[]): OrderView[] {
+  const rank = (order: OrderView) => {
+    const index = RIDER_STATUS_ORDER.indexOf(order.status);
+    return index === -1 ? RIDER_STATUS_ORDER.length : index;
+  };
+  return [...orders].sort((a, b) => rank(a) - rank(b) || byCreatedAsc(a, b));
+}
+
+/** Rider-only actor: on the "Repartos" screen even a cashier-rider only takes orders out and delivers them. */
+export const RIDER_ACTOR = { kind: "staff", roles: ["rider"] } as const satisfies { kind: "staff"; roles: readonly RestaurantRole[] };
+
+/** Button text on the rider's screen (different from the board's: it is the rider's own action). */
+export const RIDER_ACTION_LABELS: Partial<Record<OrderStatus, string>> = {
+  out_for_delivery: "Salir a repartir",
+  delivered: "Entregado",
+};
 
 export function pendingCount(orders: readonly OrderView[]): number {
   return orders.filter((order) => order.status === "pending").length;
