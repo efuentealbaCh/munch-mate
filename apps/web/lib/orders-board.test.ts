@@ -7,10 +7,14 @@ import {
   canRegisterPayment,
   canWorkOrders,
   dayTotals,
+  destinationLabel,
   elapsedLabel,
+  filterByChannel,
   groupByColumn,
+  isPastReadyTime,
   mergeFetched,
   minutesSince,
+  needsPaymentWarning,
   newerOrder,
   pendingCount,
   sortNewestFirst,
@@ -36,8 +40,12 @@ function order(id: string, status: OrderStatus, overrides: Partial<OrderView> = 
     total: 1000,
     currency: "CLP",
     customerName: "",
+    customerPhone: "",
+    customerEmail: "",
     note: "",
     tableLabel: "Mesa 1",
+    estimatedReadyAt: null,
+    receiptAvailable: false,
     createdAt: "2026-10-07T12:00:00.000Z",
     ...overrides,
   };
@@ -155,5 +163,55 @@ describe("dayTotals", () => {
       order("o2", "pending", { createdAt: "2026-10-07T12:00:00.000Z" }),
     ]);
     expect(list.map((o) => o.id)).toEqual(["o2", "o1"]);
+  });
+});
+
+describe("pickup orders", () => {
+  const pickup = (id: string, status: OrderStatus, overrides: Partial<OrderView> = {}) =>
+    order(id, status, { channel: "pickup", tableLabel: null, customerName: "Ana", customerPhone: "+56912345678", ...overrides });
+
+  it("labels every pickup action, ending with Entregar", () => {
+    const staff = { kind: "staff" as const, roles: ["owner" as const] };
+    for (const status of ["pending", "accepted", "preparing", "ready"] as const) {
+      for (const next of nextStatuses("pickup", status, staff)) expect(ACTION_LABELS[next], `${status} → ${next}`).toBeDefined();
+    }
+    expect(nextStatuses("pickup", "ready", staff)).toEqual(["picked_up"]);
+    expect(ACTION_LABELS.picked_up).toBe("Entregar");
+  });
+
+  it("names the destination: the table or «Para retirar»", () => {
+    expect(destinationLabel(order("o1", "pending"))).toBe("Mesa 1");
+    expect(destinationLabel(order("o2", "pending", { tableLabel: null }))).toBe("Sin mesa");
+    expect(destinationLabel(pickup("o3", "pending"))).toBe("Para retirar");
+  });
+
+  it("filters by channel without touching the list", () => {
+    const list = [order("o1", "pending"), pickup("o2", "pending"), order("o3", "ready")];
+    expect(filterByChannel(list, "all").map((o) => o.id)).toEqual(["o1", "o2", "o3"]);
+    expect(filterByChannel(list, "dine_in").map((o) => o.id)).toEqual(["o1", "o3"]);
+    expect(filterByChannel(list, "pickup").map((o) => o.id)).toEqual(["o2"]);
+    expect(list).toHaveLength(3);
+  });
+
+  it("warns only when handing over an unpaid order", () => {
+    expect(needsPaymentWarning(pickup("o1", "ready"), "picked_up")).toBe(true);
+    expect(needsPaymentWarning(pickup("o1", "ready", { paymentStatus: "paid", paymentMethod: "cash" }), "picked_up")).toBe(false);
+    expect(needsPaymentWarning(pickup("o1", "preparing"), "ready")).toBe(false);
+  });
+
+  it("flags a promised time that passed while the order is still in the kitchen", () => {
+    const eta = "2026-10-07T12:30:00.000Z";
+    const after = Date.parse("2026-10-07T12:31:00.000Z");
+    const before = Date.parse("2026-10-07T12:29:00.000Z");
+    expect(isPastReadyTime(pickup("o1", "preparing", { estimatedReadyAt: eta }), after)).toBe(true);
+    expect(isPastReadyTime(pickup("o1", "preparing", { estimatedReadyAt: eta }), before)).toBe(false);
+    expect(isPastReadyTime(pickup("o1", "ready", { estimatedReadyAt: eta }), after)).toBe(false);
+    expect(isPastReadyTime(pickup("o1", "accepted", { estimatedReadyAt: null }), after)).toBe(false);
+    expect(isPastReadyTime(pickup("o1", "accepted", { estimatedReadyAt: eta }), 0)).toBe(false);
+  });
+
+  it("counts picked-up orders as sales", () => {
+    const totals = dayTotals([pickup("o1", "picked_up", { total: 2000 }), pickup("o2", "cancelled", { total: 500 })]);
+    expect(totals).toEqual({ count: 1, total: 2000, paid: 0, dropped: 1 });
   });
 });

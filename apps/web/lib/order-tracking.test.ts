@@ -1,6 +1,18 @@
 import { describe, expect, it } from "vitest";
 import type { KeyValueStorage } from "./cart";
-import { findMyOrder, loadMyOrders, MY_ORDERS_KEY, type MyOrder, parseTrackingHash, rememberOrder, stepIndex, trackingHref } from "./order-tracking";
+import {
+  customerStatusHint,
+  customerSteps,
+  findMyOrder,
+  loadMyOrders,
+  MY_ORDERS_KEY,
+  type MyOrder,
+  parseTrackingHash,
+  rememberOrder,
+  showsReadyEstimate,
+  stepIndex,
+  trackingHref,
+} from "./order-tracking";
 
 const TOKEN = "Qk3x9d_-aB7cD8eF9gH0iJ1kL2mN3oP4qR5sT6uV7wX";
 
@@ -76,5 +88,31 @@ describe("status steps", () => {
     expect(stepIndex("served")).toBe(4);
     expect(stepIndex("rejected")).toBe(-1);
     expect(stepIndex("cancelled")).toBe(-1);
+  });
+});
+
+describe("pickup tracking", () => {
+  it("ends the steps in «picked_up» instead of «served»", () => {
+    expect(customerSteps("pickup")).toEqual(["pending", "accepted", "preparing", "ready", "picked_up"]);
+    expect(customerSteps("dine_in").at(-1)).toBe("served");
+    expect(stepIndex("picked_up", "pickup")).toBe(4);
+    expect(stepIndex("served", "pickup")).toBe(-1);
+    expect(stepIndex("ready", "pickup")).toBe(3);
+  });
+
+  it("tells a pickup customer to come for the order, and a table customer that it is on its way", () => {
+    expect(customerStatusHint("ready", "pickup")).toBe("¡Tu pedido está listo! Ya puedes retirarlo.");
+    expect(customerStatusHint("ready", "dine_in")).toBe("Tu pedido está listo. Ya te lo llevan a la mesa.");
+    expect(customerStatusHint("picked_up", "pickup")).toBeDefined();
+    expect(customerStatusHint("rejected", "pickup")).toBe("El local no pudo tomar tu pedido.");
+  });
+
+  it("shows the estimated time only while the order is accepted or in the kitchen", () => {
+    const eta = "2026-10-07T12:30:00.000Z";
+    expect(showsReadyEstimate({ status: "accepted", estimatedReadyAt: eta })).toBe(true);
+    expect(showsReadyEstimate({ status: "preparing", estimatedReadyAt: eta })).toBe(true);
+    expect(showsReadyEstimate({ status: "ready", estimatedReadyAt: eta })).toBe(false);
+    expect(showsReadyEstimate({ status: "picked_up", estimatedReadyAt: eta })).toBe(false);
+    expect(showsReadyEstimate({ status: "accepted", estimatedReadyAt: null })).toBe(false);
   });
 });

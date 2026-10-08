@@ -36,7 +36,7 @@ interface OrderProductSheetProps {
   onAdd(line: CartLine): void;
 }
 
-/** Product detail with modifier selection, quantity and note, for ordering from the table. */
+/** Product detail with modifier selection, quantity and note (table page and pickup menu). */
 export function OrderProductSheet({ product, currency, canOrder, onClose, onAdd }: OrderProductSheetProps) {
   const shown = useLastNonNull(product);
   return (

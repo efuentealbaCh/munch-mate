@@ -17,6 +17,7 @@ import {
   missingGroups,
   newClientOrderId,
   pickClientOrderId,
+  pickupCartScope,
   resolveModifiers,
   saveCart,
   saveCheckoutAttempt,
@@ -223,6 +224,23 @@ describe("idempotent submission", () => {
     expect(pickClientOrderId(first, checkoutFingerprint({ items }), makeId)).toBe(first);
     const changed = pickClientOrderId(first, checkoutFingerprint({ items, customerName: "Ana" }), makeId);
     expect(changed.clientOrderId).toBe("id-2");
+  });
+
+  it("treats a pickup retry with other contact data as a new submission", () => {
+    const pickup = { items, customerName: "Ana", customerPhone: "+56912345678" };
+    expect(checkoutFingerprint(pickup)).toBe(checkoutFingerprint({ ...pickup }));
+    expect(checkoutFingerprint(pickup)).not.toBe(checkoutFingerprint({ ...pickup, customerPhone: "+56987654321" }));
+    expect(checkoutFingerprint(pickup)).not.toBe(checkoutFingerprint({ ...pickup, customerEmail: "ana@correo.cl" }));
+    // Dine-in fingerprints keep their old shape (an attempt saved before this change still matches).
+    expect(checkoutFingerprint({ items, customerName: "Ana" })).toBe(JSON.stringify([items, "Ana", ""]));
+  });
+
+  it("keeps pickup carts apart from table carts", () => {
+    const storage = memoryStorage();
+    const line = createLine(product, { "g-size": ["o-big"] }, 1, "");
+    saveCart(storage, pickupCartScope("sangucheria"), [line]);
+    expect(loadCart(storage, pickupCartScope("sangucheria"))).toHaveLength(1);
+    expect(loadCart(storage, "sangucheria")).toEqual([]);
   });
 
   it("persists the attempt so a reload retries with the same id", () => {
