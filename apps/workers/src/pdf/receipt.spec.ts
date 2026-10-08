@@ -1,4 +1,5 @@
-import { formatDateTime, formatTime, renderReceipt } from "./receipt";
+import { formatMoney } from "@app/utils";
+import { formatDateTime, formatTime, paymentNote, renderReceipt } from "./receipt";
 
 describe("receipt", () => {
   it("prints dates and times in the restaurant's timezone", () => {
@@ -27,13 +28,37 @@ describe("receipt", () => {
         note: "Sin mayo",
         lineTotal: 14980,
       })),
+      subtotal: 374500,
+      deliveryFee: 0,
       total: 374500,
       currency: "CLP",
+      delivery: null,
+      expectedPayment: null,
       note: "Retiro en moto",
     });
 
     expect(pdf.subarray(0, 5).toString()).toBe("%PDF-");
     // 25 lines do not fit in one A5 page: pdfkit must have flowed onto more pages.
     expect(pdf.toString("latin1").match(/\/Type \/Page\b/g)!.length).toBeGreaterThan(1);
+  });
+});
+
+describe("paymentNote", () => {
+  const money = (amount: number) => formatMoney(amount);
+  const base = { channel: "delivery" as const, expectedPayment: null };
+
+  it("tells pickup customers they pay at the counter", () => {
+    expect(paymentNote({ channel: "pickup", expectedPayment: null } as never, money)).toBe(
+      "El pago se realiza en el local al retirar.",
+    );
+  });
+
+  it("states the cash the customer pays with and the change", () => {
+    expect(
+      paymentNote({ ...base, expectedPayment: { method: "cash", cashAmount: 10000, change: 2500 } } as never, money),
+    ).toBe("Pago contra entrega: Efectivo, paga con $10.000 (vuelto $2.500).");
+    expect(paymentNote({ ...base, expectedPayment: { method: "card_pos", cashAmount: null, change: null } } as never, money)).toBe(
+      "Pago contra entrega: Tarjeta (POS).",
+    );
   });
 });

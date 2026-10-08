@@ -1,4 +1,4 @@
-import { ORDER_CHANNEL_LABELS, type ReceiptJob } from "@app/types";
+import { ORDER_CHANNEL_LABELS, PAYMENT_METHOD_LABELS, type ReceiptJob } from "@app/types";
 import { formatMoney } from "@app/utils";
 import PDFDocument from "pdfkit";
 
@@ -68,12 +68,13 @@ export async function renderReceipt(receipt: ReceiptJob["receipt"]): Promise<Buf
   doc.x = x;
 
   if (receipt.estimatedReadyAt) {
+    const time = formatTime(receipt.estimatedReadyAt, receipt.timezone);
     doc.moveDown(0.4);
     doc
       .font("Helvetica-Bold")
       .fontSize(11)
       .fillColor(BRAND)
-      .text(`Listo para retirar aprox. a las ${formatTime(receipt.estimatedReadyAt, receipt.timezone)}`, x);
+      .text(receipt.channel === "delivery" ? `Llega aprox. a las ${time}` : `Listo para retirar aprox. a las ${time}`, x);
   }
   if (receipt.customerName || receipt.customerPhone) {
     doc.moveDown(0.4);
@@ -82,6 +83,11 @@ export async function renderReceipt(receipt: ReceiptJob["receipt"]): Promise<Buf
       .fontSize(9)
       .fillColor(INK)
       .text(`Cliente: ${[receipt.customerName, receipt.customerPhone].filter(Boolean).join(" · ")}`, x);
+  }
+  if (receipt.delivery) {
+    const { address, unit, reference, zoneName } = receipt.delivery;
+    doc.text(`Entrega: ${[address, unit].filter(Boolean).join(", ")} · ${zoneName}`, x, doc.y, { width: CONTENT });
+    if (reference) doc.fillColor(MUTED).text(`Referencia: ${reference}`, x, doc.y, { width: CONTENT });
   }
   rule(doc);
 
@@ -109,16 +115,34 @@ export async function renderReceipt(receipt: ReceiptJob["receipt"]): Promise<Buf
   }
   rule(doc);
 
+  if (receipt.deliveryFee > 0) {
+    const feeTop = doc.y;
+    doc.font("Helvetica").fontSize(10).fillColor(MUTED).text("Subtotal", x, feeTop);
+    doc.text(money(receipt.subtotal), x, feeTop, { width: CONTENT, align: "right" });
+    const shippingTop = doc.y + 2;
+    doc.text("Despacho", x, shippingTop);
+    doc.text(money(receipt.deliveryFee), x, shippingTop, { width: CONTENT, align: "right" });
+    doc.moveDown(0.5);
+  }
+
   const totalTop = doc.y;
   doc.font("Helvetica-Bold").fontSize(13).fillColor(INK).text("Total", x, totalTop);
   doc.text(money(receipt.total), x, totalTop, { width: CONTENT, align: "right" });
   doc.moveDown(1);
-  doc.font("Helvetica").fontSize(9).fillColor(MUTED).text("El pago se realiza en el local al retirar.", x, doc.y, {
-    width: CONTENT,
-  });
+  doc.font("Helvetica").fontSize(9).fillColor(MUTED).text(paymentNote(receipt, money), x, doc.y, { width: CONTENT });
 
   doc.end();
   return done;
+}
+
+/** How the customer pays: at the counter, or on delivery with the method (and change) they announced. */
+export function paymentNote(receipt: ReceiptJob["receipt"], money: (amount: number) => string): string {
+  if (receipt.channel !== "delivery") return "El pago se realiza en el local al retirar.";
+  const expected = receipt.expectedPayment;
+  if (!expected) return "Pago contra entrega.";
+  const method = PAYMENT_METHOD_LABELS[expected.method];
+  if (expected.cashAmount === null || expected.change === null) return `Pago contra entrega: ${method}.`;
+  return `Pago contra entrega: ${method}, paga con ${money(expected.cashAmount)} (vuelto ${money(expected.change)}).`;
 }
 
 /** Thin separator with some air around it. */

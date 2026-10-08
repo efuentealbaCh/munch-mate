@@ -37,6 +37,7 @@ describe("EmailProcessor", () => {
       template: "order-confirmation",
       data: {
         to: "berta@example.com",
+        channel: "pickup",
         customerName: "Berta",
         restaurantName: "Don Pepe",
         restaurantPhone: "",
@@ -64,6 +65,7 @@ describe("EmailProcessor", () => {
         template: "order-confirmation",
         data: {
           to: "berta@example.com",
+          channel: "pickup",
           customerName: "Berta",
           restaurantName: "Don Pepe",
           restaurantPhone: "",
