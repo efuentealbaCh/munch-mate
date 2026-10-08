@@ -1,4 +1,5 @@
 import {
+  type CreateDeliveryOrderInput,
   type CreateDineInOrderInput,
   type CreatedOrder,
   type CreatePickupOrderInput,
@@ -7,10 +8,12 @@ import {
   type OrderStatus,
   type OrderView,
   type PaymentMethod,
-  type PickupReadyMinutes,
   type PublicOrderView,
+  READY_MINUTES_BY_CHANNEL,
+  type RestaurantRole,
+  type RiderView,
 } from "@app/types";
-import { checkTransition, normalizePhone } from "@app/utils";
+import { checkTransition, formatMoney, normalizePhone } from "@app/utils";
 import {
   BadRequestException,
   ConflictException,
@@ -35,10 +38,12 @@ import { ProductsRepository } from "../menu/products.repository";
 import { RealtimeService } from "../realtime/realtime.service";
 import type { TenantContext } from "../restaurants/restaurant-access.guard";
 import { type RestaurantRecord, RestaurantsRepository } from "../restaurants/restaurants.repository";
+import { MembershipsRepository } from "../restaurants/memberships.repository";
 import { UsersRepository } from "../users/users.repository";
+import { DeliveryZonesRepository } from "./delivery-zones.repository";
 import { OrderValidationError, type PricingMenu, priceOrder } from "./order-pricing";
 import { businessDate, deriveAccessToken } from "./order-tokens";
-import { hasReceipt, receiptKey, toOrderView, toPublicOrderView } from "./order.views";
+import { hasReceipt, receiptKey, toExpectedPaymentView, toOrderView, toPublicOrderView } from "./order.views";
 import { CountersRepository } from "./counters.repository";
 import { DUPLICATE_KEY, type NewOrder, type OrderRecord, OrdersRepository } from "./orders.repository";
 import { TablesRepository } from "./tables.repository";
@@ -60,8 +65,32 @@ interface OrderRequest {
 /** What each channel adds to the order (who and where). */
 type ChannelFields = Pick<
   NewOrder,
-  "channel" | "customerName" | "customerPhone" | "customerEmail" | "tableId" | "tableLabel"
+  | "channel"
+  | "customerName"
+  | "customerPhone"
+  | "customerEmail"
+  | "tableId"
+  | "tableLabel"
+  | "delivery"
+  | "expectedPayment"
 >;
+
+/** Defaults of the channel fields; each channel overrides what it uses. */
+const NO_CONTACT = {
+  customerName: "",
+  customerPhone: "",
+  customerEmail: "",
+  tableId: null,
+  tableLabel: null,
+  delivery: null,
+  expectedPayment: null,
+} satisfies Omit<ChannelFields, "channel">;
+
+/** Roles that work the whole board; anyone else (riders) only acts on deliveries assigned to them. */
+const FLOOR_ROLES: readonly RestaurantRole[] = ["owner", "cashier", "kitchen"];
+const isFloor = (roles: readonly RestaurantRole[]) => roles.some((role) => FLOOR_ROLES.includes(role));
+const notYourDelivery = () =>
+  new ForbiddenException(apiError("NOT_YOUR_DELIVERY", "Este reparto no está asignado a ti"));
 
 export type ReceiptResult = { status: "pending" } | { status: "ready"; pdf: Buffer; filename: string };
 
@@ -79,6 +108,8 @@ export class OrdersService {
     private readonly products: ProductsRepository,
     private readonly modifierGroups: ModifierGroupsRepository,
     private readonly users: UsersRepository,
+    private readonly memberships: MembershipsRepository,
+    private readonly deliveryZones: DeliveryZonesRepository,
     private readonly realtime: RealtimeService,
     private readonly pdfQueue: PdfQueue,
     private readonly storage: StorageService,
@@ -101,73 +132,112 @@ export class OrdersService {
     const restaurant = table?.active ? await this.restaurants.findById(table.restaurantId) : null;
     if (!table || !restaurant || restaurant.status !== "active") throw tableNotFound();
 
-    return this.placeOrder(restaurant, input, {
-      channel: "dine_in",
-      customerName: input.customerName?.trim() ?? "",
-      customerPhone: "",
-      customerEmail: "",
-      tableId: table.id,
-      tableLabel: table.label,
-    });
+    return this.placeOrder(restaurant, input, async () => ({
+      fields: {
+        ...NO_CONTACT,
+        channel: "dine_in",
+        customerName: input.customerName?.trim() ?? "",
+        tableId: table.id,
+        tableLabel: table.label,
+      },
+    }));
   }
 
   /**
    * Places a pickup order from the public menu. Same pricing and idempotency as dine-in; on top of the IP
-   * rate limit, a phone may only have a few pickup orders in progress per restaurant (fake-order floods).
+   * rate limit, a phone may only have a few orders in progress per restaurant (fake-order floods).
    * @throws NotFoundException MENU_NOT_FOUND; BadRequestException INVALID_PHONE; ConflictException
    *   PICKUP_DISABLED, NOT_ACCEPTING_ORDERS and the pricing errors; 429 TOO_MANY_ACTIVE_ORDERS.
    */
   async createPickup(slug: string, input: CreatePickupOrderInput): Promise<CreatedOrder> {
-    const restaurant = await this.restaurants.findBySlug(slug.trim().toLowerCase());
-    if (!restaurant || restaurant.status !== "active") throw menuNotFound();
+    const restaurant = await this.publicRestaurant(slug);
+    const contact = this.contact(input);
 
-    const customerPhone = normalizePhone(input.customerPhone);
-    if (!customerPhone) {
-      throw new BadRequestException(apiError("INVALID_PHONE", "Revisa el teléfono, ej. +56 9 1234 5678"));
-    }
-    const channel: ChannelFields = {
-      channel: "pickup",
-      customerName: input.customerName.trim(),
-      customerPhone,
-      customerEmail: input.customerEmail?.trim().toLowerCase() ?? "",
-      tableId: null,
-      tableLabel: null,
-    };
-
-    return this.placeOrder(restaurant, input, channel, async () => {
+    return this.placeOrder(restaurant, input, async () => {
       if (!restaurant.pickupEnabled) {
         throw new ConflictException(apiError("PICKUP_DISABLED", "Este local no recibe pedidos para retirar"));
       }
-      const active = await this.orders.countActiveByPhone(restaurant.id, customerPhone);
-      if (active >= ORDER_LIMITS.activePickupOrdersPerPhone) {
-        throw new HttpException(
-          apiError(
-            "TOO_MANY_ACTIVE_ORDERS",
-            "Ya tienes varios pedidos en curso en este local. Espera a retirarlos antes de hacer otro.",
-          ),
-          HttpStatus.TOO_MANY_REQUESTS,
+      await this.checkPhoneLimit(restaurant.id, contact.customerPhone);
+      return { fields: { ...NO_CONTACT, ...contact, channel: "pickup" } };
+    });
+  }
+
+  /**
+   * Places a delivery order. The chosen zone (of this restaurant, active) sets the fee added to the total and
+   * the minimum subtotal; the expected payment lets the rider bring change for cash.
+   * @throws NotFoundException MENU_NOT_FOUND; BadRequestException INVALID_PHONE, CASH_AMOUNT_TOO_LOW;
+   *   ConflictException DELIVERY_DISABLED, ZONE_NOT_AVAILABLE, BELOW_MINIMUM_ORDER, NOT_ACCEPTING_ORDERS and
+   *   the pricing errors; 429 TOO_MANY_ACTIVE_ORDERS.
+   */
+  async createDelivery(slug: string, input: CreateDeliveryOrderInput): Promise<CreatedOrder> {
+    const restaurant = await this.publicRestaurant(slug);
+    const contact = this.contact(input);
+
+    return this.placeOrder(restaurant, input, async () => {
+      if (!restaurant.deliveryEnabled) {
+        throw new ConflictException(apiError("DELIVERY_DISABLED", "Este local no hace despacho a domicilio"));
+      }
+      const zone = await this.deliveryZones.findOne(restaurant.id, input.delivery.zoneId);
+      if (!zone?.active) {
+        throw new ConflictException(
+          apiError("ZONE_NOT_AVAILABLE", "El local ya no reparte en esa zona; elige otra o pide para retirar"),
         );
       }
+      await this.checkPhoneLimit(restaurant.id, contact.customerPhone);
+      const cash = input.payment.method === "cash" ? (input.payment.cashAmount ?? null) : null;
+
+      return {
+        fields: {
+          ...NO_CONTACT,
+          ...contact,
+          channel: "delivery",
+          delivery: {
+            zoneId: zone.id,
+            zoneName: zone.name,
+            address: input.delivery.address.trim(),
+            unit: input.delivery.unit?.trim() ?? "",
+            reference: input.delivery.reference?.trim() ?? "",
+          },
+          expectedPayment: { method: input.payment.method, cashAmount: cash },
+        },
+        deliveryFee: (subtotal) => {
+          if (subtotal < zone.minOrder) {
+            throw new ConflictException(
+              apiError(
+                "BELOW_MINIMUM_ORDER",
+                `El pedido mínimo para ${zone.name} es ${formatMoney(zone.minOrder, restaurant.currency)}`,
+                { minOrder: String(zone.minOrder) },
+              ),
+            );
+          }
+          if (cash !== null && cash < subtotal + zone.fee) {
+            throw new BadRequestException(
+              apiError("CASH_AMOUNT_TOO_LOW", "El monto con que pagas debe cubrir el total del pedido"),
+            );
+          }
+          return zone.fee;
+        },
+      };
     });
   }
 
   /**
    * Shared by every channel: idempotency, open/closed check, server-side pricing and atomic numbering.
-   * @param guard Channel-specific checks, run only for new orders (a retried submission skips them, so the
-   *   customer always gets back the order already placed).
+   * @param prepare Channel-specific checks and fields, run only for new orders (a retried submission skips
+   *   them, so the customer always gets back the order already placed). `deliveryFee` may reject the
+   *   subtotal and returns the fee added to the total.
    */
   private async placeOrder(
     restaurant: RestaurantRecord,
     input: OrderRequest,
-    channel: ChannelFields,
-    guard?: () => Promise<void>,
+    prepare: () => Promise<{ fields: ChannelFields; deliveryFee?: (subtotal: number) => number }>,
   ): Promise<CreatedOrder> {
     const accessToken = deriveAccessToken(this.tokenSecret, restaurant.id, input.clientOrderId);
     const existing = await this.orders.findByClientOrderId(restaurant.id, input.clientOrderId);
     if (existing) return { accessToken, order: this.publicView(existing, restaurant) };
 
     if (!restaurant.acceptingOrders) throw notAccepting();
-    await guard?.();
+    const { fields, deliveryFee: feeFor } = await prepare();
 
     let priced;
     try {
@@ -178,6 +248,7 @@ export class OrdersService {
       }
       throw error;
     }
+    const deliveryFee = feeFor?.(priced.subtotal) ?? 0;
 
     const day = businessDate(new Date(), restaurant.timezone);
     let created: OrderRecord;
@@ -189,13 +260,14 @@ export class OrdersService {
         return this.orders.create(
           restaurant.id,
           {
-            ...channel,
+            ...fields,
             number,
             ticketNumber,
             businessDate: day,
             items: priced.items,
             subtotal: priced.subtotal,
-            total: priced.subtotal,
+            deliveryFee,
+            total: priced.subtotal + deliveryFee,
             currency: restaurant.currency,
             note: input.note?.trim() ?? "",
             accessTokenHash: hashToken(accessToken),
@@ -215,6 +287,40 @@ export class OrdersService {
 
     this.realtime.toRestaurant(restaurant.id).emit("order.created", toOrderView(created));
     return { accessToken, order: this.publicView(created, restaurant) };
+  }
+
+  /** @throws NotFoundException MENU_NOT_FOUND for unknown or suspended restaurants. */
+  private async publicRestaurant(slug: string): Promise<RestaurantRecord> {
+    const restaurant = await this.restaurants.findBySlug(slug.trim().toLowerCase());
+    if (!restaurant || restaurant.status !== "active") throw menuNotFound();
+    return restaurant;
+  }
+
+  /** Name, normalized phone and email of a pickup/delivery customer. @throws BadRequestException INVALID_PHONE. */
+  private contact(input: CreatePickupOrderInput): Pick<ChannelFields, "customerName" | "customerPhone" | "customerEmail"> {
+    const customerPhone = normalizePhone(input.customerPhone);
+    if (!customerPhone) {
+      throw new BadRequestException(apiError("INVALID_PHONE", "Revisa el teléfono, ej. +56 9 1234 5678"));
+    }
+    return {
+      customerName: input.customerName.trim(),
+      customerPhone,
+      customerEmail: input.customerEmail?.trim().toLowerCase() ?? "",
+    };
+  }
+
+  /** @throws HttpException 429 TOO_MANY_ACTIVE_ORDERS. */
+  private async checkPhoneLimit(restaurantId: string, customerPhone: string): Promise<void> {
+    const active = await this.orders.countActiveByPhone(restaurantId, customerPhone);
+    if (active >= ORDER_LIMITS.activePickupOrdersPerPhone) {
+      throw new HttpException(
+        apiError(
+          "TOO_MANY_ACTIVE_ORDERS",
+          "Ya tienes varios pedidos en curso en este local. Espera a recibirlos antes de hacer otro.",
+        ),
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
   }
 
   /** Kitchen board ("active": still in progress) or the day's history ("today"). */
@@ -242,10 +348,11 @@ export class OrdersService {
     orderId: string,
     to: OrderStatus,
     reason?: string,
-    readyInMinutes?: PickupReadyMinutes,
+    readyInMinutes?: number,
   ): Promise<OrderView> {
     const order = await this.orders.findOne(tenant.restaurantId, orderId);
     if (!order) throw orderNotFound();
+    if (!isFloor(tenant.roles) && order.riderId !== userId) throw notYourDelivery();
 
     const check = checkTransition(order.channel, order.status, to, { kind: "staff", roles: tenant.roles });
     if (!check.ok && check.reason === "invalid_transition") {
@@ -255,8 +362,13 @@ export class OrdersService {
     if (check.requiresReason && !reason?.trim()) {
       throw new BadRequestException(apiError("REASON_REQUIRED", "Indica el motivo: el cliente lo verá"));
     }
-    if (check.requiresReadyTime && !readyInMinutes) {
-      throw new BadRequestException(apiError("READY_TIME_REQUIRED", "Indica en cuántos minutos estará listo"));
+    if (check.requiresReadyTime && !READY_MINUTES_BY_CHANNEL[order.channel]?.includes(readyInMinutes ?? -1)) {
+      throw new BadRequestException(
+        apiError(
+          "READY_TIME_REQUIRED",
+          order.channel === "delivery" ? "Indica en cuántos minutos llega" : "Indica en cuántos minutos estará listo",
+        ),
+      );
     }
 
     const user = await this.users.findById(userId);
@@ -336,9 +448,13 @@ export class OrdersService {
         customerName: order.customerName,
         customerPhone: order.customerPhone,
         items: toOrderView(order).items,
+        subtotal: order.subtotal,
+        deliveryFee: order.deliveryFee,
         total: order.total,
         currency: order.currency,
         note: order.note,
+        delivery: order.delivery ? { ...order.delivery } : null,
+        expectedPayment: toExpectedPaymentView(order),
       },
       email: order.customerEmail
         ? { to: order.customerEmail, trackingUrl: `${this.appUrl}/pedido#t=${accessToken}` }
@@ -347,12 +463,54 @@ export class OrdersService {
   }
 
 
-  /** Cash, card terminal or transfer, registered by the cashier. Independent of the order status. */
-  async markPaid(tenant: TenantContext, orderId: string, method: PaymentMethod): Promise<OrderView> {
+  /**
+   * Cash, card terminal or transfer. Independent of the order status. The cashier and the owner register any
+   * payment; a rider only the ones of deliveries assigned to them (cash on delivery).
+   * @throws NotFoundException ORDER_NOT_FOUND; ForbiddenException NOT_YOUR_DELIVERY.
+   */
+  async markPaid(tenant: TenantContext, userId: string, orderId: string, method: PaymentMethod): Promise<OrderView> {
+    if (!tenant.roles.some((role) => role === "owner" || role === "cashier")) {
+      const order = await this.orders.findOne(tenant.restaurantId, orderId);
+      if (!order) throw orderNotFound();
+      if (order.channel !== "delivery" || order.riderId !== userId) throw notYourDelivery();
+    }
     const updated = await this.orders.markPaid(tenant.restaurantId, orderId, method);
     if (!updated) throw orderNotFound();
-    this.realtime.toRestaurant(tenant.restaurantId).emit("order.updated", toOrderView(updated));
+    this.realtime.toStaffOf(tenant.restaurantId, [updated.riderId]).emit("order.updated", toOrderView(updated));
     return toOrderView(updated);
+  }
+
+  /** Members with the rider role, for the assignment picker. */
+  async listRiders(restaurantId: string): Promise<RiderView[]> {
+    const riders = (await this.memberships.listByRestaurant(restaurantId)).filter((m) => m.roles.includes("rider"));
+    const users = await this.users.findByIds(riders.map((m) => m.userId));
+    return users.map((user) => ({ id: user.id, name: user.name })).sort((a, b) => a.name.localeCompare(b.name, "es"));
+  }
+
+  /**
+   * Assigns a delivery to a rider (or unassigns it with null) while it is in progress.
+   * @throws BadRequestException NOT_A_RIDER; NotFoundException ORDER_NOT_FOUND (also for finished orders and
+   *   other channels).
+   */
+  async assignRider(tenant: TenantContext, orderId: string, riderId: string | null): Promise<OrderView> {
+    let rider: { id: string; name: string } | null = null;
+    if (riderId) {
+      const membership = await this.memberships.findOne(tenant.restaurantId, riderId);
+      const user = membership?.roles.includes("rider") ? await this.users.findById(riderId) : null;
+      if (!user) throw new BadRequestException(apiError("NOT_A_RIDER", "Esa persona no es repartidor de este local"));
+      rider = { id: user.id, name: user.name };
+    }
+    const previous = await this.orders.findOne(tenant.restaurantId, orderId);
+    const updated = await this.orders.assignRider(tenant.restaurantId, orderId, rider);
+    if (!updated) throw orderNotFound();
+    // The previous rider gets the update too, so the order leaves their screen.
+    await this.broadcast(updated, [previous?.riderId ?? null]);
+    return toOrderView(updated);
+  }
+
+  /** A rider's screen: their deliveries in progress. */
+  async listForRider(tenant: TenantContext, userId: string): Promise<OrderView[]> {
+    return (await this.orders.listActiveForRider(tenant.restaurantId, userId)).map(toOrderView);
   }
 
   /** Tracking page. The access token is the only key: no account and no order number lookups. */
@@ -391,9 +549,14 @@ export class OrdersService {
     return this.publicView(updated, await this.restaurant(updated.restaurantId));
   }
 
-  /** Staff board gets the full view; the customer's tracking page gets the public one. */
-  private async broadcast(order: OrderRecord): Promise<void> {
-    this.realtime.toRestaurant(order.restaurantId).emit("order.updated", toOrderView(order));
+  /**
+   * Staff board (and the assigned rider) get the full view; the customer's tracking page gets the public one.
+   * @param otherRiders Riders who must also hear about it (one just unassigned).
+   */
+  private async broadcast(order: OrderRecord, otherRiders: (string | null)[] = []): Promise<void> {
+    this.realtime
+      .toStaffOf(order.restaurantId, [order.riderId, ...otherRiders])
+      .emit("order.updated", toOrderView(order));
     const restaurant = await this.restaurant(order.restaurantId);
     this.realtime.toOrder(order.id).emit("order.status", this.publicView(order, restaurant));
   }

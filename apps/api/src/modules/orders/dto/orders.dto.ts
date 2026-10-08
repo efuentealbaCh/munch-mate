@@ -1,11 +1,12 @@
 import {
+  DELIVERY_ETA_MINUTES,
+  DELIVERY_ZONE_LIMITS,
   ORDER_LIMITS,
   ORDER_STATUSES,
   type OrderStatus,
   PAYMENT_METHODS,
   type PaymentMethod,
   PICKUP_READY_MINUTES,
-  type PickupReadyMinutes,
 } from "@app/types";
 import { Transform, Type } from "class-transformer";
 import {
@@ -21,6 +22,7 @@ import {
   IsString,
   IsUUID,
   Length,
+  ValidateIf,
   Max,
   MaxLength,
   Min,
@@ -139,6 +141,110 @@ export class CreatePickupOrderDto {
   note?: string;
 }
 
+export class DeliveryAddressDto {
+  @IsMongoId({ message: "Elige la comuna o zona de entrega" })
+  zoneId!: string;
+
+  @Transform(trim)
+  @IsString()
+  @Length(3, ORDER_LIMITS.addressMax, { message: "Indica la calle y el número" })
+  address!: string;
+
+  @IsOptional()
+  @Transform(trim)
+  @IsString()
+  @MaxLength(ORDER_LIMITS.addressUnitMax)
+  unit?: string;
+
+  @IsOptional()
+  @Transform(trim)
+  @IsString()
+  @MaxLength(ORDER_LIMITS.addressReferenceMax)
+  reference?: string;
+}
+
+export class ExpectedPaymentDto {
+  @IsIn(PAYMENT_METHODS, { message: `method debe ser uno de: ${PAYMENT_METHODS.join(", ")}` })
+  method!: PaymentMethod;
+
+  /** Only meaningful with cash; the service checks it covers the total. */
+  @ValidateIf((o: ExpectedPaymentDto) => o.cashAmount !== undefined && o.cashAmount !== null)
+  @IsInt()
+  @Min(1)
+  @Max(100_000_000)
+  cashAmount?: number;
+}
+
+export class CreateDeliveryOrderDto extends CreatePickupOrderDto {
+  @ValidateNested()
+  @Type(() => DeliveryAddressDto)
+  delivery!: DeliveryAddressDto;
+
+  @ValidateNested()
+  @Type(() => ExpectedPaymentDto)
+  payment!: ExpectedPaymentDto;
+}
+
+export class AssignRiderDto {
+  /** null unassigns. */
+  @ValidateIf((o: AssignRiderDto) => o.riderId !== null)
+  @IsMongoId()
+  riderId!: string | null;
+}
+
+export class DeliveryZoneDto {
+  @Transform(trim)
+  @IsString()
+  @Length(1, DELIVERY_ZONE_LIMITS.nameMax, { message: "name debe tener entre 1 y 60 caracteres" })
+  name!: string;
+
+  @IsInt()
+  @Min(0)
+  @Max(DELIVERY_ZONE_LIMITS.feeMax)
+  fee!: number;
+
+  @IsInt()
+  @Min(0)
+  @Max(100_000_000)
+  minOrder!: number;
+
+  @IsOptional()
+  @IsBoolean()
+  active?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  isHome?: boolean;
+}
+
+export class UpdateDeliveryZoneDto {
+  @IsOptional()
+  @Transform(trim)
+  @IsString()
+  @Length(1, DELIVERY_ZONE_LIMITS.nameMax, { message: "name debe tener entre 1 y 60 caracteres" })
+  name?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(DELIVERY_ZONE_LIMITS.feeMax)
+  fee?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(100_000_000)
+  minOrder?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  active?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  isHome?: boolean;
+}
+
 export class OrdersQueryDto {
   @IsOptional()
   @IsIn(["active", "today"])
@@ -154,10 +260,12 @@ export class ChangeStatusDto {
   @MaxLength(ORDER_LIMITS.rejectReasonMax)
   reason?: string;
 
-  /** Required when accepting a pickup order. */
+  /** Required when accepting pickup and delivery orders; the service checks the choices of each channel. */
   @IsOptional()
-  @IsIn(PICKUP_READY_MINUTES, { message: `readyInMinutes debe ser uno de: ${PICKUP_READY_MINUTES.join(", ")}` })
-  readyInMinutes?: PickupReadyMinutes;
+  @IsIn([...new Set([...PICKUP_READY_MINUTES, ...DELIVERY_ETA_MINUTES])], {
+    message: "readyInMinutes no es una opción válida",
+  })
+  readyInMinutes?: number;
 }
 
 export class PaymentDto {

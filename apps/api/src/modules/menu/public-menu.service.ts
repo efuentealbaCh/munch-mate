@@ -47,6 +47,7 @@ export class PublicMenuService {
         logo: this.media.logoImage(restaurant.logoKey),
         acceptingOrders: restaurant.acceptingOrders,
         pickupEnabled: restaurant.pickupEnabled,
+        deliveryEnabled: restaurant.deliveryEnabled,
       },
       categories: categories
         .map((category) => ({

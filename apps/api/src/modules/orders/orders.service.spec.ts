@@ -9,9 +9,11 @@ import type { ModifierGroupsRepository } from "../menu/modifier-groups.repositor
 import type { ProductsRepository } from "../menu/products.repository";
 import type { RealtimeService } from "../realtime/realtime.service";
 import type { TenantContext } from "../restaurants/restaurant-access.guard";
+import type { MembershipsRepository } from "../restaurants/memberships.repository";
 import type { RestaurantsRepository } from "../restaurants/restaurants.repository";
 import type { UsersRepository } from "../users/users.repository";
 import type { CountersRepository } from "./counters.repository";
+import type { DeliveryZonesRepository } from "./delivery-zones.repository";
 import { deriveAccessToken } from "./order-tokens";
 import type { OrderRecord, OrdersRepository } from "./orders.repository";
 import { OrdersService } from "./orders.service";
@@ -27,6 +29,7 @@ const restaurant = {
   logoKey: null,
   acceptingOrders: true,
   pickupEnabled: true,
+  deliveryEnabled: true,
   currency: "CLP",
   timezone: "America/Santiago",
   status: "active" as const,
@@ -49,6 +52,7 @@ function order(overrides: Partial<OrderRecord> = {}): OrderRecord {
     paymentMethod: null,
     items: [],
     subtotal: 1000,
+    deliveryFee: 0,
     total: 1000,
     currency: "CLP",
     customerName: "",
@@ -58,6 +62,10 @@ function order(overrides: Partial<OrderRecord> = {}): OrderRecord {
     tableId: "t1",
     tableLabel: "Mesa 4",
     estimatedReadyAt: null,
+    delivery: null,
+    expectedPayment: null,
+    riderId: null,
+    riderName: null,
     clientOrderId: "c-1",
     createdAt: new Date(),
     updatedAt: new Date(),
@@ -73,6 +81,9 @@ function setup(
     current?: OrderRecord | null;
     activeByPhone?: number;
     receipt?: Buffer | null;
+    deliveryEnabled?: boolean;
+    zone?: { id: string; name: string; fee: number; minOrder: number; active: boolean } | null;
+    membershipRoles?: string[] | null;
   } = {},
 ) {
   const emitted: string[] = [];
@@ -85,7 +96,12 @@ function setup(
     ...restaurant,
     acceptingOrders: options.accepting ?? true,
     pickupEnabled: options.pickupEnabled ?? true,
+    deliveryEnabled: options.deliveryEnabled ?? true,
   });
+  const zone =
+    options.zone === undefined
+      ? { id: "z1", restaurantId: "r1", name: "Ñuñoa", fee: 1500, minOrder: 5000, active: true, isHome: true, position: 0 }
+      : options.zone;
   const orders = {
     findByClientOrderId: jest.fn(async () => options.existing ?? null),
     create: jest.fn(async () => order()),
@@ -106,6 +122,10 @@ function setup(
       },
     ),
     countActiveByPhone: jest.fn(async () => options.activeByPhone ?? 0),
+    assignRider: jest.fn(async (_r: string, _o: string, rider: { id: string; name: string } | null) =>
+      order({ channel: "delivery", riderId: rider?.id ?? null, riderName: rider?.name ?? null }),
+    ),
+    listActiveForRider: jest.fn(async () => []),
     listActive: jest.fn(async () => [order()]),
     listByBusinessDate: jest.fn(async () => []),
     markPaid: jest.fn(async () => order({ paymentStatus: "paid", paymentMethod: "cash" })),
@@ -125,9 +145,23 @@ function setup(
       ]),
     } as unknown as ProductsRepository,
     { list: jest.fn(async () => []) } as unknown as ModifierGroupsRepository,
-    { findById: jest.fn(async () => ({ id: "u1", name: "Ana" })) } as unknown as UsersRepository,
+    {
+      findById: jest.fn(async (id: string) => ({ id, name: id === "rider1" ? "Pedro Soto" : "Ana" })),
+      findByIds: jest.fn(async (ids: string[]) => ids.map((id) => ({ id, name: id === "rider1" ? "Pedro Soto" : "Zoe" }))),
+    } as unknown as UsersRepository,
+    {
+      findOne: jest.fn(async (_r: string, userId: string) =>
+        options.membershipRoles === null ? null : { userId, roles: options.membershipRoles ?? ["rider"] },
+      ),
+      listByRestaurant: jest.fn(async () => [
+        { userId: "rider1", roles: ["rider"] },
+        { userId: "cook", roles: ["kitchen"] },
+      ]),
+    } as unknown as MembershipsRepository,
+    { findOne: jest.fn(async () => zone) } as unknown as DeliveryZonesRepository,
     {
       toRestaurant: () => ({ emit: (event: string) => emitted.push(`restaurant:${event}`) }),
+      toStaffOf: () => ({ emit: (event: string) => emitted.push(`restaurant:${event}`) }),
       toOrder: () => ({ emit: (event: string) => emitted.push(`order:${event}`) }),
     } as unknown as RealtimeService,
     pdfQueue as unknown as PdfQueue,
@@ -193,8 +227,9 @@ describe("OrdersService.changeStatus", () => {
   });
 
   it("forbids roles the state machine does not allow", async () => {
+    // Assigned to this rider, so the assignment check passes and the state machine decides.
     await expect(
-      setup().service.changeStatus({ ...tenant, roles: ["rider"] }, "u1", "o1", "accepted"),
+      setup({ current: order({ riderId: "u1" }) }).service.changeStatus({ ...tenant, roles: ["rider"] }, "u1", "o1", "accepted"),
     ).rejects.toMatchObject({ response: { code: "FORBIDDEN_ROLE" } });
   });
 
@@ -238,7 +273,9 @@ describe("OrdersService customer actions", () => {
   it("marks payments and notifies the board", async () => {
     const { service, emitted } = setup();
 
-    await expect(service.markPaid(tenant, "o1", "cash")).resolves.toMatchObject({ paymentStatus: "paid" });
+    await expect(service.markPaid({ ...tenant, roles: ["cashier"] }, "u1", "o1", "cash")).resolves.toMatchObject({
+      paymentStatus: "paid",
+    });
     expect(emitted).toEqual(["restaurant:order.updated"]);
   });
 });
@@ -396,5 +433,158 @@ describe("OrdersService pickup acceptance and receipts", () => {
     await expect(setup().service.getReceipt(tenant, "o1")).rejects.toMatchObject({
       response: { code: "RECEIPT_NOT_FOUND" },
     });
+  });
+});
+
+const deliveryInput = {
+  ...pickupInput,
+  items: [{ productId: "p1", quantity: 6, modifiers: [] }],
+  delivery: { zoneId: "z1", address: " Av. Grecia 1234 ", unit: "Depto 5", reference: "" },
+  payment: { method: "cash" as const, cashAmount: 10000 },
+};
+
+describe("OrdersService.createDelivery", () => {
+  it("adds the zone fee, snapshots the address and keeps the cash amount for change", async () => {
+    const { service, orders } = setup();
+
+    await service.createDelivery("don-pepe", deliveryInput);
+
+    expect(orders.create).toHaveBeenCalledWith(
+      "r1",
+      expect.objectContaining({
+        channel: "delivery",
+        subtotal: 6000,
+        deliveryFee: 1500,
+        total: 7500,
+        delivery: { zoneId: "z1", zoneName: "Ñuñoa", address: "Av. Grecia 1234", unit: "Depto 5", reference: "" },
+        expectedPayment: { method: "cash", cashAmount: 10000 },
+      }),
+      {},
+    );
+  });
+
+  it("drops the cash amount when paying by card", async () => {
+    const { service, orders } = setup();
+
+    await service.createDelivery("don-pepe", { ...deliveryInput, payment: { method: "card_pos", cashAmount: 10000 } });
+
+    expect(orders.create).toHaveBeenCalledWith(
+      "r1",
+      expect.objectContaining({ expectedPayment: { method: "card_pos", cashAmount: null } }),
+      {},
+    );
+  });
+
+  it.each([
+    ["delivery disabled", { deliveryEnabled: false }, deliveryInput, "DELIVERY_DISABLED"],
+    ["an unknown zone", { zone: null }, deliveryInput, "ZONE_NOT_AVAILABLE"],
+    [
+      "an inactive zone",
+      { zone: { id: "z1", name: "X", fee: 0, minOrder: 0, active: false } },
+      deliveryInput,
+      "ZONE_NOT_AVAILABLE",
+    ],
+    ["a subtotal below the zone minimum", {}, { ...deliveryInput, items: [{ productId: "p1", quantity: 2, modifiers: [] }] }, "BELOW_MINIMUM_ORDER"],
+    ["cash that does not cover the total", {}, { ...deliveryInput, payment: { method: "cash" as const, cashAmount: 7000 } }, "CASH_AMOUNT_TOO_LOW"],
+    ["too many orders for the phone", { activeByPhone: 3 }, deliveryInput, "TOO_MANY_ACTIVE_ORDERS"],
+  ])("refuses %s", async (_, cfg, body, code) => {
+    await expect(setup(cfg as Parameters<typeof setup>[0]).service.createDelivery("don-pepe", body)).rejects.toMatchObject({
+      response: { code },
+    });
+  });
+});
+
+const deliveryOrder = (overrides: Partial<OrderRecord> = {}) =>
+  pickupOrder({
+    channel: "delivery",
+    deliveryFee: 1500,
+    total: 7500,
+    delivery: { zoneId: "z1", zoneName: "Ñuñoa", address: "Av. Grecia 1234", unit: "", reference: "" },
+    expectedPayment: { method: "cash", cashAmount: 10000 },
+    ...overrides,
+  });
+
+describe("OrdersService delivery handling", () => {
+  const rider: TenantContext = { restaurantId: "r1", roles: ["rider"], status: "active" };
+
+  it("asks for an ETA from the delivery choices when accepting", async () => {
+    const { service } = setup({ current: deliveryOrder() });
+
+    await expect(service.changeStatus(tenant, "u1", "o1", "accepted", undefined, 10)).rejects.toMatchObject({
+      response: { code: "READY_TIME_REQUIRED" },
+    });
+    await expect(service.changeStatus(tenant, "u1", "o1", "accepted", undefined, 45)).resolves.toMatchObject({
+      status: "accepted",
+      receiptAvailable: true,
+    });
+  });
+
+  it("shows the change the rider must bring", async () => {
+    const { service } = setup({ current: deliveryOrder() });
+
+    const view = await service.get(tenant, "o1");
+
+    expect(view.expectedPayment).toEqual({ method: "cash", cashAmount: 10000, change: 2500 });
+  });
+
+  it("lets riders act only on their own deliveries", async () => {
+    const mine = deliveryOrder({ status: "ready", riderId: "rider1", riderName: "Pedro Soto" });
+    await expect(
+      setup({ current: mine }).service.changeStatus(rider, "rider1", "o1", "out_for_delivery"),
+    ).resolves.toMatchObject({ status: "out_for_delivery" });
+    await expect(
+      setup({ current: mine }).service.changeStatus(rider, "someone-else", "o1", "out_for_delivery"),
+    ).rejects.toMatchObject({ response: { code: "NOT_YOUR_DELIVERY" } });
+    await expect(
+      setup({ current: deliveryOrder({ status: "ready" }) }).service.changeStatus(rider, "rider1", "o1", "out_for_delivery"),
+    ).rejects.toMatchObject({ response: { code: "NOT_YOUR_DELIVERY" } });
+  });
+
+  it("lets a rider collect the payment of their delivery, and nothing else", async () => {
+    const mine = deliveryOrder({ status: "out_for_delivery", riderId: "rider1" });
+    await expect(setup({ current: mine }).service.markPaid(rider, "rider1", "o1", "cash")).resolves.toMatchObject({
+      paymentStatus: "paid",
+    });
+    await expect(setup({ current: mine }).service.markPaid(rider, "other", "o1", "cash")).rejects.toMatchObject({
+      response: { code: "NOT_YOUR_DELIVERY" },
+    });
+    await expect(setup().service.markPaid(rider, "rider1", "o1", "cash")).rejects.toMatchObject({
+      response: { code: "NOT_YOUR_DELIVERY" },
+    });
+  });
+
+  it("assigns only members with the rider role, and tells the customer the rider's first name", async () => {
+    const { service, orders, emitted } = setup();
+
+    const view = await service.assignRider(tenant, "o1", "rider1");
+
+    expect(orders.assignRider).toHaveBeenCalledWith("r1", "o1", { id: "rider1", name: "Pedro Soto" });
+    expect(view.rider).toEqual({ id: "rider1", name: "Pedro Soto" });
+    expect(emitted).toEqual(["restaurant:order.updated", "order:order.status"]);
+    await expect(setup({ membershipRoles: ["kitchen"] }).service.assignRider(tenant, "o1", "cook")).rejects.toMatchObject({
+      response: { code: "NOT_A_RIDER" },
+    });
+    await expect(setup().service.assignRider(tenant, "o1", null)).resolves.toMatchObject({ rider: null });
+  });
+
+  it("lists only riders for the picker", async () => {
+    await expect(setup().service.listRiders("r1")).resolves.toEqual([{ id: "rider1", name: "Pedro Soto" }]);
+  });
+
+  it("puts the fee, address and expected payment on the receipt", async () => {
+    const { service, pdfQueue } = setup({ current: deliveryOrder() });
+
+    await service.changeStatus(tenant, "u1", "o1", "accepted", undefined, 30);
+
+    expect(pdfQueue.enqueueReceipt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        receipt: expect.objectContaining({
+          channel: "delivery",
+          deliveryFee: 1500,
+          delivery: expect.objectContaining({ zoneName: "Ñuñoa" }),
+          expectedPayment: { method: "cash", cashAmount: 10000, change: 2500 },
+        }),
+      }),
+    );
   });
 });

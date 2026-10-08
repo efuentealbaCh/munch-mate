@@ -53,6 +53,35 @@ export class OrderItemSnapshot {
   lineTotal!: number;
 }
 
+/** Where a delivery goes; the zone name is a snapshot (zones can be renamed or deleted later). */
+@Schema({ _id: false })
+export class DeliverySnapshot {
+  @Prop({ type: Types.ObjectId, required: true })
+  zoneId!: Types.ObjectId;
+
+  @Prop({ required: true })
+  zoneName!: string;
+
+  @Prop({ required: true })
+  address!: string;
+
+  @Prop({ default: "" })
+  unit!: string;
+
+  @Prop({ default: "" })
+  reference!: string;
+}
+
+/** How the customer said they would pay on delivery. The actual payment is `paymentStatus`/`paymentMethod`. */
+@Schema({ _id: false })
+export class ExpectedPayment {
+  @Prop({ type: String, enum: PAYMENT_METHODS, required: true })
+  method!: PaymentMethod;
+
+  @Prop({ type: Number, default: null })
+  cashAmount!: number | null;
+}
+
 @Schema({ _id: false })
 export class StatusChange {
   @Prop({ type: String, enum: ORDER_STATUSES, required: true })
@@ -111,6 +140,10 @@ export class Order {
   @Prop({ required: true })
   subtotal!: number;
 
+  /** Delivery fee of the zone at ordering time; 0 for other channels. total = subtotal + deliveryFee. */
+  @Prop({ default: 0 })
+  deliveryFee!: number;
+
   @Prop({ required: true })
   total!: number;
 
@@ -138,9 +171,23 @@ export class Order {
   @Prop({ type: String, default: null })
   tableLabel!: string | null;
 
-  /** Pickup: when the staff said it will be ready (set on acceptance). */
+  /** Set on acceptance. Pickup: when it will be ready. Delivery: when it should arrive. */
   @Prop({ type: Date, default: null })
   estimatedReadyAt!: Date | null;
+
+  @Prop({ type: SchemaFactory.createForClass(DeliverySnapshot), default: null })
+  delivery!: DeliverySnapshot | null;
+
+  @Prop({ type: SchemaFactory.createForClass(ExpectedPayment), default: null })
+  expectedPayment!: ExpectedPayment | null;
+
+  /** Optional: the member (rider role) taking it. Without one, the floor staff dispatch it. */
+  @Prop({ type: Types.ObjectId, default: null })
+  riderId!: Types.ObjectId | null;
+
+  /** Name snapshot for the board and the customer. */
+  @Prop({ type: String, default: null })
+  riderName!: string | null;
 
   /** SHA-256 of the customer's access token (tracking link). */
   @Prop({ required: true, unique: true })
@@ -156,6 +203,8 @@ export const OrderSchema = SchemaFactory.createForClass(Order);
 OrderSchema.index({ restaurantId: 1, clientOrderId: 1 }, { unique: true });
 OrderSchema.index({ restaurantId: 1, status: 1, createdAt: 1 });
 OrderSchema.index({ restaurantId: 1, businessDate: 1 });
+// A rider's deliveries in progress.
+OrderSchema.index({ restaurantId: 1, riderId: 1, status: 1 }, { partialFilterExpression: { channel: "delivery" } });
 // Per-phone limit on pickup orders in progress; partial so dine-in orders (no phone) stay out of it.
 OrderSchema.index(
   { restaurantId: 1, customerPhone: 1, status: 1 },

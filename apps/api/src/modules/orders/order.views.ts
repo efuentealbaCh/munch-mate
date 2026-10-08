@@ -1,4 +1,4 @@
-import type { OrderItemView, OrderView, PublicOrderView } from "@app/types";
+import type { ExpectedPaymentView, OrderDeliveryView, OrderItemView, OrderView, PublicOrderView } from "@app/types";
 import { checkTransition } from "@app/utils";
 import type { OrderRecord } from "./orders.repository";
 
@@ -14,7 +14,17 @@ function toItemViews(order: OrderRecord): OrderItemView[] {
   }));
 }
 
-/** A pickup order gets its PDF receipt when accepted; the worker stores it at `receiptKey(order)`. */
+function toDeliveryView(order: OrderRecord): OrderDeliveryView | null {
+  return order.delivery ? { ...order.delivery } : null;
+}
+
+export function toExpectedPaymentView(order: OrderRecord): ExpectedPaymentView | null {
+  if (!order.expectedPayment) return null;
+  const { method, cashAmount } = order.expectedPayment;
+  return { method, cashAmount, change: cashAmount !== null ? cashAmount - order.total : null };
+}
+
+/** A pickup or delivery order gets its PDF receipt when accepted; the worker stores it at `receiptKey(order)`. */
 export function hasReceipt(order: OrderRecord): boolean {
   return order.channel !== "dine_in" && order.statusHistory.some((change) => change.status === "accepted");
 }
@@ -52,7 +62,12 @@ export function toOrderView(order: OrderRecord): OrderView {
     tableLabel: order.tableLabel,
     estimatedReadyAt: order.estimatedReadyAt?.toISOString() ?? null,
     receiptAvailable: hasReceipt(order),
+    deliveryFee: order.deliveryFee,
+    delivery: toDeliveryView(order),
+    expectedPayment: toExpectedPaymentView(order),
+    rider: order.riderId ? { id: order.riderId, name: order.riderName ?? "" } : null,
     createdAt: order.createdAt.toISOString(),
+    updatedAt: order.updatedAt.toISOString(),
   };
 }
 
@@ -69,10 +84,16 @@ export function toPublicOrderView(
     status: order.status,
     rejectReason: rejection?.reason ?? null,
     items: toItemViews(order),
+    subtotal: order.subtotal,
+    deliveryFee: order.deliveryFee,
     total: order.total,
     currency: order.currency,
     tableLabel: order.tableLabel,
     estimatedReadyAt: order.estimatedReadyAt?.toISOString() ?? null,
+    delivery: toDeliveryView(order),
+    expectedPayment: toExpectedPaymentView(order),
+    // First name only: enough for "Juan va en camino", without exposing the staff member's full name.
+    riderName: order.riderName?.split(" ")[0] ?? null,
     receiptAvailable: hasReceipt(order),
     restaurant,
     createdAt: order.createdAt.toISOString(),

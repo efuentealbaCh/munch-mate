@@ -1,4 +1,4 @@
-import type { CreatedOrder, OrderView, PublicOrderView, TableContext } from "@app/types";
+import type { CreatedOrder, OrderView, PublicOrderView, RiderView, TableContext } from "@app/types";
 import {
   Body,
   Controller,
@@ -7,6 +7,7 @@ import {
   HttpStatus,
   Param,
   Post,
+  Put,
   Query,
   Res,
   StreamableFile,
@@ -24,7 +25,9 @@ import {
 } from "../restaurants/restaurant-access.guard";
 import {
   AccessTokenDto,
+  AssignRiderDto,
   ChangeStatusDto,
+  CreateDeliveryOrderDto,
   CreateDineInOrderDto,
   CreatePickupOrderDto,
   OrdersQueryDto,
@@ -76,10 +79,74 @@ export class OrdersController {
   @HttpCode(HttpStatus.OK)
   markPaid(
     @CurrentTenant() tenant: TenantContext,
+    @CurrentUser() user: AuthUser,
     @Param("orderId") orderId: string,
     @Body() dto: PaymentDto,
   ): Promise<OrderView> {
-    return this.orders.markPaid(tenant, orderId, dto.method);
+    return this.orders.markPaid(tenant, user.id, orderId, dto.method);
+  }
+
+  /** Optional: deliveries without a rider are dispatched by the floor staff. */
+  @Put(":orderId/rider")
+  @RestaurantRoles("owner", "cashier")
+  assignRider(
+    @CurrentTenant() tenant: TenantContext,
+    @Param("orderId") orderId: string,
+    @Body() dto: AssignRiderDto,
+  ): Promise<OrderView> {
+    return this.orders.assignRider(tenant, orderId, dto.riderId);
+  }
+}
+
+/** Members with the rider role, for the assignment picker on the board. */
+@Controller("restaurants/:restaurantId/riders")
+@UseGuards(RestaurantAccessGuard)
+@RestaurantRoles("owner", "cashier")
+export class RidersController {
+  constructor(private readonly orders: OrdersService) {}
+
+  @Get()
+  list(@CurrentTenant() tenant: TenantContext): Promise<RiderView[]> {
+    return this.orders.listRiders(tenant.restaurantId);
+  }
+}
+
+/**
+ * The rider's screen: only the deliveries assigned to them. The service rejects any other order
+ * (NOT_YOUR_DELIVERY), and the state machine only lets riders take orders out and hand them over.
+ */
+@Controller("restaurants/:restaurantId/deliveries")
+@UseGuards(RestaurantAccessGuard)
+@RestaurantRoles("rider")
+export class RiderDeliveriesController {
+  constructor(private readonly orders: OrdersService) {}
+
+  @Get()
+  list(@CurrentTenant() tenant: TenantContext, @CurrentUser() user: AuthUser): Promise<OrderView[]> {
+    return this.orders.listForRider(tenant, user.id);
+  }
+
+  @Post(":orderId/status")
+  @HttpCode(HttpStatus.OK)
+  changeStatus(
+    @CurrentTenant() tenant: TenantContext,
+    @CurrentUser() user: AuthUser,
+    @Param("orderId") orderId: string,
+    @Body() dto: ChangeStatusDto,
+  ): Promise<OrderView> {
+    return this.orders.changeStatus(tenant, user.id, orderId, dto.status, dto.reason, dto.readyInMinutes);
+  }
+
+  /** Cash on delivery (or card terminal / transfer) collected by the rider. */
+  @Post(":orderId/payment")
+  @HttpCode(HttpStatus.OK)
+  markPaid(
+    @CurrentTenant() tenant: TenantContext,
+    @CurrentUser() user: AuthUser,
+    @Param("orderId") orderId: string,
+    @Body() dto: PaymentDto,
+  ): Promise<OrderView> {
+    return this.orders.markPaid(tenant, user.id, orderId, dto.method);
   }
 }
 
@@ -115,6 +182,14 @@ export class PublicOrdersController {
   @Post("restaurants/:slug/orders")
   createPickup(@Param("slug") slug: string, @Body() dto: CreatePickupOrderDto): Promise<CreatedOrder> {
     return this.orders.createPickup(slug, dto);
+  }
+
+  /** Delivery from the public menu; same limits as pickup. */
+  @Public()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post("restaurants/:slug/delivery-orders")
+  createDelivery(@Param("slug") slug: string, @Body() dto: CreateDeliveryOrderDto): Promise<CreatedOrder> {
+    return this.orders.createDelivery(slug, dto);
   }
 
   @Public()

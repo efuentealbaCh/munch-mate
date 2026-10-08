@@ -19,6 +19,7 @@ export function toRestaurantView(
     logo: media.logoImage(restaurant.logoKey),
     acceptingOrders: restaurant.acceptingOrders,
     pickupEnabled: restaurant.pickupEnabled,
+    deliveryEnabled: restaurant.deliveryEnabled,
     currency: restaurant.currency,
     timezone: restaurant.timezone,
     status: restaurant.status,

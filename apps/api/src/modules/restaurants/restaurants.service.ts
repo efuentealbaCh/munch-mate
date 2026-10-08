@@ -87,6 +87,7 @@ export class RestaurantsService {
     if (changes.description !== undefined) update.description = changes.description;
     if (changes.phone !== undefined) update.phone = changes.phone;
     if (changes.pickupEnabled !== undefined) update.pickupEnabled = changes.pickupEnabled;
+    if (changes.deliveryEnabled !== undefined) update.deliveryEnabled = changes.deliveryEnabled;
     if (changes.slug !== undefined) update.slug = normalizeRequestedSlug(changes.slug);
 
     try {

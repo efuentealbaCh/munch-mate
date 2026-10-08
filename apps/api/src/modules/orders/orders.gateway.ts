@@ -11,7 +11,7 @@ import type { Server, Socket } from "socket.io";
 import { AccessTokenService } from "../auth/access-token.service";
 import { ACCESS_COOKIE } from "../auth/auth.constants";
 import type { AuthUser } from "../auth/auth.types";
-import { orderRoom, RealtimeService, restaurantRoom } from "../realtime/realtime.service";
+import { orderRoom, RealtimeService, restaurantRoom, riderRoom } from "../realtime/realtime.service";
 import { MembershipsRepository } from "../restaurants/memberships.repository";
 import { OrdersService } from "./orders.service";
 
@@ -56,7 +56,10 @@ export class OrdersGateway implements OnGatewayInit, OnGatewayConnection {
     socket.data.user = token ? await this.accessTokens.verify(token) : null;
   }
 
-  /** Same isolation rule as the REST api: only members get a restaurant's events. */
+  /**
+   * Same isolation rule as the REST api: only members get a restaurant's events. Members who are only riders
+   * join their own room instead and receive just the deliveries assigned to them.
+   */
   @SubscribeMessage("restaurant.subscribe")
   async subscribeRestaurant(
     @ConnectedSocket() socket: AppSocket,
@@ -64,10 +67,10 @@ export class OrdersGateway implements OnGatewayInit, OnGatewayConnection {
   ): Promise<SubscribeResult> {
     const user = socket.data.user;
     if (!user) return { ok: false, code: "UNAUTHENTICATED" };
-    if (typeof restaurantId !== "string" || !(await this.memberships.findOne(restaurantId, user.id))) {
-      return { ok: false, code: "RESTAURANT_NOT_FOUND" };
-    }
-    await socket.join(restaurantRoom(restaurantId));
+    const membership = typeof restaurantId === "string" ? await this.memberships.findOne(restaurantId, user.id) : null;
+    if (!membership) return { ok: false, code: "RESTAURANT_NOT_FOUND" };
+    const riderOnly = membership.roles.every((role) => role === "rider");
+    await socket.join(riderOnly ? riderRoom(membership.restaurantId, user.id) : restaurantRoom(membership.restaurantId));
     return { ok: true };
   }
 
