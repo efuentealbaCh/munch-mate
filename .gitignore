@@ -24,4 +24,4 @@ next-env.d.ts
 .smoke-photo-*.jpg
 
 # Photos downloaded by infra/scripts/seed-demo.mjs
-.demo-cache/
+# .demo-cache/
