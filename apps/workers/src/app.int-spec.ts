@@ -1,5 +1,5 @@
 import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
-import { type EmailJob, type PingJob, type PingJobResult, type QrSheetJob, QUEUES } from "@app/types";
+import { type EmailJob, type PingJob, type PingJobResult, type QrSheetJob, QUEUES, type ReceiptJob } from "@app/types";
 import { Test, type TestingModule } from "@nestjs/testing";
 import { MongoDBContainer, type StartedMongoDBContainer } from "@testcontainers/mongodb";
 import { Queue, QueueEvents } from "bullmq";
@@ -137,6 +137,82 @@ describe("workers (integration)", () => {
       expect(await announced).toContain(`restaurant:${restaurantId}`);
 
       s3.destroy();
+      subscriber.disconnect();
+    });
+
+    it("stores the receipt, announces it and emails it as an attachment exactly once", async () => {
+      const { queue, events } = await producer<ReceiptJob, { key: string }>(QUEUES.PDF);
+      const emailEvents = new QueueEvents(QUEUES.EMAIL, { connection: { url: valkeyUrl } });
+      await emailEvents.waitUntilReady();
+      queues.push(emailEvents);
+      const restaurantId = "665f1f77bcf86cd799439011";
+      const orderId = "665f1f77bcf86cd799439099";
+      const outputKey = `restaurants/${restaurantId}/receipts/${orderId}.pdf`;
+      const subscriber = new Redis(valkeyUrl);
+      // Emitting to several rooms publishes on the namespace channel; the rooms travel inside the message.
+      const announced = new Promise<string>((resolve) => {
+        subscriber.on("pmessageBuffer", (_pattern: Buffer, _channel: Buffer, message: Buffer) => {
+          if (message.includes("order.receipt-ready")) resolve(message.toString("latin1"));
+        });
+      });
+      await subscriber.psubscribe("socket.io#*");
+      const data: ReceiptJob = {
+        restaurantId,
+        orderId,
+        outputKey,
+        receipt: {
+          restaurant: { name: "Sanguchería", phone: "+56 2 2345 6789" },
+          number: 41,
+          ticketNumber: 3,
+          channel: "pickup",
+          createdAt: "2026-10-07T16:48:00Z",
+          estimatedReadyAt: "2026-10-07T17:03:00Z",
+          timezone: "America/Santiago",
+          customerName: "Berta",
+          customerPhone: "+56912345678",
+          items: [
+            {
+              productId: "p1",
+              name: "Completo italiano",
+              unitPrice: 3490,
+              quantity: 2,
+              modifiers: [],
+              note: "",
+              lineTotal: 6980,
+            },
+          ],
+          total: 6980,
+          currency: "CLP",
+          note: "",
+        },
+        email: { to: "berta@example.com", trackingUrl: "https://munchmate.test/pedido#t=tok123" },
+      };
+
+      // Twice, as a retried or duplicated job would: one PDF (same key) and one email (deterministic job id).
+      for (const attempt of [1, 2]) {
+        const job = await queue.add("receipt", data, { jobId: `receipt-test-${attempt}` });
+        await job.waitUntilFinished(events, 20_000);
+      }
+      const emailQueue = new Queue(QUEUES.EMAIL, { connection: { url: valkeyUrl } });
+      queues.push(emailQueue);
+      const emailJob = await emailQueue.getJob(`order-confirmation-${orderId}`);
+      await emailJob!.waitUntilFinished(emailEvents, 20_000);
+
+      const announcement = await announced;
+      expect(announcement).toContain(`order:${orderId}`);
+      expect(announcement).toContain(`restaurant:${restaurantId}`);
+      const list = (await (await mailpitApi("/messages")).json()) as { messages: (MailpitMessage & { Attachments: number })[] };
+      const sent = list.messages.filter((m) => m.To.some((to) => to.Address === "berta@example.com"));
+      expect(sent).toHaveLength(1);
+      expect(sent[0]!.Subject).toBe("Tu pedido #3 en Sanguchería fue aceptado");
+      expect(sent[0]!.Attachments).toBe(1);
+      const full = (await (await mailpitApi(`/message/${sent[0]!.ID}`)).json()) as {
+        Text: string;
+        Attachments: { FileName: string; ContentType: string }[];
+      };
+      expect(full.Text).toContain("aproximadamente a las 14:03");
+      expect(full.Attachments[0]).toMatchObject({ FileName: "comprobante-pedido-41.pdf", ContentType: "application/pdf" });
+
       subscriber.disconnect();
     });
   });

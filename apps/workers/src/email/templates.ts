@@ -4,6 +4,8 @@ export interface RenderedEmail {
   subject: string;
   html: string;
   text: string;
+  /** Files read from the private bucket and attached by the processor. */
+  attachments?: { key: string; filename: string; contentType: string }[];
 }
 
 /** Escapes user-provided values (names) before inserting them into HTML. */
@@ -81,6 +83,29 @@ export function renderEmail(job: EmailJob): RenderedEmail {
           { label: "Aceptar invitación", url },
         ),
         text: `${inviterName} te invitó a sumarte al equipo de ${restaurantName} (${roleList}) en Munch Mate.\n\nAcepta la invitación aquí:\n${url}\n\nSi aún no tienes cuenta, podrás crearla con este mismo correo. Vence en 24 horas.`,
+      };
+    }
+    case "order-confirmation": {
+      const { customerName, restaurantName, restaurantPhone, ticketNumber, readyAt, total, trackingUrl, attachment } =
+        job.data;
+      const when = readyAt ? `Estará listo para retirar aproximadamente a las ${readyAt}.` : "Te avisaremos cuando esté listo.";
+      const call = restaurantPhone ? ` Si necesitas cambiar algo, llama al local: ${restaurantPhone}.` : "";
+      return {
+        subject: `Tu pedido #${ticketNumber} en ${restaurantName} fue aceptado`,
+        html: layout(
+          `Hola ${escapeHtml(customerName)}`,
+          [
+            `<strong>${escapeHtml(restaurantName)}</strong> aceptó tu pedido <strong>#${ticketNumber}</strong>. ${escapeHtml(when)}`,
+            `Total: <strong>${escapeHtml(total)}</strong>. El pago se realiza en el local al retirar.${escapeHtml(call)}`,
+            "Adjuntamos el comprobante en PDF (documento interno, no es una boleta).",
+          ],
+          { label: "Seguir mi pedido", url: trackingUrl },
+        ),
+        text:
+          `Hola ${customerName}:\n\n${restaurantName} aceptó tu pedido #${ticketNumber}. ${when}\n\n` +
+          `Total: ${total}. El pago se realiza en el local al retirar.${call}\n\n` +
+          `Sigue tu pedido aquí:\n${trackingUrl}\n\nAdjuntamos el comprobante en PDF (documento interno, no es una boleta).`,
+        attachments: [{ ...attachment, contentType: "application/pdf" }],
       };
     }
     default: {

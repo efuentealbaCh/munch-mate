@@ -23,6 +23,11 @@ export class RealtimeEmitterService implements OnApplicationShutdown {
     return this.emitter.to(`restaurant:${restaurantId}`);
   }
 
+  /** The staff board and the customer tracking that order. */
+  toRestaurantAndOrder(restaurantId: string, orderId: string) {
+    return this.emitter.to([`restaurant:${restaurantId}`, `order:${orderId}`]);
+  }
+
   onApplicationShutdown(): void {
     this.client.disconnect();
   }

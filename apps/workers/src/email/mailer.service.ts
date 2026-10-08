@@ -23,9 +23,16 @@ export class MailerService implements OnApplicationShutdown {
     });
   }
 
-  /** @returns The SMTP message id. Throws on delivery failure so BullMQ retries the job. */
-  async send(to: string, email: RenderedEmail): Promise<string> {
-    const info = await this.transport.sendMail({ from: this.from, to, ...email });
+  /**
+   * @param attachments Already loaded files (the processor reads them from storage).
+   * @returns The SMTP message id. Throws on delivery failure so BullMQ retries the job.
+   */
+  async send(
+    to: string,
+    email: Omit<RenderedEmail, "attachments">,
+    attachments: { filename: string; content: Buffer; contentType: string }[] = [],
+  ): Promise<string> {
+    const info = await this.transport.sendMail({ from: this.from, to, ...email, attachments });
     return String(info.messageId);
   }
 

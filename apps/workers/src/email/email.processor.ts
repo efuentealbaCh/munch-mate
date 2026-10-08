@@ -2,6 +2,7 @@ import { type EmailJob, QUEUES } from "@app/types";
 import { Processor, WorkerHost } from "@nestjs/bullmq";
 import type { Job } from "bullmq";
 import { InjectPinoLogger, PinoLogger } from "nestjs-pino";
+import { PrivateStorageService } from "../storage/private-storage.service";
 import { MailerService } from "./mailer.service";
 import { renderEmail } from "./templates";
 
@@ -14,13 +15,22 @@ import { renderEmail } from "./templates";
 export class EmailProcessor extends WorkerHost {
   constructor(
     private readonly mailer: MailerService,
+    private readonly storage: PrivateStorageService,
     @InjectPinoLogger(EmailProcessor.name) private readonly logger: PinoLogger,
   ) {
     super();
   }
 
   async process(job: Job<EmailJob>): Promise<{ messageId: string }> {
-    const messageId = await this.mailer.send(job.data.data.to, renderEmail(job.data));
+    const { attachments = [], ...email } = renderEmail(job.data);
+    const files = await Promise.all(
+      attachments.map(async (file) => ({
+        filename: file.filename,
+        contentType: file.contentType,
+        content: await this.storage.get(file.key),
+      })),
+    );
+    const messageId = await this.mailer.send(job.data.data.to, email, files);
     // Never log job.data: it contains one-time links.
     this.logger.info({ jobId: job.id, template: job.data.template, messageId }, "email sent");
     return { messageId };
