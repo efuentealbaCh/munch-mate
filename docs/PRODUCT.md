@@ -31,7 +31,7 @@ Un usuario de staff puede tener varios roles dentro del mismo restaurante.
 | Canal | Entrada | Identificación | Pago (MVP) |
 | --- | --- | --- | --- |
 | `dine_in` | QR de la mesa → `/m/{tableToken}` | La mesa | En el local |
-| `pickup` | `/r/{slug}` | Nombre y teléfono | En el local, al retirar |
+| `pickup` | `/r/{slug}` (si el local activó el retiro) | Nombre y teléfono; email opcional para recibir el comprobante | En el local, al retirar |
 | `delivery` | `/r/{slug}` | Nombre, teléfono y dirección | Contra entrega |
 
 ---
@@ -96,7 +96,7 @@ pending ──► accepted ──► preparing ──► ready ──┬──�
 
 | Colección | Tenant | Campos clave |
 | --- | --- | --- |
-| `restaurants` | — | `slug` (único), `name`, `description`, `phone`, `logoKey`, `currency`, `timezone`, `status`, `createdBy`, `membershipVersion` ✅ · pendiente: `openingHours` (fase 3) |
+| `restaurants` | — | `slug` (único), `name`, `description`, `phone`, `logoKey`, `currency`, `timezone`, `status`, `createdBy`, `membershipVersion`, `acceptingOrders`, `pickupEnabled` ✅ · pendiente: `openingHours` |
 | `users` | — | `email` (único), `passwordHash`, `name`, `emailVerifiedAt`, `platformRole?` ✅ |
 | `sessions` | — | `userId`, `familyId`, `tokenHash`, `expiresAt`, `rotatedAt`, `revokedAt` ✅ |
 | `one_time_tokens` | — | `type` (`verify_email` / `password_reset`), `tokenHash`, `userId`, `expiresAt`, `usedAt` ✅ |
@@ -107,7 +107,7 @@ pending ──► accepted ──► preparing ──► ready ──┬──�
 | `modifier_groups` | ✔ | `name`, `minSelect`, `maxSelect`, `options[]` (`name`, `priceDelta`, `available`) — biblioteca reutilizable entre productos ✅ |
 | `tables` | ✔ | `label`, `token` (único, va en el QR `/m/{token}`, regenerable), `active` ✅ |
 | `delivery_zones` | ✔ | `name`, `fee`, `minOrder`, `active` |
-| `orders` | ✔ | `number` (global), `ticketNumber` (diario), `businessDate`, `channel`, `status`, `statusHistory[]` (con quién y motivo), `paymentStatus`, `paymentMethod`, `items[]` (snapshot de precios y modificadores), `subtotal`, `total`, `currency`, `customerName`, `note`, `tableId`, `tableLabel` (snapshot), `accessTokenHash`, `clientOrderId` ✅ · pendientes: `deliveryFee`, `customerId`, `delivery`, `riderId` (fases 4–6) |
+| `orders` | ✔ | `number` (global), `ticketNumber` (diario), `businessDate`, `channel`, `status`, `statusHistory[]` (con quién y motivo), `paymentStatus`, `paymentMethod`, `items[]` (snapshot de precios y modificadores), `subtotal`, `total`, `currency`, `customerName`, `customerPhone` (normalizado), `customerEmail`, `estimatedReadyAt`, `note`, `tableId`, `tableLabel` (snapshot), `accessTokenHash`, `clientOrderId` ✅ · pendientes: `deliveryFee`, `customerId`, `delivery`, `riderId` (fases 5–6) |
 | `counters` | ✔ | `_id` (`order:{restaurantId}` / `ticket:{restaurantId}:{businessDate}`), `seq` ✅ |
 | `customer_addresses` | — | `userId`, `label`, `address`, `reference`, `zoneHint` |
 | `push_subscriptions` | — | `userId`, `endpoint`, `keys` |
@@ -154,3 +154,10 @@ Cada fase termina con sus tests, `smoke` actualizado y despliegue al VPS.
   - `number`: correlativo **global por restaurante**, nunca se reinicia. Se usa en el comprobante, en soporte y en reportes.
   - `ticketNumber`: correlativo **diario por restaurante**, vuelve a 1 a medianoche en la zona horaria del restaurante. Es el número que se muestra en cocina y al cliente. Más adelante se puede agregar una hora de corte configurable.
   - Ambos salen de contadores atómicos (`$inc`) en la colección `counters`, sin riesgo de duplicados con pedidos simultáneos.
+- **Retiro (fase 4):**
+  - El dueño activa el retiro por local (`pickupEnabled`, apagado por defecto). Respeta además el interruptor de abierto/cerrado.
+  - El email del cliente es **opcional**. Sin email, el comprobante se descarga desde la página de seguimiento.
+  - Se pide **para ahora**: al aceptar, el local indica en cuántos minutos estará listo (10, 15, 20, 30, 45 o 60) y el cliente ve la hora estimada.
+  - Contra pedidos falsos: límite por IP, máximo 3 pedidos en curso por teléfono y local, y el local acepta cada pedido antes de prepararlo.
+  - El comprobante PDF y el email de confirmación se generan **al aceptar** el pedido, no al crearlo: así nunca se envía un comprobante de un pedido que el local rechaza.
+  - Se puede marcar **Retirado** un pedido sin pagar; la web avisa y ofrece registrar el pago en ese momento.

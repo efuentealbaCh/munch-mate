@@ -432,7 +432,8 @@
         "Mesa 6",
         "Barra"
       ],
-      "acceptingOrders": true
+      "acceptingOrders": true,
+      "pickupEnabled": true
     },
     {
       "name": "Pizzería Forno Rosso",
@@ -680,7 +681,8 @@
         "Terraza 1",
         "Terraza 2"
       ],
-      "acceptingOrders": true
+      "acceptingOrders": true,
+      "pickupEnabled": true
     },
     {
       "name": "Café Brote",
@@ -913,7 +915,8 @@
         "Mesa 4",
         "Ventana"
       ],
-      "acceptingOrders": true
+      "acceptingOrders": true,
+      "pickupEnabled": true
     }
   ]
 }

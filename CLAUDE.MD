@@ -26,6 +26,8 @@ Domain rules that always apply:
 - Guest orders are accessed only with their `accessToken`, never by order number alone. The token is derived (HMAC with `ORDER_TOKEN_SECRET`) from the browser's `clientOrderId`, only its hash is stored, and it always travels in request bodies (`/api/public/orders/lookup`), never in api URLs.
 - **Order creation is idempotent per `clientOrderId`**: a retried submission returns the same order and token. Carts are priced by `priceOrder()` (`modules/orders/order-pricing.ts`) against the current menu — sold-out items, hidden products and modifier rules are enforced there.
 - **The state machine lives in `@app/utils` (`checkTransition` / `nextStatuses`)**, shared by the api (enforcement) and the web (which buttons to show). Transitions use a conditional update on the current status, so two staff members cannot apply conflicting changes (409 `ORDER_CHANGED`).
+- **Pickup orders** (`POST /api/public/restaurants/:slug/orders`) need the owner setting `pickupEnabled` plus the open switch. Name and phone are mandatory, email optional; phones are stored normalized with `normalizePhone()` (`@app/utils`, Chile by default) and at most `ORDER_LIMITS.activePickupOrdersPerPhone` pickup orders per phone may be in progress (429 `TOO_MANY_ACTIVE_ORDERS`). Accepting one requires `readyInMinutes` (`PICKUP_READY_MINUTES`), stored as `estimatedReadyAt`. Handing over an unpaid order is allowed (the web warns).
+- **Receipts** are internal documents, not tax documents (no SII boleta). Accepting a pickup order enqueues `pdf:receipt` (job id `receipt-<orderId>`); the worker stores `restaurants/<id>/receipts/<orderId>.pdf` in the private bucket, emits `order.receipt-ready` and, if the customer left an email, enqueues `email:order-confirmation` (job id `order-confirmation-<orderId>`) with the PDF attached. The api serves it with 202 while pending (422 `RECEIPT_FAILED` once the job has exhausted its retries): staff `GET .../orders/:orderId/receipt`, customer `POST /api/public/orders/receipt` (token in the body).
 
 ---
 
@@ -247,7 +249,7 @@ workers ──(@socket.io/redis-emitter)─────────────�
 
 - Same origin as the app (`/socket.io` through Caddy). `RedisIoAdapter` **rejects handshakes whose `Origin` is not `APP_URL`**: browsers send cookies on WebSocket upgrades, so this prevents cross-site WebSocket hijacking.
 - **Staff** authenticate with the same httpOnly `mm_at` cookie as the REST api (read in `handleConnection`, no token in JS) and join `restaurant:<id>` via `restaurant.subscribe` — membership is checked like `RestaurantAccessGuard`. **Customers** are anonymous and join `order:<id>` via `order.subscribe` with their tracking token.
-- Emit with `RealtimeService` (`toRestaurant(id)` / `toOrder(id)`); never store socket IDs in the database. Events: `order.created`, `order.updated` (staff), `order.status` (customer, public view), `restaurant.accepting`, `qr-sheet.ready`.
+- Emit with `RealtimeService` (`toRestaurant(id)` / `toOrder(id)`); never store socket IDs in the database. Events: `order.created`, `order.updated` (staff), `order.status` (customer, public view), `restaurant.accepting`, `qr-sheet.ready`, `order.receipt-ready` (staff and customer).
 - Known limitation: a staff socket keeps its subscription until it disconnects, even if the membership is revoked meanwhile; the web reconnects on refresh, which re-checks.
 - Event names and payload types live in `packages/types` — shared by api, workers and web.
 - Workers never import the gateway: they emit through `@socket.io/redis-emitter` on the same Valkey.
@@ -310,7 +312,7 @@ The workers app is a NestJS **standalone application** (`NestFactory.createAppli
 
 - **Idempotency**: every processor must tolerate the same job twice. Use deterministic `jobId`s and check state before side effects.
 - Every job has `attempts` + exponential `backoff`. Failed jobs stay in the `failed` set; never delete them automatically.
-- Job payload types live in `packages/types`; payloads carry IDs, not whole documents. Exception: `email` jobs carry the rendered data (name, one-time link), because only the token hash exists in MongoDB. Never log email job payloads.
+- Job payload types live in `packages/types`; payloads carry IDs, not whole documents. Exceptions: `email` jobs carry the rendered data (name, one-time link), because only the token hash exists in MongoDB; `pdf` jobs carry the data to print (QR URLs, the order's immutable price snapshot), so the workers need no menu or order schemas. Never log email or receipt job payloads (customer data).
 - PDFs are generated with a lightweight library (`pdfkit` or `@react-pdf/renderer`) — **no headless browser** — and uploaded to Garage; the job result stores the object key.
 - Graceful shutdown: on `SIGTERM`, let in-flight jobs finish (`worker.close()`), then disconnect.
 
@@ -557,6 +559,7 @@ The goal: **anything that passes the release gate locally can be deployed to the
   - Phase 1b (implemented, local only): verify the email with the token read from Mailpit, create a restaurant (generated slug, owner role), invite staff and receive the invitation email, anonymous access to the restaurant → 401.
   - Phase 2 (implemented): unknown public menu → 404, media host answers and is read-only (405). Local only: create category + product, upload a photo (re-encoded, served by `media.<domain>` as `image/webp`), public menu shows the product.
   - Phase 3 (implemented): unknown table QR → 404, Socket.IO handshake through Caddy, foreign-origin handshake → 403. Local only: open the restaurant, create a table, order from its QR (server-priced total), the board lists and accepts it, customer tracking sees `accepted`, the workers generate the QR-sheet PDF.
+  - Phase 4 (implemented): pickup order for an unknown restaurant → 404. Local only: enable pickup, order from the public menu with an email, accepting asks for a ready time, tracking shows it, the customer downloads the receipt PDF, the confirmation email with the PDF attached reaches Mailpit, the order is handed over unpaid.
   - Non-ASCII text in smoke requests must be written as JSON escapes (`\u00e1`): Git Bash on Windows passes non-ASCII arguments to curl in the console code page.
   - On the VPS the smoke test must never create users or send real emails.
 - Registration is rate-limited to 5/min per IP. `pnpm smoke` registers 1 user and `pnpm test:web` 4: running both plus manual tests within the same minute hits 429 — wait a minute between heavy runs.
