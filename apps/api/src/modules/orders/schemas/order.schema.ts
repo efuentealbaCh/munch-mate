@@ -120,6 +120,14 @@ export class Order {
   @Prop({ default: "" })
   customerName!: string;
 
+  /** Pickup and delivery: normalized (`+56912345678`), used by the staff to call and by the per-phone limit. */
+  @Prop({ default: "" })
+  customerPhone!: string;
+
+  /** Optional; where the confirmation and receipt are emailed. */
+  @Prop({ default: "" })
+  customerEmail!: string;
+
   @Prop({ default: "" })
   note!: string;
 
@@ -129,6 +137,10 @@ export class Order {
   /** Snapshot: renaming or deleting the table later does not change past orders. */
   @Prop({ type: String, default: null })
   tableLabel!: string | null;
+
+  /** Pickup: when the staff said it will be ready (set on acceptance). */
+  @Prop({ type: Date, default: null })
+  estimatedReadyAt!: Date | null;
 
   /** SHA-256 of the customer's access token (tracking link). */
   @Prop({ required: true, unique: true })
@@ -144,3 +156,8 @@ export const OrderSchema = SchemaFactory.createForClass(Order);
 OrderSchema.index({ restaurantId: 1, clientOrderId: 1 }, { unique: true });
 OrderSchema.index({ restaurantId: 1, status: 1, createdAt: 1 });
 OrderSchema.index({ restaurantId: 1, businessDate: 1 });
+// Per-phone limit on pickup orders in progress; partial so dine-in orders (no phone) stay out of it.
+OrderSchema.index(
+  { restaurantId: 1, customerPhone: 1, status: 1 },
+  { partialFilterExpression: { channel: { $in: ["pickup", "delivery"] } } },
+);

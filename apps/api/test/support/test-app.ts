@@ -123,7 +123,8 @@ export async function resetRateLimits(valkeyUrl: string): Promise<void> {
 /** Extracts the `token` query parameter of the most recent email link of a template. */
 export async function lastEmailToken(valkeyUrl: string, template: EmailTemplate, to: string): Promise<string> {
   const emails = await enqueuedEmails(valkeyUrl, template, to);
-  const url = emails.at(-1)?.data.url;
+  const data = emails.at(-1)?.data;
+  const url = data && "url" in data ? data.url : undefined;
   const token = url ? new URL(url).searchParams.get("token") : null;
   if (!token) throw new Error(`no ${template} email for ${to}`);
   return token;

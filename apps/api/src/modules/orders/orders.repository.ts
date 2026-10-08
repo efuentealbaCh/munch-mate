@@ -29,9 +29,14 @@ export interface OrderRecord {
   total: number;
   currency: string;
   customerName: string;
+  customerPhone: string;
+  customerEmail: string;
   note: string;
   tableId: string | null;
   tableLabel: string | null;
+  estimatedReadyAt: Date | null;
+  /** Browser-generated submission id; with ORDER_TOKEN_SECRET it re-derives the customer's access token. */
+  clientOrderId: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -46,6 +51,8 @@ export interface NewOrder {
   total: number;
   currency: string;
   customerName: string;
+  customerPhone: string;
+  customerEmail: string;
   note: string;
   tableId: string | null;
   tableLabel: string | null;
@@ -99,6 +106,16 @@ export class OrdersRepository {
     return doc ? toRecord(doc) : null;
   }
 
+  /** Pickup/delivery orders of one phone that are still in progress (per-phone limit against fake orders). */
+  async countActiveByPhone(restaurantId: string, customerPhone: string): Promise<number> {
+    return this.orders.countDocuments({
+      restaurantId: oid(restaurantId),
+      customerPhone,
+      channel: { $in: ["pickup", "delivery"] },
+      status: { $nin: [...FINAL_ORDER_STATUSES] },
+    });
+  }
+
   /** Orders still in progress, oldest first (the kitchen board). */
   async listActive(restaurantId: string): Promise<OrderRecord[]> {
     const docs = await this.orders
@@ -126,14 +143,24 @@ export class OrdersRepository {
     restaurantId: string,
     orderId: string,
     from: OrderStatus,
-    change: { to: OrderStatus; byUserId: string | null; byName: string | null; reason: string | null },
+    change: {
+      to: OrderStatus;
+      byUserId: string | null;
+      byName: string | null;
+      reason: string | null;
+      /** Pickup acceptance. */
+      estimatedReadyAt?: Date;
+    },
   ): Promise<OrderRecord | null> {
     if (!Types.ObjectId.isValid(orderId)) return null;
     const doc = await this.orders
       .findOneAndUpdate(
         { _id: oid(orderId), restaurantId: oid(restaurantId), status: from },
         {
-          $set: { status: change.to },
+          $set: {
+            status: change.to,
+            ...(change.estimatedReadyAt ? { estimatedReadyAt: change.estimatedReadyAt } : {}),
+          },
           $push: {
             statusHistory: {
               status: change.to,
@@ -202,9 +229,13 @@ function toRecord(doc: OrderDoc): OrderRecord {
     total: doc.total,
     currency: doc.currency,
     customerName: doc.customerName ?? "",
+    customerPhone: doc.customerPhone ?? "",
+    customerEmail: doc.customerEmail ?? "",
     note: doc.note ?? "",
     tableId: doc.tableId ? doc.tableId.toString() : null,
     tableLabel: doc.tableLabel ?? null,
+    estimatedReadyAt: doc.estimatedReadyAt ?? null,
+    clientOrderId: doc.clientOrderId,
     createdAt: doc.createdAt ?? doc._id.getTimestamp(),
     updatedAt: doc.updatedAt ?? doc._id.getTimestamp(),
   };

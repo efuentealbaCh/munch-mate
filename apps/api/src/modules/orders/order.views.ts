@@ -14,6 +14,16 @@ function toItemViews(order: OrderRecord): OrderItemView[] {
   }));
 }
 
+/** A pickup order gets its PDF receipt when accepted; the worker stores it at `receiptKey(order)`. */
+export function hasReceipt(order: OrderRecord): boolean {
+  return order.channel !== "dine_in" && order.statusHistory.some((change) => change.status === "accepted");
+}
+
+/** Private-bucket key of an order's receipt (deterministic, so retries overwrite the same object). */
+export function receiptKey(order: { restaurantId: string; id: string }): string {
+  return `restaurants/${order.restaurantId}/receipts/${order.id}.pdf`;
+}
+
 /** Staff view: everything, including who changed each status. */
 export function toOrderView(order: OrderRecord): OrderView {
   return {
@@ -36,24 +46,34 @@ export function toOrderView(order: OrderRecord): OrderView {
     total: order.total,
     currency: order.currency,
     customerName: order.customerName,
+    customerPhone: order.customerPhone,
+    customerEmail: order.customerEmail,
     note: order.note,
     tableLabel: order.tableLabel,
+    estimatedReadyAt: order.estimatedReadyAt?.toISOString() ?? null,
+    receiptAvailable: hasReceipt(order),
     createdAt: order.createdAt.toISOString(),
   };
 }
 
 /** Customer view: no staff names, no internal ids, plus the reason if the order was rejected. */
-export function toPublicOrderView(order: OrderRecord, restaurant: { name: string; slug: string }): PublicOrderView {
+export function toPublicOrderView(
+  order: OrderRecord,
+  restaurant: { name: string; slug: string; phone: string },
+): PublicOrderView {
   const rejection = order.status === "rejected" ? order.statusHistory.findLast((c) => c.status === "rejected") : undefined;
   return {
     ticketNumber: order.ticketNumber,
     number: order.number,
+    channel: order.channel,
     status: order.status,
     rejectReason: rejection?.reason ?? null,
     items: toItemViews(order),
     total: order.total,
     currency: order.currency,
     tableLabel: order.tableLabel,
+    estimatedReadyAt: order.estimatedReadyAt?.toISOString() ?? null,
+    receiptAvailable: hasReceipt(order),
     restaurant,
     createdAt: order.createdAt.toISOString(),
     updatedAt: order.updatedAt.toISOString(),

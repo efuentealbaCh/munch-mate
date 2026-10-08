@@ -12,6 +12,7 @@ export interface RestaurantRecord {
   phone: string;
   logoKey: string | null;
   acceptingOrders: boolean;
+  pickupEnabled: boolean;
   currency: string;
   timezone: string;
   status: RestaurantStatus;
@@ -23,6 +24,7 @@ export interface RestaurantChanges {
   slug?: string;
   description?: string;
   phone?: string;
+  pickupEnabled?: boolean;
 }
 
 /** Thrown when the unique index on `slug` rejects a write. */
@@ -136,6 +138,7 @@ function toRecord(doc: Restaurant & { _id: Types.ObjectId }): RestaurantRecord {
     phone: doc.phone ?? "",
     logoKey: doc.logoKey ?? null,
     acceptingOrders: doc.acceptingOrders ?? false,
+    pickupEnabled: doc.pickupEnabled ?? false,
     currency: doc.currency,
     timezone: doc.timezone,
     status: doc.status,
