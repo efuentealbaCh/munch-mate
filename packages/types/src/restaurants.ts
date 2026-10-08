@@ -14,6 +14,31 @@ export const RESTAURANT_ROLE_LABELS: Record<RestaurantRole, string> = {
 
 export type RestaurantStatus = "active" | "suspended";
 
+/** "HH:MM" in the restaurant's timezone. A close not after the open ends the next day (19:00–01:00). */
+export interface TimeRange {
+  open: string;
+  close: string;
+}
+
+/** Seven days, Monday first; each with up to `OPENING_HOURS_LIMITS.rangesPerDay` ranges ([] = closed). */
+export type WeeklyHours = TimeRange[][];
+
+export const OPENING_HOURS_LIMITS = { rangesPerDay: 2 } as const;
+
+/** Index 0 = lunes, matching WeeklyHours. */
+export const WEEKDAY_LABELS = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"] as const;
+
+/**
+ * Whether customers can order right now: the manual switch AND (when a schedule is set) the opening hours.
+ * Computed by the api at request time.
+ */
+export interface OpenState {
+  /** Inside the opening hours (always true without a schedule). */
+  openNow: boolean;
+  /** When the schedule opens next (ISO), if closed by schedule. */
+  nextOpeningAt: string | null;
+}
+
 /** A restaurant as seen by one of its members. */
 export interface RestaurantView {
   id: string;
@@ -23,8 +48,11 @@ export interface RestaurantView {
   description: string;
   phone: string;
   logo: LogoImage | null;
-  /** Manual "open/closed" switch: customers can only place orders while true. */
+  /** Manual "open/closed" switch: customers can only place orders while true (and within opening hours). */
   acceptingOrders: boolean;
+  /** null = no schedule (the manual switch alone decides). */
+  openingHours: WeeklyHours | null;
+  openState: OpenState;
   /** Customers may order for pickup from the public menu `/r/{slug}`. Owner setting, off by default. */
   pickupEnabled: boolean;
   /** Customers may order for delivery to the restaurant's zones. Owner setting, off by default. */
@@ -68,4 +96,23 @@ export interface InvitationPreview {
   email: string;
   roles: RestaurantRole[];
   expiresAt: string;
+}
+
+// ── Platform admin ──────────────────────────────────────────────────────────
+
+/** A restaurant as the platform admin sees it in the list. */
+export interface PlatformRestaurantView {
+  id: string;
+  name: string;
+  slug: string;
+  status: RestaurantStatus;
+  acceptingOrders: boolean;
+  createdAt: string;
+  owners: { name: string; email: string }[];
+  members: number;
+}
+
+export interface PlatformRestaurantPage {
+  items: PlatformRestaurantView[];
+  total: number;
 }

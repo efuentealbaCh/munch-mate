@@ -1,3 +1,4 @@
+import type { OpenState, WeeklyHours } from "./restaurants";
 /**
  * Limits shared by the api DTOs and the web forms, so both validate the same way.
  * Prices are integers in the currency's minor unit (CLP has none: 3990 = $3.990).
@@ -107,6 +108,9 @@ export interface PublicMenu {
     logo: LogoImage | null;
     /** The open/closed switch: while false the menu is browsable but nothing can be ordered. */
     acceptingOrders: boolean;
+    /** Opening hours (null = not published) and whether they allow ordering now. */
+    openingHours: WeeklyHours | null;
+    openState: OpenState;
     /** Whether customers may order for pickup from this menu (owner setting). */
     pickupEnabled: boolean;
     /** Whether customers may order for delivery (owner setting; zones at `/delivery-zones`). */

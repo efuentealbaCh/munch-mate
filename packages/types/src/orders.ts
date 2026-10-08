@@ -1,3 +1,5 @@
+import type { OpenState } from "./restaurants";
+
 /** Channels a customer can order through: dine_in (phase 3), pickup (phase 4), delivery (phase 5). */
 export const ORDER_CHANNELS = ["dine_in", "pickup", "delivery"] as const;
 export type OrderChannel = (typeof ORDER_CHANNELS)[number];
@@ -281,6 +283,7 @@ export interface TableContext {
   tableLabel: string;
   restaurant: { name: string; slug: string };
   acceptingOrders: boolean;
+  openState: OpenState;
 }
 
 // ── Delivery zones ──────────────────────────────────────────────────────────
@@ -314,6 +317,30 @@ export type PublicDeliveryZone = Pick<DeliveryZoneView, "id" | "name" | "fee" | 
 export interface RiderView {
   id: string;
   name: string;
+}
+
+// ── Daily summary ───────────────────────────────────────────────────────────
+
+/** Sales of one business day (orders rejected or cancelled count only in `orders`). Amounts in minor units. */
+export interface DailySummary {
+  /** Business date, YYYY-MM-DD in the restaurant's timezone. */
+  date: string;
+  currency: string;
+  orders: { total: number; completed: number; inProgress: number; cancelled: number; rejected: number };
+  sales: {
+    /** Σ total of orders not rejected/cancelled (completed or in progress). */
+    total: number;
+    deliveryFees: number;
+    paid: number;
+    unpaid: number;
+    /** total / orders counted, rounded; 0 without sales. */
+    averageTicket: number;
+  };
+  byChannel: Record<OrderChannel, { orders: number; total: number }>;
+  /** Paid amounts per method. */
+  byPaymentMethod: Record<PaymentMethod, number>;
+  /** Best sellers by units (top 5). */
+  topProducts: { name: string; quantity: number; total: number }[];
 }
 
 // ── Real-time (Socket.IO) ───────────────────────────────────────────────────
