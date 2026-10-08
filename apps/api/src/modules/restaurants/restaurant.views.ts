@@ -1,9 +1,24 @@
-import type { RestaurantRole, RestaurantView } from "@app/types";
+import type { OpenState, RestaurantRole, RestaurantView } from "@app/types";
 import { BadRequestException } from "@nestjs/common";
-import { type SlugProblem, slugProblem } from "@app/utils";
+import { isOpenAt, nextOpeningAt, type OpeningHoursProblem, type SlugProblem, slugProblem } from "@app/utils";
 import { apiError } from "../../common/errors/api-error";
 import type { MediaService } from "../../infra/storage/media.service";
 import type { RestaurantRecord } from "./restaurants.repository";
+
+/** Whether the opening hours allow ordering at `at` (the manual switch is checked separately). */
+export function openState(restaurant: RestaurantRecord, at = new Date()): OpenState {
+  const openNow = isOpenAt(restaurant.openingHours, at, restaurant.timezone);
+  const next = openNow ? null : nextOpeningAt(restaurant.openingHours, at, restaurant.timezone);
+  return { openNow, nextOpeningAt: next?.toISOString() ?? null };
+}
+
+export const OPENING_HOURS_MESSAGES: Record<OpeningHoursProblem, string> = {
+  days: "El horario debe tener los 7 días de la semana",
+  ranges_per_day: "Cada día puede tener como máximo 2 tramos",
+  time_format: "Usa horas en formato HH:MM (00:00 a 23:59)",
+  empty_range: "Un tramo no puede abrir y cerrar a la misma hora",
+  overlap: "Los tramos de un mismo día no pueden superponerse",
+};
 
 export function toRestaurantView(
   restaurant: RestaurantRecord,
@@ -20,6 +35,8 @@ export function toRestaurantView(
     acceptingOrders: restaurant.acceptingOrders,
     pickupEnabled: restaurant.pickupEnabled,
     deliveryEnabled: restaurant.deliveryEnabled,
+    openingHours: restaurant.openingHours,
+    openState: openState(restaurant),
     currency: restaurant.currency,
     timezone: restaurant.timezone,
     status: restaurant.status,

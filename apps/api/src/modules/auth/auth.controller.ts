@@ -126,5 +126,11 @@ function clientContext(req: Request): ClientContext {
 }
 
 function toProfile(user: UserRecord): UserProfile {
-  return { id: user.id, email: user.email, name: user.name, emailVerified: user.emailVerifiedAt !== null };
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    emailVerified: user.emailVerifiedAt !== null,
+    platformRole: user.platformRole,
+  };
 }

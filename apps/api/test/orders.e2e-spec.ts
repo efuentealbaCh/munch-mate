@@ -124,6 +124,7 @@ describe("Dine-in orders (e2e)", () => {
         tableLabel: "Mesa 4",
         restaurant: { name: "Completos Don Pepe", slug: s.restaurant.slug },
         acceptingOrders: true,
+        openState: { openNow: true, nextOpeningAt: null },
       });
 
       const { accessToken, order } = await s.order();

@@ -1,6 +1,6 @@
 "use client";
 
-import type { PublicMenu, PublicProduct, TableContext } from "@app/types";
+import type { OpenState, PublicMenu, PublicProduct, TableContext } from "@app/types";
 import { ClockIcon, ReceiptTextIcon, StoreIcon } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -11,13 +11,16 @@ import { OrderProductSheet } from "@/components/order-product-sheet";
 import { MenuSections } from "@/components/public-menu";
 import { RestaurantLogo } from "@/components/restaurant-logo";
 import { Badge } from "@/components/ui/badge";
+import { useNow } from "@/hooks/use-now";
 import { useOnVisible } from "@/hooks/use-realtime";
+import { useRefreshAt } from "@/hooks/use-refresh-at";
 import { useStoredCart } from "@/hooks/use-stored-cart";
 import { ApiError } from "@/lib/api";
 import { localStore } from "@/lib/browser-storage";
 import { type CartLine, cartCount, cartTotal, LINE_ERRORS, toOrderItems } from "@/lib/cart";
 import { publicOrdersApi } from "@/lib/endpoints";
 import { hasCode } from "@/lib/errors";
+import { closedByScheduleText, closedStateFromError } from "@/lib/opening-hours";
 import { loadMyOrders, rememberOrder, trackingHref } from "@/lib/order-tracking";
 import type { CheckoutValues } from "@/lib/validation";
 import { TableCartSheet } from "./cart-sheet";
@@ -33,6 +36,7 @@ export function TableOrdering({ tableToken, table, initialMenu }: TableOrderingP
   const router = useRouter();
   const [menu, setMenu] = useState(initialMenu);
   const [accepting, setAccepting] = useState(table.acceptingOrders);
+  const [openState, setOpenState] = useState<OpenState>(table.openState);
   const [tableGone, setTableGone] = useState(false);
   const { lines, dispatch, beginAttempt, completeOrder } = useStoredCart(tableToken);
   const [selected, setSelected] = useState<PublicProduct | null>(null);
@@ -43,7 +47,9 @@ export function TableOrdering({ tableToken, table, initialMenu }: TableOrderingP
   const [problem, setProblem] = useState<LineProblem | null>(null);
   const [myOrdersCount, setMyOrdersCount] = useState(0);
   const currency = menu.restaurant.currency;
-  const canOrder = accepting && !tableGone;
+  const now = useNow(30_000);
+  const closedBySchedule = accepting && !openState.openNow && !tableGone;
+  const canOrder = accepting && openState.openNow && !tableGone;
 
   useEffect(() => setMyOrdersCount(loadMyOrders(localStore()).length), []);
 
@@ -52,6 +58,7 @@ export function TableOrdering({ tableToken, table, initialMenu }: TableOrderingP
     try {
       const fresh = await publicOrdersApi.table(tableToken);
       setAccepting(fresh.acceptingOrders);
+      setOpenState(fresh.openState);
       setTableGone(false);
     } catch (failure) {
       if (hasCode(failure, "TABLE_NOT_FOUND")) setTableGone(true);
@@ -59,6 +66,8 @@ export function TableOrdering({ tableToken, table, initialMenu }: TableOrderingP
     }
   }, [tableToken]);
   useOnVisible(() => void refreshTable());
+  // Closed by the schedule: refresh when it opens, so the cart unlocks without reloading the page.
+  useRefreshAt(closedBySchedule ? openState.nextOpeningAt : null, () => void refreshTable());
 
   const refreshMenu = useCallback(async () => {
     try {
@@ -106,6 +115,10 @@ export function TableOrdering({ tableToken, table, initialMenu }: TableOrderingP
         return;
       }
       if (hasCode(failure, "NOT_ACCEPTING_ORDERS")) setAccepting(false);
+      if (hasCode(failure, "OUTSIDE_OPENING_HOURS")) {
+        setOpenState(closedStateFromError(failure.meta));
+        void refreshTable();
+      }
       if (hasCode(failure, "TABLE_NOT_FOUND")) setTableGone(true);
       setError(failure);
     }
@@ -145,7 +158,9 @@ export function TableOrdering({ tableToken, table, initialMenu }: TableOrderingP
               {tableGone ? <StoreIcon className="size-4 shrink-0" aria-hidden /> : <ClockIcon className="size-4 shrink-0" aria-hidden />}
               {tableGone
                 ? "Este código QR ya no está activo. Pide ayuda al personal."
-                : "El local no está recibiendo pedidos ahora. Puedes ver el menú."}
+                : closedBySchedule
+                  ? `${closedByScheduleText(openState, now ? new Date(now) : null)}. Puedes ver el menú.`
+                  : "El local no está recibiendo pedidos ahora. Puedes ver el menú."}
             </p>
           </div>
         ) : null}
@@ -184,6 +199,7 @@ export function TableOrdering({ tableToken, table, initialMenu }: TableOrderingP
         currency={currency}
         tableLabel={table.tableLabel}
         canOrder={canOrder}
+        {...(closedBySchedule ? { closedMessage: `${closedByScheduleText(openState, now ? new Date(now) : null)}.` } : {})}
         submitting={submitting}
         error={error}
         problem={activeProblem}

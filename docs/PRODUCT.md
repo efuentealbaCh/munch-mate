@@ -96,7 +96,7 @@ pending ──► accepted ──► preparing ──► ready ──┬──�
 
 | Colección | Tenant | Campos clave |
 | --- | --- | --- |
-| `restaurants` | — | `slug` (único), `name`, `description`, `phone`, `logoKey`, `currency`, `timezone`, `status`, `createdBy`, `membershipVersion`, `acceptingOrders`, `pickupEnabled`, `deliveryEnabled` ✅ · pendiente: `openingHours` |
+| `restaurants` | — | `slug` (único), `name`, `description`, `phone`, `logoKey`, `currency`, `timezone`, `status`, `createdBy`, `membershipVersion`, `acceptingOrders`, `pickupEnabled`, `deliveryEnabled`, `openingHours` ✅ |
 | `users` | — | `email` (único), `passwordHash`, `name`, `emailVerifiedAt`, `platformRole?` ✅ |
 | `sessions` | — | `userId`, `familyId`, `tokenHash`, `expiresAt`, `rotatedAt`, `revokedAt` ✅ |
 | `one_time_tokens` | — | `type` (`verify_email` / `password_reset`), `tokenHash`, `userId`, `expiresAt`, `usedAt` ✅ |
@@ -161,6 +161,9 @@ Cada fase termina con sus tests, `smoke` actualizado y despliegue al VPS.
   - Contra pedidos falsos: límite por IP, máximo 3 pedidos en curso por teléfono y local, y el local acepta cada pedido antes de prepararlo.
   - El comprobante PDF y el email de confirmación se generan **al aceptar** el pedido, no al crearlo: así nunca se envía un comprobante de un pedido que el local rechaza.
   - Se puede marcar **Retirado** un pedido sin pagar; la web avisa y ofrece registrar el pago en ese momento.
+- **Horario de atención:** hasta 2 tramos por día (un tramo puede pasar la medianoche, ej. 19:00–01:00). Se puede pedir solo con el interruptor encendido **y** dentro del horario; el interruptor sirve para cerrar antes. Sin horario configurado, decide solo el interruptor. El menú muestra cuándo abre.
+- **Resumen del día:** ventas por canal y por medio de pago, pagado vs. pendiente, ticket promedio y productos más vendidos, para cualquier fecha. Lo ven el dueño y caja. Los pedidos rechazados o cancelados se cuentan, pero no suman.
+- **Platform admin:** ve todos los restaurantes (búsqueda por nombre o dirección, filtro por estado) y los suspende o reactiva. Suspender saca el local del menú público, cierra los pedidos y deja el panel en solo lectura. El primer admin se crea con `pnpm platform:admin <email>`.
 - **Delivery (fase 5):**
   - El dueño activa el delivery y define sus zonas (comunas o sectores) con costo de envío y pedido mínimo. Una zona se marca como **zona del local**: el checkout la trae elegida y el cliente puede cambiarla. Sin mapas ni geocodificación.
   - El cliente escribe calle y número, y opcionalmente depto y una referencia.

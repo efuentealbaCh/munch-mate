@@ -1,6 +1,7 @@
 import { ClockIcon, PhoneIcon } from "lucide-react";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import { PublicOpeningHours } from "@/components/public-opening-hours";
 import { RestaurantLogo } from "@/components/restaurant-logo";
 import { telHref } from "@/lib/format";
 import { getPublicMenu } from "@/lib/public-menu";
@@ -59,6 +60,7 @@ export default async function PublicMenuPage({ params }: PageProps) {
                 {restaurant.phone}
               </a>
             ) : null}
+            {restaurant.openingHours ? <PublicOpeningHours hours={restaurant.openingHours} /> : null}
           </div>
         </div>
       </header>

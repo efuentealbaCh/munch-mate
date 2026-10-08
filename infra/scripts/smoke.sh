@@ -137,6 +137,10 @@ esac
 code=$(status "$BASE/api/public/restaurants/smoke-no-existe/delivery-zones")
 if [ "$code" = "404" ]; then pass "delivery zones of an unknown restaurant → 404"; else fail "unknown delivery zones returned $code"; fi
 
+# Platform admin, safe everywhere: requires a session.
+code=$(status "$BASE/api/platform/restaurants")
+if [ "$code" = "401" ]; then pass "platform admin requires a session (401)"; else fail "anonymous platform admin returned $code"; fi
+
 # Phase 2, safe everywhere: public menu routing and the read-only media host.
 body=$($CURL "$BASE/api/public/restaurants/smoke-no-existe/menu" || true)
 case "$body" in
@@ -369,6 +373,15 @@ if [ "$LOCAL" = true ]; then
   [ "$code" = "200" ] && code=$(status -b "$jar" -H "Origin: $BASE" $json -d '{"method":"cash"}' "$orders_url/payment")
   [ "$code" = "200" ] && code=$(status -b "$jar" -H "Origin: $BASE" $json -d '{"status":"delivered"}' "$orders_url/status")
   if [ "$code" = "200" ]; then pass "delivery dispatched, paid on delivery and delivered"; else fail "delivery flow returned $code"; fi
+
+  # Daily summary of the orders above; a regular owner is not a platform admin.
+  if $CURL -b "$jar" "$BASE/api/restaurants/$restaurant_id/reports/daily" | grep -q '"sales":{"total":[1-9]'; then
+    pass "daily sales summary"
+  else
+    fail "daily sales summary"
+  fi
+  code=$(status -b "$jar" "$BASE/api/platform/restaurants")
+  if [ "$code" = "404" ]; then pass "platform admin hidden from regular users (404)"; else fail "platform admin for a regular user returned $code"; fi
   rm -f "$jar" "$headers"
 fi
 

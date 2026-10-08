@@ -18,4 +18,6 @@ export interface UserProfile {
   email: string;
   name: string;
   emailVerified: boolean;
+  /** "admin" can manage every restaurant at /plataforma. */
+  platformRole: "admin" | null;
 }

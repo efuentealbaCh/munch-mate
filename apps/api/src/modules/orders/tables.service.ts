@@ -6,6 +6,7 @@ import type { ApiEnv } from "../../config/env.validation";
 import { PdfQueue } from "../../infra/queue/pdf.queue";
 import { StorageService } from "../../infra/storage/storage.service";
 import type { TenantContext } from "../restaurants/restaurant-access.guard";
+import { openState } from "../restaurants/restaurant.views";
 import { RestaurantsRepository } from "../restaurants/restaurants.repository";
 import { generateTableToken } from "./order-tokens";
 import { type TableRecord, TablesRepository } from "./tables.repository";
@@ -68,6 +69,7 @@ export class TablesService {
       tableLabel: table.label,
       restaurant: { name: restaurant.name, slug: restaurant.slug },
       acceptingOrders: restaurant.acceptingOrders,
+      openState: openState(restaurant),
     };
   }
 
