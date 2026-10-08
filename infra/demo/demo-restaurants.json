@@ -433,7 +433,26 @@
         "Barra"
       ],
       "acceptingOrders": true,
-      "pickupEnabled": true
+      "pickupEnabled": true,
+      "deliveryEnabled": true,
+      "deliveryZones": [
+        {
+          "name": "Santiago Centro",
+          "fee": 1500,
+          "minOrder": 5000,
+          "isHome": true
+        },
+        {
+          "name": "Providencia",
+          "fee": 2500,
+          "minOrder": 8000
+        },
+        {
+          "name": "Estación Central",
+          "fee": 2500,
+          "minOrder": 8000
+        }
+      ]
     },
     {
       "name": "Pizzería Forno Rosso",
@@ -682,7 +701,31 @@
         "Terraza 2"
       ],
       "acceptingOrders": true,
-      "pickupEnabled": true
+      "pickupEnabled": true,
+      "deliveryEnabled": true,
+      "deliveryZones": [
+        {
+          "name": "Ñuñoa",
+          "fee": 1990,
+          "minOrder": 10000,
+          "isHome": true
+        },
+        {
+          "name": "Providencia",
+          "fee": 2490,
+          "minOrder": 12000
+        },
+        {
+          "name": "La Reina",
+          "fee": 2990,
+          "minOrder": 12000
+        },
+        {
+          "name": "Macul",
+          "fee": 2490,
+          "minOrder": 10000
+        }
+      ]
     },
     {
       "name": "Café Brote",
@@ -916,7 +959,8 @@
         "Ventana"
       ],
       "acceptingOrders": true,
-      "pickupEnabled": true
+      "pickupEnabled": true,
+      "deliveryEnabled": false
     }
   ]
 }
