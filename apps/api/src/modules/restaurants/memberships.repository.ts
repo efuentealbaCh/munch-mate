@@ -38,6 +38,12 @@ export class MembershipsRepository {
     return docs.map(toRecord);
   }
 
+  /** Memberships of several restaurants at once (platform admin list). */
+  async listByRestaurants(restaurantIds: string[]): Promise<MembershipRecord[]> {
+    const docs = await this.memberships.find({ restaurantId: { $in: restaurantIds.map(oid) } }).sort({ createdAt: 1 }).lean();
+    return docs.map(toRecord);
+  }
+
   /** Every restaurant the user belongs to (the only cross-tenant query, scoped by the user instead). */
   async listByUser(userId: string): Promise<MembershipRecord[]> {
     const docs = await this.memberships.find({ userId: oid(userId) }).sort({ createdAt: 1 }).lean();

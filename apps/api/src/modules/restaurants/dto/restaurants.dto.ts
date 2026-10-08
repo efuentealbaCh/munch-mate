@@ -1,4 +1,4 @@
-import { RESTAURANT_ROLES, type RestaurantRole } from "@app/types";
+import { RESTAURANT_ROLES, type RestaurantRole, type WeeklyHours } from "@app/types";
 import { Transform } from "class-transformer";
 import {
   ArrayMaxSize,
@@ -13,6 +13,7 @@ import {
   Length,
   Matches,
   MaxLength,
+  ValidateIf,
 } from "class-validator";
 
 const trim = ({ value }: { value: unknown }) => (typeof value === "string" ? value.trim() : value);
@@ -93,6 +94,15 @@ export class InviteDto extends RolesDto {
   @IsEmail({}, { message: "email no es un correo válido" })
   @MaxLength(254)
   email!: string;
+}
+
+/** The content (7 days, ranges, times) is validated by the service with the shared rules of @app/utils. */
+export class OpeningHoursDto {
+  @ValidateIf((o: OpeningHoursDto) => o.openingHours !== null)
+  @IsArray()
+  @ArrayMinSize(7)
+  @ArrayMaxSize(7)
+  openingHours!: WeeklyHours | null;
 }
 
 export class AcceptingOrdersDto {

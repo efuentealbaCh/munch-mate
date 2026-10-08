@@ -1,4 +1,4 @@
-import type { CreatedOrder, OrderView, PublicOrderView, RiderView, TableContext } from "@app/types";
+import type { CreatedOrder, DailySummary, OrderView, PublicOrderView, RiderView, TableContext } from "@app/types";
 import {
   Body,
   Controller,
@@ -30,6 +30,7 @@ import {
   CreateDeliveryOrderDto,
   CreateDineInOrderDto,
   CreatePickupOrderDto,
+  DailySummaryQueryDto,
   OrdersQueryDto,
   PaymentDto,
 } from "./dto/orders.dto";
@@ -95,6 +96,19 @@ export class OrdersController {
     @Body() dto: AssignRiderDto,
   ): Promise<OrderView> {
     return this.orders.assignRider(tenant, orderId, dto.riderId);
+  }
+}
+
+/** Sales reports for the owner and the cashier (closing the register). */
+@Controller("restaurants/:restaurantId/reports")
+@UseGuards(RestaurantAccessGuard)
+@RestaurantRoles("owner", "cashier")
+export class ReportsController {
+  constructor(private readonly orders: OrdersService) {}
+
+  @Get("daily")
+  daily(@CurrentTenant() tenant: TenantContext, @Query() query: DailySummaryQueryDto): Promise<DailySummary> {
+    return this.orders.dailySummary(tenant, query.date);
   }
 }
 

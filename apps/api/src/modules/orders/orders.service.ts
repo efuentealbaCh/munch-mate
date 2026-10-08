@@ -1,5 +1,6 @@
 import {
   type CreateDeliveryOrderInput,
+  type DailySummary,
   type CreateDineInOrderInput,
   type CreatedOrder,
   type CreatePickupOrderInput,
@@ -39,10 +40,12 @@ import { RealtimeService } from "../realtime/realtime.service";
 import type { TenantContext } from "../restaurants/restaurant-access.guard";
 import { type RestaurantRecord, RestaurantsRepository } from "../restaurants/restaurants.repository";
 import { MembershipsRepository } from "../restaurants/memberships.repository";
+import { openState } from "../restaurants/restaurant.views";
 import { UsersRepository } from "../users/users.repository";
 import { DeliveryZonesRepository } from "./delivery-zones.repository";
 import { OrderValidationError, type PricingMenu, priceOrder } from "./order-pricing";
 import { businessDate, deriveAccessToken } from "./order-tokens";
+import { summarizeDay } from "./daily-summary";
 import { hasReceipt, receiptKey, toExpectedPaymentView, toOrderView, toPublicOrderView } from "./order.views";
 import { CountersRepository } from "./counters.repository";
 import { DUPLICATE_KEY, type NewOrder, type OrderRecord, OrdersRepository } from "./orders.repository";
@@ -237,6 +240,16 @@ export class OrdersService {
     if (existing) return { accessToken, order: this.publicView(existing, restaurant) };
 
     if (!restaurant.acceptingOrders) throw notAccepting();
+    const schedule = openState(restaurant);
+    if (!schedule.openNow) {
+      throw new ConflictException(
+        apiError(
+          "OUTSIDE_OPENING_HOURS",
+          "El local está fuera de su horario de atención",
+          schedule.nextOpeningAt ? { nextOpeningAt: schedule.nextOpeningAt } : undefined,
+        ),
+      );
+    }
     const { fields, deliveryFee: feeFor } = await prepare();
 
     let priced;
@@ -329,6 +342,17 @@ export class OrdersService {
     const restaurant = await this.restaurant(tenant.restaurantId);
     const day = businessDate(new Date(), restaurant.timezone);
     return (await this.orders.listByBusinessDate(tenant.restaurantId, day)).map(toOrderView);
+  }
+
+  /**
+   * Sales summary of a business day (today in the restaurant's timezone by default).
+   * @param date YYYY-MM-DD.
+   */
+  async dailySummary(tenant: TenantContext, date?: string): Promise<DailySummary> {
+    const restaurant = await this.restaurant(tenant.restaurantId);
+    const day = date ?? businessDate(new Date(), restaurant.timezone);
+    const orders = await this.orders.listByBusinessDate(tenant.restaurantId, day);
+    return summarizeDay(orders, day, restaurant.currency);
   }
 
   async get(tenant: TenantContext, orderId: string): Promise<OrderView> {

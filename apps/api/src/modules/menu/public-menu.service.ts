@@ -2,6 +2,7 @@ import type { PublicMenu, PublicModifierGroup } from "@app/types";
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { apiError } from "../../common/errors/api-error";
 import { MediaService } from "../../infra/storage/media.service";
+import { openState } from "../restaurants/restaurant.views";
 import { RestaurantsRepository } from "../restaurants/restaurants.repository";
 import { CategoriesRepository } from "./categories.repository";
 import { ModifierGroupsRepository } from "./modifier-groups.repository";
@@ -48,6 +49,8 @@ export class PublicMenuService {
         acceptingOrders: restaurant.acceptingOrders,
         pickupEnabled: restaurant.pickupEnabled,
         deliveryEnabled: restaurant.deliveryEnabled,
+        openingHours: restaurant.openingHours,
+        openState: openState(restaurant),
       },
       categories: categories
         .map((category) => ({

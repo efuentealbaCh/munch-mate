@@ -11,6 +11,7 @@ import { DeliveryZonesService } from "./delivery-zones.service";
 import {
   OrdersController,
   PublicOrdersController,
+  ReportsController,
   RiderDeliveriesController,
   RidersController,
 } from "./orders.controller";
@@ -44,6 +45,7 @@ import { TablesService } from "./tables.service";
     OrdersController,
     RidersController,
     RiderDeliveriesController,
+    ReportsController,
     PublicOrdersController,
     DeliveryZonesController,
     PublicDeliveryZonesController,

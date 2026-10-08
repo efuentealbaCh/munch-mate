@@ -1,4 +1,4 @@
-import type { RestaurantStatus } from "@app/types";
+import type { RestaurantStatus, WeeklyHours } from "@app/types";
 import { Injectable } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { type ClientSession, type Model, Types } from "mongoose";
@@ -14,6 +14,7 @@ export interface RestaurantRecord {
   acceptingOrders: boolean;
   pickupEnabled: boolean;
   deliveryEnabled: boolean;
+  openingHours: WeeklyHours | null;
   currency: string;
   timezone: string;
   status: RestaurantStatus;
@@ -27,6 +28,7 @@ export interface RestaurantChanges {
   phone?: string;
   pickupEnabled?: boolean;
   deliveryEnabled?: boolean;
+  openingHours?: WeeklyHours | null;
 }
 
 /** Thrown when the unique index on `slug` rejects a write. */
@@ -108,6 +110,43 @@ export class RestaurantsRepository {
     }
   }
 
+  /**
+   * Platform admin listing, newest first. Not tenant-scoped on purpose: only the platform admin guard
+   * protects the routes that use it.
+   * @param query Case-insensitive match on name or slug.
+   */
+  async listAll(options: {
+    query?: string;
+    status?: RestaurantStatus;
+    skip: number;
+    limit: number;
+  }): Promise<{ items: (RestaurantRecord & { createdAt: Date })[]; total: number }> {
+    const filter: Record<string, unknown> = {};
+    if (options.status) filter.status = options.status;
+    if (options.query) {
+      const pattern = new RegExp(escapeRegex(options.query), "i");
+      filter.$or = [{ name: pattern }, { slug: pattern }];
+    }
+    const [docs, total] = await Promise.all([
+      this.restaurants.find(filter).sort({ _id: -1 }).skip(options.skip).limit(options.limit).lean(),
+      this.restaurants.countDocuments(filter),
+    ]);
+    return { items: docs.map((doc) => ({ ...toRecord(doc), createdAt: doc._id.getTimestamp() })), total };
+  }
+
+  /** Suspends or reactivates a restaurant. Suspending also closes it for orders. */
+  async setStatus(id: string, status: RestaurantStatus): Promise<RestaurantRecord | null> {
+    if (!Types.ObjectId.isValid(id)) return null;
+    const doc = await this.restaurants
+      .findByIdAndUpdate(
+        id,
+        { $set: { status, ...(status === "suspended" ? { acceptingOrders: false } : {}) } },
+        { returnDocument: "after" },
+      )
+      .lean();
+    return doc ? toRecord(doc) : null;
+  }
+
   /** @returns The updated restaurant, or null if it does not exist. */
   async setAcceptingOrders(id: string, acceptingOrders: boolean): Promise<RestaurantRecord | null> {
     const doc = await this.restaurants
@@ -142,6 +181,11 @@ function toRecord(doc: Restaurant & { _id: Types.ObjectId }): RestaurantRecord {
     acceptingOrders: doc.acceptingOrders ?? false,
     pickupEnabled: doc.pickupEnabled ?? false,
     deliveryEnabled: doc.deliveryEnabled ?? false,
+    // Mongoose may hand back an empty array for a never-set nested array path: treat it as "no schedule".
+    openingHours:
+      Array.isArray(doc.openingHours) && doc.openingHours.length === 7
+        ? doc.openingHours.map((day) => day.map((r) => ({ open: r.open, close: r.close })))
+        : null,
     currency: doc.currency,
     timezone: doc.timezone,
     status: doc.status,

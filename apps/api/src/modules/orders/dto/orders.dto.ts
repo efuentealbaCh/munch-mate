@@ -22,6 +22,7 @@ import {
   IsString,
   IsUUID,
   Length,
+  Matches,
   ValidateIf,
   Max,
   MaxLength,
@@ -243,6 +244,12 @@ export class UpdateDeliveryZoneDto {
   @IsOptional()
   @IsBoolean()
   isHome?: boolean;
+}
+
+export class DailySummaryQueryDto {
+  @IsOptional()
+  @Matches(/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/, { message: "date debe tener el formato AAAA-MM-DD" })
+  date?: string;
 }
 
 export class OrdersQueryDto {

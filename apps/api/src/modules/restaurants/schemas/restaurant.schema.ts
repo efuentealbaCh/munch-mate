@@ -1,4 +1,4 @@
-import type { RestaurantStatus } from "@app/types";
+import type { RestaurantStatus, WeeklyHours } from "@app/types";
 import { Prop, Schema, SchemaFactory } from "@nestjs/mongoose";
 import { type HydratedDocument, Types } from "mongoose";
 
@@ -34,6 +34,13 @@ export class Restaurant {
   /** Customers may order for delivery to the restaurant's delivery zones. Owner setting, off by default. */
   @Prop({ default: false })
   deliveryEnabled!: boolean;
+
+  /**
+   * Weekly schedule (Monday first), validated by `openingHoursProblem` before saving. null = no schedule:
+   * only the manual switch decides.
+   */
+  @Prop({ type: [[{ _id: false, open: String, close: String }]], default: null })
+  openingHours!: WeeklyHours | null;
 
   /** ISO 4217. Amounts are stored as integers in the currency's minor unit (CLP has none). */
   @Prop({ required: true, default: "CLP" })

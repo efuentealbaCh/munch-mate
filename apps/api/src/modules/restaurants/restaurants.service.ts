@@ -1,6 +1,6 @@
-import type { RestaurantView, SlugAvailability } from "@app/types";
-import { slugify, slugProblem, withSuffix } from "@app/utils";
-import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
+import { OPENING_HOURS_LIMITS, type RestaurantView, type SlugAvailability, type WeeklyHours } from "@app/types";
+import { openingHoursProblem, slugify, slugProblem, withSuffix } from "@app/utils";
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { InjectConnection } from "@nestjs/mongoose";
 import type { Connection } from "mongoose";
 import { apiError } from "../../common/errors/api-error";
@@ -8,7 +8,7 @@ import { MediaService } from "../../infra/storage/media.service";
 import { RealtimeService } from "../realtime/realtime.service";
 import { MembershipsRepository } from "./memberships.repository";
 import type { TenantContext } from "./restaurant-access.guard";
-import { normalizeRequestedSlug, toRestaurantView } from "./restaurant.views";
+import { normalizeRequestedSlug, OPENING_HOURS_MESSAGES, toRestaurantView } from "./restaurant.views";
 import {
   type RestaurantChanges,
   type RestaurantRecord,
@@ -98,6 +98,22 @@ export class RestaurantsService {
       if (error instanceof SlugTakenError) throw slugTaken(await this.nextFreeSlug(error.slug));
       throw error;
     }
+  }
+
+  /**
+   * Sets (or with null clears) the weekly opening hours.
+   * @throws BadRequestException INVALID_OPENING_HOURS.
+   */
+  async setOpeningHours(tenant: TenantContext, openingHours: WeeklyHours | null): Promise<RestaurantView> {
+    if (openingHours !== null) {
+      const problem = openingHoursProblem(openingHours, OPENING_HOURS_LIMITS.rangesPerDay);
+      if (problem) throw new BadRequestException(apiError("INVALID_OPENING_HOURS", OPENING_HOURS_MESSAGES[problem]));
+    }
+    const updated = await this.restaurants.update(tenant.restaurantId, {
+      openingHours: openingHours?.map((day) => day.map(({ open, close }) => ({ open, close }))) ?? null,
+    });
+    if (!updated) throw notFound();
+    return toRestaurantView(updated, tenant.roles, this.media);
   }
 
   /**

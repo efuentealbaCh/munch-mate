@@ -5,7 +5,13 @@ import { ImageUpload, requireImage, type UploadedImageFile } from "../../common/
 import type { AuthUser } from "../auth/auth.types";
 import { CurrentUser } from "../auth/decorators";
 import { VerifiedEmailGuard } from "../auth/verified-email.guard";
-import { AcceptingOrdersDto, CreateRestaurantDto, SlugQueryDto, UpdateRestaurantDto } from "./dto/restaurants.dto";
+import {
+  AcceptingOrdersDto,
+  CreateRestaurantDto,
+  OpeningHoursDto,
+  SlugQueryDto,
+  UpdateRestaurantDto,
+} from "./dto/restaurants.dto";
 import {
   CurrentTenant,
   RestaurantAccessGuard,
@@ -59,6 +65,14 @@ export class RestaurantsController {
     @Body() dto: AcceptingOrdersDto,
   ): Promise<RestaurantView> {
     return this.restaurants.setAcceptingOrders(tenant, dto.acceptingOrders);
+  }
+
+  /** Weekly schedule; outside it nobody can order even with the switch on. null clears it. */
+  @Put(":restaurantId/opening-hours")
+  @UseGuards(RestaurantAccessGuard)
+  @RestaurantRoles("owner")
+  setOpeningHours(@CurrentTenant() tenant: TenantContext, @Body() dto: OpeningHoursDto): Promise<RestaurantView> {
+    return this.restaurants.setOpeningHours(tenant, dto.openingHours);
   }
 
   /** Multipart upload, field `file`. Re-encoded to square WebP (see image-processor). */
