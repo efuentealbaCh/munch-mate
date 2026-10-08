@@ -86,9 +86,15 @@ export function renderEmail(job: EmailJob): RenderedEmail {
       };
     }
     case "order-confirmation": {
-      const { customerName, restaurantName, restaurantPhone, ticketNumber, readyAt, total, trackingUrl, attachment } =
+      const { channel, customerName, restaurantName, restaurantPhone, ticketNumber, readyAt, total, trackingUrl, attachment } =
         job.data;
-      const when = readyAt ? `Estará listo para retirar aproximadamente a las ${readyAt}.` : "Te avisaremos cuando esté listo.";
+      const delivery = channel === "delivery";
+      const when = readyAt
+        ? delivery
+          ? `Llegará aproximadamente a las ${readyAt}.`
+          : `Estará listo para retirar aproximadamente a las ${readyAt}.`
+        : "Te avisaremos cuando esté listo.";
+      const payment = delivery ? "El pago se realiza al recibir el pedido." : "El pago se realiza en el local al retirar.";
       const call = restaurantPhone ? ` Si necesitas cambiar algo, llama al local: ${restaurantPhone}.` : "";
       return {
         subject: `Tu pedido #${ticketNumber} en ${restaurantName} fue aceptado`,
@@ -96,14 +102,14 @@ export function renderEmail(job: EmailJob): RenderedEmail {
           `Hola ${escapeHtml(customerName)}`,
           [
             `<strong>${escapeHtml(restaurantName)}</strong> aceptó tu pedido <strong>#${ticketNumber}</strong>. ${escapeHtml(when)}`,
-            `Total: <strong>${escapeHtml(total)}</strong>. El pago se realiza en el local al retirar.${escapeHtml(call)}`,
+            `Total: <strong>${escapeHtml(total)}</strong>. ${payment}${escapeHtml(call)}`,
             "Adjuntamos el comprobante en PDF (documento interno, no es una boleta).",
           ],
           { label: "Seguir mi pedido", url: trackingUrl },
         ),
         text:
           `Hola ${customerName}:\n\n${restaurantName} aceptó tu pedido #${ticketNumber}. ${when}\n\n` +
-          `Total: ${total}. El pago se realiza en el local al retirar.${call}\n\n` +
+          `Total: ${total}. ${payment}${call}\n\n` +
           `Sigue tu pedido aquí:\n${trackingUrl}\n\nAdjuntamos el comprobante en PDF (documento interno, no es una boleta).`,
         attachments: [{ ...attachment, contentType: "application/pdf" }],
       };

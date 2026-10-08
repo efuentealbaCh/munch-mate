@@ -3,6 +3,7 @@
 import type { RestaurantRole, RestaurantView } from "@app/types";
 import {
   ArrowLeftIcon,
+  BikeIcon,
   BookOpenIcon,
   ClipboardListIcon,
   LayoutDashboardIcon,
@@ -23,7 +24,7 @@ import { useApiQuery } from "@/hooks/use-api-query";
 import { restaurantsApi } from "@/lib/endpoints";
 import { hasCode } from "@/lib/errors";
 import { canManageAvailability } from "@/lib/menu";
-import { canWorkOrders } from "@/lib/orders-board";
+import { canWorkOrders, isRider } from "@/lib/orders-board";
 import { cn } from "@/lib/utils";
 import { RestaurantContext, type RestaurantContextValue } from "./restaurant-context";
 import { RestaurantRealtimeProvider } from "./restaurant-realtime";
@@ -114,6 +115,7 @@ function SectionTabs({
   const tabs = [
     { href: base, label: "Resumen", icon: LayoutDashboardIcon, show: true },
     { href: `${base}/pedidos`, label: "Pedidos", icon: ClipboardListIcon, show: canWorkOrders(roles) },
+    { href: `${base}/repartos`, label: "Repartos", icon: BikeIcon, show: isRider(roles) },
     { href: `${base}/menu`, label: "Menú", icon: BookOpenIcon, show: isOwner },
     { href: `${base}/disponibilidad`, label: "Disponibilidad", icon: PackageCheckIcon, show: canManageAvailability(roles) },
     { href: `${base}/mesas`, label: "Mesas", icon: QrCodeIcon, show: isOwner },

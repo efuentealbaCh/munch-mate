@@ -15,12 +15,15 @@ interface Transition {
 }
 
 const FLOOR: readonly RestaurantRole[] = ["owner", "cashier", "kitchen"];
+/** Taking the order out and handing it over. A rider may only act on deliveries assigned to them (api check). */
+const DISPATCH: readonly RestaurantRole[] = [...FLOOR, "rider"];
 
 /**
  * Allowed transitions per channel. Shared by the api (enforcement) and the web (which buttons to show).
  *
  *   pending ──► accepted ──► preparing ──► ready ──► served            (dine_in)
- *                                                  └──► picked_up         (pickup; accepting asks for a ready time)
+ *                                                  ├──► picked_up         (pickup; accepting asks for a ready time)
+ *                                                  └──► out_for_delivery ──► delivered  (delivery; asks for an ETA)
  *      │           │
  *      ├──► rejected (staff, with reason)
  *      └───────────┴──► cancelled (staff; the customer only while pending)
@@ -53,8 +56,20 @@ const TRANSITIONS: Record<OrderChannel, Partial<Record<OrderStatus, Transition[]
     // Handing over an unpaid order is allowed: the web warns and offers to register the payment first.
     ready: [{ to: "picked_up", roles: FLOOR }],
   },
-  // Phase 5.
-  delivery: {},
+  delivery: {
+    pending: [
+      { to: "accepted", roles: FLOOR, requiresReadyTime: true },
+      { to: "rejected", roles: FLOOR, requiresReason: true },
+      { to: "cancelled", roles: FLOOR, customer: true },
+    ],
+    accepted: [
+      { to: "preparing", roles: FLOOR },
+      { to: "cancelled", roles: FLOOR },
+    ],
+    preparing: [{ to: "ready", roles: FLOOR }],
+    ready: [{ to: "out_for_delivery", roles: DISPATCH }],
+    out_for_delivery: [{ to: "delivered", roles: DISPATCH }],
+  },
 };
 
 export type TransitionCheck =

@@ -1,12 +1,6 @@
 "use client";
 
-import {
-  ORDER_STATUS_LABELS,
-  type OrderStatus,
-  type OrderView,
-  type PaymentMethod,
-  type PickupReadyMinutes,
-} from "@app/types";
+import { ORDER_STATUS_LABELS, type OrderStatus, type OrderView, type PaymentMethod } from "@app/types";
 import { checkTransition, nextStatuses } from "@app/utils";
 import { BellOffIcon, BellRingIcon, InboxIcon, WifiOffIcon } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useId, useRef, useState } from "react";
@@ -27,16 +21,19 @@ import { ordersApi, restaurantsApi } from "@/lib/endpoints";
 import { errorMessage, hasCode } from "@/lib/errors";
 import { formatPrice } from "@/lib/money";
 import {
-  BOARD_COLUMNS,
+  availableChannelFilters,
+  type BOARD_COLUMNS,
+  boardColumns,
   boardTitle,
+  canAssignRider,
   canRegisterPayment,
-  CHANNEL_FILTERS,
   type ChannelFilter,
   canWorkOrders,
   dayTotals,
   destinationLabel,
   filterByChannel,
   groupByColumn,
+  handOverStatus,
   isDroppedStatus,
   mergeFetched,
   needsPaymentWarning,
@@ -48,7 +45,7 @@ import { cn } from "@/lib/utils";
 import { useRestaurant } from "../restaurant-context";
 import { useRestaurantRealtime } from "../restaurant-realtime";
 import { OrderCard, PaymentBadge } from "./order-card";
-import { HandOverDialog, PaymentDialog, ReadyTimeDialog, RejectDialog } from "./order-dialogs";
+import { HandOverDialog, PaymentDialog, ReadyTimeDialog, RejectDialog, RiderDialog } from "./order-dialogs";
 
 /** How long a new order stays highlighted. */
 const FRESH_MS = 10_000;
@@ -67,7 +64,14 @@ export function OrdersView() {
   return <OrdersBoard />;
 }
 
-type Busy = OrderStatus | "payment";
+type Busy = OrderStatus | "payment" | "rider";
+
+/** Subtitle of the "Recibiendo pedidos" switch: where customers can order from right now. */
+function acceptingDescription(pickup: boolean, delivery: boolean): string {
+  const extra = [pickup ? "para retirar" : null, delivery ? "con delivery" : null].filter(Boolean);
+  if (extra.length === 0) return "Los clientes pueden pedir desde el QR de su mesa.";
+  return `Los clientes pueden pedir desde el QR de su mesa y ${extra.join(" o ")}.`;
+}
 
 /**
  * A list kept in sync with REST + live events. `fetching` collects ids received by event while a request
@@ -114,6 +118,7 @@ function OrdersBoard() {
   const { socket, status: live, syncCount } = useRestaurantRealtime();
   const roles = restaurant.myRoles;
   const canPay = canRegisterPayment(roles);
+  const canAssign = canAssignRider(roles);
   const [tab, setTab] = useState<"board" | "today">("board");
   const active = useOrderList(restaurant.id, "active", true, syncCount);
   const today = useOrderList(restaurant.id, "today", tab === "today", syncCount);
@@ -125,7 +130,9 @@ function OrdersBoard() {
   const [cancelling, setCancelling] = useState<OrderView | null>(null);
   const [paying, setPaying] = useState<OrderView | null>(null);
   const [payMethod, setPayMethod] = useState<PaymentMethod | null>(null);
-  const [acceptingPickup, setAcceptingPickup] = useState<OrderView | null>(null);
+  const [acceptingWithTime, setAcceptingWithTime] = useState<OrderView | null>(null);
+  const [assigningRider, setAssigningRider] = useState<OrderView | null>(null);
+  const [riderPending, setRiderPending] = useState<string | null>(null);
   const [handingOver, setHandingOver] = useState<OrderView | null>(null);
   const [handOverPending, setHandOverPending] = useState<PaymentMethod | "handover" | null>(null);
   const [channel, setChannel] = useState<ChannelFilter>("all");
@@ -197,7 +204,7 @@ function OrdersBoard() {
   async function changeStatus(
     order: OrderView,
     to: OrderStatus,
-    extra?: { reason?: string; readyInMinutes?: PickupReadyMinutes },
+    extra?: { reason?: string; readyInMinutes?: number },
   ): Promise<boolean> {
     setBusyFor(order.id, to);
     try {
@@ -215,8 +222,8 @@ function OrdersBoard() {
     const check = checkTransition(order.channel, order.status, to, { kind: "staff", roles });
     if (to === "rejected") setRejecting(order);
     else if (to === "cancelled") setCancelling(order);
-    // Pickup: the customer is told when to come, so accepting asks for the minutes first.
-    else if (check.ok && check.requiresReadyTime) setAcceptingPickup(order);
+    // Pickup/delivery: the customer is told when to come (or when it arrives), so accepting asks for the minutes.
+    else if (check.ok && check.requiresReadyTime) setAcceptingWithTime(order);
     else if (needsPaymentWarning(order, to)) setHandingOver(order);
     else void changeStatus(order, to);
   }
@@ -236,7 +243,7 @@ function OrdersBoard() {
       return;
     }
     setBusyFor(order.id, null);
-    const ok = await changeStatus(paid, "picked_up");
+    const ok = await changeStatus(paid, handOverStatus(order.channel) ?? "picked_up");
     setHandOverPending(null);
     setHandingOver(null);
     if (ok) toast.success(`Pago registrado y pedido #${order.ticketNumber} entregado`);
@@ -244,7 +251,7 @@ function OrdersBoard() {
 
   async function handOverUnpaid(order: OrderView) {
     setHandOverPending("handover");
-    const ok = await changeStatus(order, "picked_up");
+    const ok = await changeStatus(order, handOverStatus(order.channel) ?? "picked_up");
     setHandOverPending(null);
     setHandingOver(null);
     if (ok) toast.success(`Pedido #${order.ticketNumber} entregado sin pago registrado`);
@@ -269,6 +276,26 @@ function OrdersBoard() {
     }
   }
 
+  async function assignRider(order: OrderView, riderId: string | null) {
+    setRiderPending(riderId ?? "none");
+    setBusyFor(order.id, "rider");
+    try {
+      const updated = await ordersApi.assignRider(restaurant.id, order.id, riderId);
+      applyEverywhere(updated);
+      toast.success(
+        updated.rider ? `Pedido #${order.ticketNumber} asignado a ${updated.rider.name}` : `Pedido #${order.ticketNumber} sin repartidor`,
+      );
+      setAssigningRider(null);
+    } catch (failure) {
+      // NOT_A_RIDER: the role was removed meanwhile; the dialog stays open and reloads its list on reopen.
+      handleFailure(failure);
+      if (hasCode(failure, "ORDER_NOT_FOUND")) setAssigningRider(null);
+    } finally {
+      setBusyFor(order.id, null);
+      setRiderPending(null);
+    }
+  }
+
   async function setAccepting(acceptingOrders: boolean) {
     const previous = restaurant;
     setSavingAccepting(true);
@@ -287,12 +314,14 @@ function OrdersBoard() {
 
   const actionsFor = (order: OrderView) => nextStatuses(order.channel, order.status, { kind: "staff", roles });
   const rejectingBusy = rejecting ? busy[rejecting.id] === "rejected" : false;
-  const acceptingBusy = acceptingPickup ? busy[acceptingPickup.id] === "accepted" : false;
-  // The filter only makes sense once pickup orders exist (or can arrive).
-  const showChannelFilter =
-    restaurant.pickupEnabled || [...(active.orders ?? []), ...(today.orders ?? [])].some((order) => order.channel !== "dine_in");
-  const shownActive = active.orders && filterByChannel(active.orders, channel);
-  const shownToday = today.orders && filterByChannel(today.orders, channel);
+  const acceptingBusy = acceptingWithTime ? busy[acceptingWithTime.id] === "accepted" : false;
+  const allOrders = [...(active.orders ?? []), ...(today.orders ?? [])];
+  // The filter only makes sense once other channels exist (or can arrive); a filter that disappeared shows all.
+  const channelFilters = availableChannelFilters(restaurant, allOrders);
+  const effectiveChannel: ChannelFilter = channelFilters.some((filter) => filter.value === channel) ? channel : "all";
+  const shownActive = active.orders && filterByChannel(active.orders, effectiveChannel);
+  const shownToday = today.orders && filterByChannel(today.orders, effectiveChannel);
+  const columns = boardColumns(restaurant.deliveryEnabled || allOrders.some((order) => order.channel === "delivery"));
   const cancellingBusy = cancelling ? busy[cancelling.id] === "cancelled" : false;
 
   return (
@@ -316,9 +345,7 @@ function OrdersBoard() {
             <span className="text-lg font-semibold">Recibiendo pedidos</span>
             <span className="text-sm text-muted-foreground">
               {restaurant.acceptingOrders
-                ? restaurant.pickupEnabled
-                  ? "Los clientes pueden pedir desde el QR de su mesa y para retirar."
-                  : "Los clientes pueden pedir desde el QR de su mesa."
+                ? acceptingDescription(restaurant.pickupEnabled, restaurant.deliveryEnabled)
                 : "Cerrado: los clientes ven el menú pero no pueden pedir."}
             </span>
           </span>
@@ -347,13 +374,14 @@ function OrdersBoard() {
               Hoy
             </TabsTrigger>
           </TabsList>
-          {showChannelFilter ? <ChannelFilterBar value={channel} onChange={setChannel} /> : null}
+          {channelFilters.length > 0 ? <ChannelFilterBar filters={channelFilters} value={effectiveChannel} onChange={setChannel} /> : null}
         </div>
 
         <TabsContent value="board">
           <BoardColumns
+            columns={columns}
             orders={shownActive}
-            filtered={channel !== "all"}
+            filtered={effectiveChannel !== "all"}
             error={active.error}
             onRetry={() => void active.refetch()}
             render={(order) => (
@@ -369,12 +397,15 @@ function OrdersBoard() {
                 onPay={() => setPaying(order)}
                 receiptBusy={receipts.working.has(order.id)}
                 onReceipt={() => downloadReceipt(order)}
+                canAssignRider={canAssign}
+                onAssignRider={() => setAssigningRider(order)}
               />
             )}
           />
         </TabsContent>
         <TabsContent value="today">
           <TodayList
+            columns={columns.length}
             orders={shownToday}
             error={today.error}
             canPay={canPay}
@@ -413,18 +444,26 @@ function OrdersBoard() {
         }}
       />
       <ReadyTimeDialog
-        order={acceptingPickup}
+        order={acceptingWithTime}
         pending={acceptingBusy}
         now={now}
-        onOpenChange={(open) => !open && setAcceptingPickup(null)}
+        onOpenChange={(open) => !open && setAcceptingWithTime(null)}
         onAccept={(readyInMinutes) => {
-          const order = acceptingPickup;
+          const order = acceptingWithTime;
           if (!order) return;
           void changeStatus(order, "accepted", { readyInMinutes }).then((ok) => {
-            setAcceptingPickup(null);
-            if (ok) toast.success(`Pedido #${order.ticketNumber} aceptado · listo en ${readyInMinutes} min`);
+            setAcceptingWithTime(null);
+            const when = order.channel === "delivery" ? "llega en" : "listo en";
+            if (ok) toast.success(`Pedido #${order.ticketNumber} aceptado · ${when} ${readyInMinutes} min`);
           });
         }}
+      />
+      <RiderDialog
+        restaurantId={restaurant.id}
+        order={assigningRider}
+        pending={riderPending}
+        onOpenChange={(open) => !open && setAssigningRider(null)}
+        onAssign={(riderId) => assigningRider && void assignRider(assigningRider, riderId)}
       />
       <HandOverDialog
         order={handingOver}
@@ -461,11 +500,19 @@ function LiveBadge({ status }: { status: string }) {
   );
 }
 
-/** Todos / Mesa / Retiro: applies to both tabs. */
-function ChannelFilterBar({ value, onChange }: { value: ChannelFilter; onChange(value: ChannelFilter): void }) {
+/** Todos / Mesa / Retiro / Delivery (only the channels in use): applies to both tabs. */
+function ChannelFilterBar({
+  filters,
+  value,
+  onChange,
+}: {
+  filters: ReadonlyArray<{ value: ChannelFilter; label: string }>;
+  value: ChannelFilter;
+  onChange(value: ChannelFilter): void;
+}) {
   return (
     <div role="group" aria-label="Filtrar por canal" className="flex gap-1 rounded-lg bg-muted p-1">
-      {CHANNEL_FILTERS.map((filter) => (
+      {filters.map((filter) => (
         <Button
           key={filter.value}
           size="sm"
@@ -481,7 +528,12 @@ function ChannelFilterBar({ value, onChange }: { value: ChannelFilter; onChange(
   );
 }
 
-function ListState({ error, onRetry }: { error: unknown; onRetry(): void }) {
+/** Grid of the board: 4 columns, or 5 with "En reparto" (3 on mid screens so cards stay readable). */
+function gridClass(columns: number): string {
+  return columns > 4 ? "grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5" : "grid gap-4 md:grid-cols-2 lg:grid-cols-4";
+}
+
+function ListState({ error, onRetry, columns }: { error: unknown; onRetry(): void; columns: number }) {
   if (error) {
     return (
       <div className="flex flex-col items-start gap-3">
@@ -493,21 +545,23 @@ function ListState({ error, onRetry }: { error: unknown; onRetry(): void }) {
     );
   }
   return (
-    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4" aria-busy="true" aria-label="Cargando pedidos">
-      {BOARD_COLUMNS.map((column) => (
-        <Skeleton key={column.status} className="h-48 w-full" />
+    <div className={gridClass(columns)} aria-busy="true" aria-label="Cargando pedidos">
+      {Array.from({ length: columns }, (_, index) => (
+        <Skeleton key={index} className="h-48 w-full" />
       ))}
     </div>
   );
 }
 
 function BoardColumns({
+  columns: shownColumns,
   orders,
   filtered,
   error,
   onRetry,
   render,
 }: {
+  columns: ReadonlyArray<(typeof BOARD_COLUMNS)[number]>;
   orders: OrderView[] | null;
   /** A channel filter is on (changes the empty message). */
   filtered: boolean;
@@ -515,7 +569,7 @@ function BoardColumns({
   onRetry(): void;
   render(order: OrderView): ReactNode;
 }) {
-  if (!orders) return <ListState error={error} onRetry={onRetry} />;
+  if (!orders) return <ListState error={error} onRetry={onRetry} columns={shownColumns.length} />;
   const columns = groupByColumn(orders);
   return (
     <div className="flex flex-col gap-3">
@@ -530,8 +584,8 @@ function BoardColumns({
           </p>
         </div>
       ) : null}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        {BOARD_COLUMNS.map((column) => {
+      <div className={gridClass(shownColumns.length)}>
+        {shownColumns.map((column) => {
           const list = columns[column.status];
           // On phones empty columns only waste scroll; on wider screens they keep the layout stable.
           return (
@@ -555,6 +609,7 @@ function BoardColumns({
 }
 
 function TodayList({
+  columns,
   orders,
   error,
   canPay,
@@ -562,6 +617,8 @@ function TodayList({
   onRetry,
   onPay,
 }: {
+  /** Board columns (only for the loading skeleton). */
+  columns: number;
   orders: OrderView[] | null;
   error: unknown;
   canPay: boolean;
@@ -569,7 +626,7 @@ function TodayList({
   onRetry(): void;
   onPay(order: OrderView): void;
 }) {
-  if (!orders) return <ListState error={error} onRetry={onRetry} />;
+  if (!orders) return <ListState error={error} onRetry={onRetry} columns={columns} />;
   const sorted = sortNewestFirst(orders);
   const totals = dayTotals(orders);
   const currency = orders[0]?.currency ?? "CLP";

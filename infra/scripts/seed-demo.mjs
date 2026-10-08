@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Creates the demo restaurants of infra/demo/demo-restaurants.json through the public api, exactly as a
 // user would: register (or log in), verify the email via Mailpit, create restaurants, profile, logo,
-// modifier groups, categories and products with photos, tables, pickup, and open the restaurant for orders.
+// modifier groups, categories and products with photos, tables, pickup, delivery zones, and open the
+// restaurant for orders.
 //
 // Usage (from the repo root, with the local stack or `pnpm dev` running):
 //   node infra/scripts/seed-demo.mjs
@@ -153,6 +154,7 @@ async function seedRestaurant(spec, existing) {
     description: spec.description,
     phone: spec.phone,
     ...(spec.pickupEnabled !== undefined ? { pickupEnabled: spec.pickupEnabled } : {}),
+    ...(spec.deliveryEnabled !== undefined ? { deliveryEnabled: spec.deliveryEnabled } : {}),
   });
   if (!restaurant.logo) await upload(`${base}/logo`, spec.logo);
 
@@ -212,6 +214,12 @@ async function seedRestaurant(spec, existing) {
   for (const label of spec.tables ?? []) {
     if (!tables.some((t) => t.label === label)) tables.push(await api("POST", `${base}/tables`, { label }));
   }
+  // Phase 5: delivery zones, matched by name.
+  const zones = await api("GET", `${base}/delivery-zones`);
+  for (const zone of spec.deliveryZones ?? []) {
+    if (!zones.some((z) => z.name === zone.name)) zones.push(await api("POST", `${base}/delivery-zones`, zone));
+  }
+
   if (spec.acceptingOrders !== undefined && restaurant.acceptingOrders !== spec.acceptingOrders) {
     await api("PUT", `${base}/accepting-orders`, { acceptingOrders: spec.acceptingOrders });
   }
@@ -232,7 +240,8 @@ try {
   console.log(`  Panel:       ${BASE_URL}/admin`);
   for (const r of restaurants) {
     console.log(`  ${r.name}`);
-    console.log(`    Menú público${r.pickupEnabled ? " (pedidos para retirar)" : ""}: ${BASE_URL}/r/${r.slug}`);
+    const channels = [r.pickupEnabled && "retiro", r.deliveryEnabled && "delivery"].filter(Boolean).join(" y ");
+    console.log(`    Menú público${channels ? ` (${channels})` : ""}: ${BASE_URL}/r/${r.slug}`);
     const first = r.tables?.[0];
     if (first) console.log(`    Pedir desde ${first.label}: ${BASE_URL}/m/${first.token}`);
   }

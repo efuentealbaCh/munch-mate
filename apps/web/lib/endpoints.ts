@@ -2,8 +2,11 @@ import type {
   AdminMenuView,
   ChangeOrderStatusInput,
   CreatedOrder,
+  CreateDeliveryOrderInput,
   CreateDineInOrderInput,
   CreatePickupOrderInput,
+  DeliveryZoneInput,
+  DeliveryZoneView,
   InvitationPreview,
   InvitationView,
   MemberView,
@@ -12,12 +15,13 @@ import type {
   OrderStatus,
   OrderView,
   PaymentMethod,
-  PickupReadyMinutes,
   ProductView,
+  PublicDeliveryZone,
   PublicMenu,
   PublicOrderView,
   RestaurantRole,
   RestaurantView,
+  RiderView,
   SlugAvailability,
   TableContext,
   TableView,
@@ -56,10 +60,17 @@ export const restaurantsApi = {
   get: (id: string, signal?: AbortSignal) => api.request<RestaurantView>(restaurantPath(id), { signal }),
   create: (body: { name: string; slug: string }) =>
     api.request<RestaurantView>("/restaurants", { method: "POST", body }),
-  /** pickupEnabled: lets customers order for pickup from the public menu (owner). */
+  /** pickupEnabled / deliveryEnabled: let customers order for pickup / delivery from the public menu (owner). */
   update: (
     id: string,
-    body: { name?: string; slug?: string; description?: string; phone?: string; pickupEnabled?: boolean },
+    body: {
+      name?: string;
+      slug?: string;
+      description?: string;
+      phone?: string;
+      pickupEnabled?: boolean;
+      deliveryEnabled?: boolean;
+    },
   ) =>
     api.request<RestaurantView>(restaurantPath(id), { method: "PATCH", body }),
   setLogo: (id: string, file: File) =>
@@ -180,7 +191,7 @@ export const menuApi = {
     ),
 };
 
-/** Staff side of orders (owner, cashier, kitchen; payments: owner, cashier). */
+/** Staff side of orders (owner, cashier, kitchen; payments and rider assignment: owner, cashier). */
 export const ordersApi = {
   /** active = not final, oldest first; today = this business day, newest first. */
   list: (restaurantId: string, scope: "active" | "today") =>
@@ -188,7 +199,8 @@ export const ordersApi = {
   get: (restaurantId: string, orderId: string) =>
     api.request<OrderView>(`${restaurantPath(restaurantId)}/orders/${segment(orderId)}`),
   /**
-   * @param extra `reason` when rejecting; `readyInMinutes` when accepting a pickup order.
+   * @param extra `reason` when rejecting; `readyInMinutes` when accepting a pickup or delivery order (the
+   *   choices of its channel, READY_MINUTES_BY_CHANNEL).
    * @throws ApiError INVALID_TRANSITION / ORDER_CHANGED (409), REASON_REQUIRED / READY_TIME_REQUIRED (400),
    *   FORBIDDEN_ROLE (403).
    */
@@ -196,7 +208,7 @@ export const ordersApi = {
     restaurantId: string,
     orderId: string,
     status: OrderStatus,
-    extra: { reason?: string; readyInMinutes?: PickupReadyMinutes } = {},
+    extra: { reason?: string; readyInMinutes?: number } = {},
   ) => {
     const body: ChangeOrderStatusInput = { status };
     if (extra.reason) body.reason = extra.reason;
@@ -212,7 +224,18 @@ export const ordersApi = {
       body: { method },
     }),
   /**
-   * Receipt PDF of a pickup order.
+   * Assigns a delivery to a rider; null unassigns it.
+   * @throws ApiError NOT_A_RIDER (400), ORDER_NOT_FOUND (404, also once the order is over).
+   */
+  assignRider: (restaurantId: string, orderId: string, riderId: string | null) =>
+    api.request<OrderView>(`${restaurantPath(restaurantId)}/orders/${segment(orderId)}/rider`, {
+      method: "PUT",
+      body: { riderId },
+    }),
+  /** Members with the rider role (owner, cashier). */
+  riders: (restaurantId: string) => api.request<RiderView[]>(`${restaurantPath(restaurantId)}/riders`),
+  /**
+   * Receipt PDF of a pickup or delivery order.
    * @returns The file, or null while the workers are still generating it (202).
    * @throws ApiError RECEIPT_NOT_FOUND (the order has none: dine-in, or never accepted).
    */
@@ -228,6 +251,42 @@ async function readReceipt(pending: Promise<Response>): Promise<DownloadedFile |
     filename: filenameFromDisposition(response.headers.get("Content-Disposition"), "comprobante.pdf"),
   };
 }
+
+const deliveriesPath = (restaurantId: string) => `${restaurantPath(restaurantId)}/deliveries`;
+
+/**
+ * The rider's own deliveries (rider role). Any other order answers 403 NOT_YOUR_DELIVERY.
+ */
+export const deliveriesApi = {
+  /** Deliveries assigned to me that are still in progress. */
+  list: (restaurantId: string) => api.request<OrderView[]>(deliveriesPath(restaurantId)),
+  /** out_for_delivery or delivered. @throws ApiError NOT_YOUR_DELIVERY (403), ORDER_CHANGED / INVALID_TRANSITION (409). */
+  changeStatus: (restaurantId: string, orderId: string, status: Extract<OrderStatus, "out_for_delivery" | "delivered">) =>
+    api.request<OrderView>(`${deliveriesPath(restaurantId)}/${segment(orderId)}/status`, {
+      method: "POST",
+      body: { status } satisfies ChangeOrderStatusInput,
+    }),
+  /** Payment collected at the door. */
+  markPaid: (restaurantId: string, orderId: string, method: PaymentMethod) =>
+    api.request<OrderView>(`${deliveriesPath(restaurantId)}/${segment(orderId)}/payment`, {
+      method: "POST",
+      body: { method },
+    }),
+};
+
+const zonesPath = (restaurantId: string) => `${restaurantPath(restaurantId)}/delivery-zones`;
+
+/** Delivery zones (owner manages; any member reads). */
+export const deliveryZonesApi = {
+  list: (restaurantId: string) => api.request<DeliveryZoneView[]>(zonesPath(restaurantId)),
+  /** @throws ApiError ZONES_LIMIT (409). Marking it isHome unmarks the previous home zone. */
+  create: (restaurantId: string, body: DeliveryZoneInput) =>
+    api.request<DeliveryZoneView>(zonesPath(restaurantId), { method: "POST", body }),
+  update: (restaurantId: string, zoneId: string, body: Partial<DeliveryZoneInput>) =>
+    api.request<DeliveryZoneView>(`${zonesPath(restaurantId)}/${segment(zoneId)}`, { method: "PATCH", body }),
+  delete: (restaurantId: string, zoneId: string) =>
+    api.request<void>(`${zonesPath(restaurantId)}/${segment(zoneId)}`, { method: "DELETE" }),
+};
 
 const tablesPath = (restaurantId: string) => `${restaurantPath(restaurantId)}/tables`;
 
@@ -268,6 +327,15 @@ export const publicOrdersApi = {
    */
   createPickup: (slug: string, body: CreatePickupOrderInput) =>
     api.request<CreatedOrder>(`/public/restaurants/${segment(slug)}/orders`, { method: "POST", body }),
+  /**
+   * Delivery order from the public menu.
+   * @throws ApiError DELIVERY_DISABLED / ZONE_NOT_AVAILABLE / BELOW_MINIMUM_ORDER / NOT_ACCEPTING_ORDERS /
+   *   sold-out codes (409), CASH_AMOUNT_TOO_LOW / INVALID_PHONE (400), TOO_MANY_ACTIVE_ORDERS (429).
+   */
+  createDelivery: (slug: string, body: CreateDeliveryOrderInput) =>
+    api.request<CreatedOrder>(`/public/restaurants/${segment(slug)}/delivery-orders`, { method: "POST", body }),
+  /** Active zones, the restaurant's own first. @throws ApiError (404) when delivery is off. */
+  deliveryZones: (slug: string) => api.request<PublicDeliveryZone[]>(`/public/restaurants/${segment(slug)}/delivery-zones`),
   lookup: (accessToken: string) =>
     api.request<PublicOrderView>("/public/orders/lookup", { method: "POST", body: { accessToken } }),
   /** @throws ApiError ORDER_NOT_CANCELLABLE once the restaurant took the order. */

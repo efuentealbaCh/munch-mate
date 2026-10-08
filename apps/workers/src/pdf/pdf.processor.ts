@@ -59,6 +59,7 @@ export class PdfProcessor extends WorkerHost {
           template: "order-confirmation",
           data: {
             to: email.to,
+            channel: receipt.channel === "delivery" ? "delivery" : "pickup",
             customerName: receipt.customerName,
             restaurantName: receipt.restaurant.name,
             restaurantPhone: receipt.restaurant.phone,

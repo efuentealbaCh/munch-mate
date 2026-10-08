@@ -5,6 +5,19 @@ import { type ClientSession, type Model, Types } from "mongoose";
 import type { PricedItem } from "./order-pricing";
 import { Order } from "./schemas/order.schema";
 
+export interface DeliveryRecord {
+  zoneId: string;
+  zoneName: string;
+  address: string;
+  unit: string;
+  reference: string;
+}
+
+export interface ExpectedPaymentRecord {
+  method: PaymentMethod;
+  cashAmount: number | null;
+}
+
 export interface StatusChangeRecord {
   status: OrderStatus;
   at: Date;
@@ -26,6 +39,7 @@ export interface OrderRecord {
   paymentMethod: PaymentMethod | null;
   items: PricedItem[];
   subtotal: number;
+  deliveryFee: number;
   total: number;
   currency: string;
   customerName: string;
@@ -35,6 +49,10 @@ export interface OrderRecord {
   tableId: string | null;
   tableLabel: string | null;
   estimatedReadyAt: Date | null;
+  delivery: DeliveryRecord | null;
+  expectedPayment: ExpectedPaymentRecord | null;
+  riderId: string | null;
+  riderName: string | null;
   /** Browser-generated submission id; with ORDER_TOKEN_SECRET it re-derives the customer's access token. */
   clientOrderId: string;
   createdAt: Date;
@@ -48,6 +66,7 @@ export interface NewOrder {
   channel: OrderChannel;
   items: PricedItem[];
   subtotal: number;
+  deliveryFee: number;
   total: number;
   currency: string;
   customerName: string;
@@ -56,6 +75,8 @@ export interface NewOrder {
   note: string;
   tableId: string | null;
   tableLabel: string | null;
+  delivery: DeliveryRecord | null;
+  expectedPayment: ExpectedPaymentRecord | null;
   accessTokenHash: string;
   clientOrderId: string;
 }
@@ -76,6 +97,7 @@ export class OrdersRepository {
           ...input,
           restaurantId: oid(restaurantId),
           tableId: input.tableId ? oid(input.tableId) : null,
+          delivery: input.delivery ? { ...input.delivery, zoneId: oid(input.delivery.zoneId) } : null,
           items: input.items.map((item) => ({
             ...item,
             productId: oid(item.productId),
@@ -114,6 +136,45 @@ export class OrdersRepository {
       channel: { $in: ["pickup", "delivery"] },
       status: { $nin: [...FINAL_ORDER_STATUSES] },
     });
+  }
+
+  /** Deliveries in progress assigned to one rider, oldest first (the rider's screen). */
+  async listActiveForRider(restaurantId: string, riderId: string): Promise<OrderRecord[]> {
+    const docs = await this.orders
+      .find({
+        restaurantId: oid(restaurantId),
+        channel: "delivery",
+        riderId: oid(riderId),
+        status: { $nin: [...FINAL_ORDER_STATUSES] },
+      })
+      .sort({ createdAt: 1 })
+      .lean();
+    return docs.map(toRecord);
+  }
+
+  /**
+   * Assigns (or with null, unassigns) the rider of a delivery that is not finished yet.
+   * @returns The updated order, or null if it does not exist, is not a delivery or is already finished.
+   */
+  async assignRider(
+    restaurantId: string,
+    orderId: string,
+    rider: { id: string; name: string } | null,
+  ): Promise<OrderRecord | null> {
+    if (!Types.ObjectId.isValid(orderId)) return null;
+    const doc = await this.orders
+      .findOneAndUpdate(
+        {
+          _id: oid(orderId),
+          restaurantId: oid(restaurantId),
+          channel: "delivery",
+          status: { $nin: [...FINAL_ORDER_STATUSES] },
+        },
+        { $set: { riderId: rider ? oid(rider.id) : null, riderName: rider?.name ?? null } },
+        { returnDocument: "after" },
+      )
+      .lean();
+    return doc ? toRecord(doc) : null;
   }
 
   /** Orders still in progress, oldest first (the kitchen board). */
@@ -226,6 +287,7 @@ function toRecord(doc: OrderDoc): OrderRecord {
       })),
     })),
     subtotal: doc.subtotal,
+    deliveryFee: doc.deliveryFee ?? 0,
     total: doc.total,
     currency: doc.currency,
     customerName: doc.customerName ?? "",
@@ -235,6 +297,20 @@ function toRecord(doc: OrderDoc): OrderRecord {
     tableId: doc.tableId ? doc.tableId.toString() : null,
     tableLabel: doc.tableLabel ?? null,
     estimatedReadyAt: doc.estimatedReadyAt ?? null,
+    delivery: doc.delivery
+      ? {
+          zoneId: doc.delivery.zoneId.toString(),
+          zoneName: doc.delivery.zoneName,
+          address: doc.delivery.address,
+          unit: doc.delivery.unit ?? "",
+          reference: doc.delivery.reference ?? "",
+        }
+      : null,
+    expectedPayment: doc.expectedPayment
+      ? { method: doc.expectedPayment.method, cashAmount: doc.expectedPayment.cashAmount ?? null }
+      : null,
+    riderId: doc.riderId ? doc.riderId.toString() : null,
+    riderName: doc.riderName ?? null,
     clientOrderId: doc.clientOrderId,
     createdAt: doc.createdAt ?? doc._id.getTimestamp(),
     updatedAt: doc.updatedAt ?? doc._id.getTimestamp(),

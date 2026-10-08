@@ -2,16 +2,19 @@
 
 import { ORDER_CHANNEL_LABELS, ORDER_STATUS_LABELS, type PublicOrderView } from "@app/types";
 import {
+  BikeIcon,
   CheckIcon,
   CircleXIcon,
   ClockIcon,
   CloudOffIcon,
   DownloadIcon,
+  MapPinIcon,
   PartyPopperIcon,
   PhoneIcon,
   ReceiptTextIcon,
   SearchXIcon,
   UtensilsIcon,
+  WalletIcon,
 } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
@@ -25,6 +28,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { useReceiptDownload } from "@/hooks/use-receipt-download";
 import { subscribeWithTimeout, useOnVisible, useRealtime, useSocketEvent } from "@/hooks/use-realtime";
 import { localStore } from "@/lib/browser-storage";
+import { addressLine, customerPaymentLabel } from "@/lib/delivery";
 import { publicOrdersApi } from "@/lib/endpoints";
 import { errorMessage, hasCode } from "@/lib/errors";
 import { formatClockTime, formatDateTime, telHref } from "@/lib/format";
@@ -32,6 +36,7 @@ import { formatPrice, formatPriceDelta } from "@/lib/money";
 import {
   customerStatusHint,
   customerSteps,
+  estimateLabel,
   findMyOrder,
   loadMyOrders,
   type MyOrder,
@@ -173,16 +178,20 @@ function TrackedOrder({ token }: { token: string }) {
   }
 
   const finished = order.status === "rejected" || order.status === "cancelled";
-  const pickup = order.channel !== "dine_in";
-  const readyForPickup = pickup && order.status === "ready";
+  // Pickup and delivery are ordered from the public menu (no table): contact phone, "pedir algo más" there.
+  const remote = order.channel !== "dine_in";
+  const readyForPickup = order.channel === "pickup" && order.status === "ready";
+  const onTheWay = order.channel === "delivery" && order.status === "out_for_delivery";
+  const handedOver = order.status === "picked_up" || order.status === "delivered";
+  const highlighted = readyForPickup || onTheWay || order.status === "delivered";
   const destination = order.channel === "dine_in" ? order.tableLabel : ORDER_CHANNEL_LABELS[order.channel];
-  const orderMoreHref = tableToken ? `/m/${tableToken}` : pickup ? `/r/${order.restaurant.slug}` : null;
+  const orderMoreHref = tableToken ? `/m/${tableToken}` : remote ? `/r/${order.restaurant.slug}` : null;
   return (
     <div className="flex flex-col gap-5">
       <section
         className={cn(
           "flex flex-col items-center gap-1 rounded-2xl px-4 py-6 text-center",
-          readyForPickup ? "bg-success/10 ring-2 ring-success" : "bg-card ring-1 ring-foreground/10",
+          highlighted ? "bg-success/10 ring-2 ring-success" : "bg-card ring-1 ring-foreground/10",
         )}
         aria-labelledby="ticket"
       >
@@ -212,13 +221,18 @@ function TrackedOrder({ token }: { token: string }) {
               </p>
               <p className="text-sm text-muted-foreground">Di tu número #{order.ticketNumber} al retirar.</p>
             </>
+          ) : onTheWay ? (
+            <p className="mt-1 flex items-center gap-2 text-lg font-bold text-success" data-testid="on-the-way">
+              <BikeIcon className="size-5" aria-hidden />
+              {order.riderName ? `${order.riderName} va en camino` : "Tu pedido va en camino"}
+            </p>
           ) : (
             <p className="text-sm text-muted-foreground">{customerStatusHint(order.status, order.channel)}</p>
           )}
           {showsReadyEstimate(order) && order.estimatedReadyAt ? (
             <p className="mt-2 flex items-center gap-1.5 rounded-lg bg-muted px-3 py-1.5 text-base font-semibold" data-testid="ready-at">
               <ClockIcon className="size-4" aria-hidden />
-              Listo aprox. a las {formatClockTime(order.estimatedReadyAt)}
+              {estimateLabel(order.channel)} a las {formatClockTime(order.estimatedReadyAt)}
             </p>
           ) : null}
           {order.status === "rejected" && order.rejectReason ? (
@@ -232,7 +246,9 @@ function TrackedOrder({ token }: { token: string }) {
 
       {finished ? null : <StatusSteps order={order} />}
 
-      {pickup && order.restaurant.phone && !finished && order.status !== "picked_up" ? (
+      {order.delivery && !finished ? <DeliveryDetails order={order} /> : null}
+
+      {remote && order.restaurant.phone && !finished && !handedOver ? (
         <a
           href={telHref(order.restaurant.phone)}
           className="flex min-h-11 items-center justify-center gap-2 self-center rounded-md px-3 text-sm font-medium text-primary underline-offset-4 outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
@@ -264,12 +280,30 @@ function TrackedOrder({ token }: { token: string }) {
               <span className="tabular-nums">{formatPrice(item.lineTotal, order.currency)}</span>
             </li>
           ))}
+          {order.channel === "delivery" ? (
+            <li className="flex flex-col gap-1 py-3 text-sm">
+              <span className="flex justify-between gap-3">
+                <span className="text-muted-foreground">Subtotal</span>
+                <span className="tabular-nums">{formatPrice(order.subtotal, order.currency)}</span>
+              </span>
+              <span className="flex justify-between gap-3">
+                <span className="text-muted-foreground">Envío{order.delivery ? ` a ${order.delivery.zoneName}` : ""}</span>
+                <span className="tabular-nums" data-testid="delivery-fee">
+                  {order.deliveryFee > 0 ? formatPrice(order.deliveryFee, order.currency) : "Gratis"}
+                </span>
+              </span>
+            </li>
+          ) : null}
           <li className="flex items-baseline justify-between py-3">
             <span className="font-semibold">Total</span>
-            <span className="text-lg font-bold tabular-nums">{formatPrice(order.total, order.currency)}</span>
+            <span className="text-lg font-bold tabular-nums" data-testid="order-total">
+              {formatPrice(order.total, order.currency)}
+            </span>
           </li>
         </ul>
-        <p className="text-xs text-muted-foreground">{pickup ? "Pagas al retirar." : "Pagas en el local."}</p>
+        {order.channel === "delivery" ? null : (
+          <p className="text-xs text-muted-foreground">{remote ? "Pagas al retirar." : "Pagas en el local."}</p>
+        )}
       </section>
 
       <div className="flex flex-col gap-2">
@@ -286,7 +320,7 @@ function TrackedOrder({ token }: { token: string }) {
           </Button>
         ) : null}
         {orderMoreHref ? (
-          <Button asChild size="lg" variant={pickup ? "secondary" : "default"}>
+          <Button asChild size="lg" variant={remote ? "secondary" : "default"}>
             <Link href={orderMoreHref}>
               <UtensilsIcon aria-hidden data-icon="inline-start" />
               Pedir algo más
@@ -311,6 +345,35 @@ function TrackedOrder({ token }: { token: string }) {
         onConfirm={() => void cancel()}
       />
     </div>
+  );
+}
+
+/** Where it goes and how the customer said they would pay (delivery only). */
+function DeliveryDetails({ order }: { order: PublicOrderView }) {
+  const delivery = order.delivery;
+  if (!delivery) return null;
+  return (
+    <section aria-labelledby="entrega" className="flex flex-col gap-2 rounded-xl bg-card p-4 text-sm ring-1 ring-foreground/10">
+      <h2 id="entrega" className="font-semibold">
+        Entrega
+      </h2>
+      <p className="flex items-start gap-2" data-testid="delivery-address">
+        <MapPinIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
+        <span className="flex flex-col">
+          <span className="font-medium break-words">{addressLine(delivery)}</span>
+          <span className="text-muted-foreground">{delivery.zoneName}</span>
+          {delivery.reference ? <span className="text-muted-foreground break-words">Ref.: {delivery.reference}</span> : null}
+        </span>
+      </p>
+      {order.expectedPayment && order.status !== "delivered" ? (
+        <p className="flex items-start gap-2" data-testid="expected-payment">
+          <WalletIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
+          <span>
+            Pagas al recibir: <span className="font-medium">{customerPaymentLabel(order.expectedPayment, order.currency)}</span>
+          </span>
+        </p>
+      ) : null}
+    </section>
   );
 }
 

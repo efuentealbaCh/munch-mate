@@ -133,6 +133,10 @@ case "$body" in
   *) fail "pickup order for an unknown restaurant: $body" ;;
 esac
 
+# Phase 5, safe everywhere: delivery zones of an unknown restaurant are not found.
+code=$(status "$BASE/api/public/restaurants/smoke-no-existe/delivery-zones")
+if [ "$code" = "404" ]; then pass "delivery zones of an unknown restaurant → 404"; else fail "unknown delivery zones returned $code"; fi
+
 # Phase 2, safe everywhere: public menu routing and the read-only media host.
 body=$($CURL "$BASE/api/public/restaurants/smoke-no-existe/menu" || true)
 case "$body" in
@@ -335,6 +339,36 @@ if [ "$LOCAL" = true ]; then
     [ "$code" = "200" ] || break
   done
   if [ "$code" = "200" ]; then pass "pickup order handed over (picked_up)"; else fail "pickup flow stopped at $next ($code)"; fi
+
+  # Phase 5: delivery to the restaurant's own commune, cash with change, dispatched by the floor staff.
+  code=$(status -b "$jar" -H "Origin: $BASE" $json -X PATCH -d '{"deliveryEnabled":true}' "$BASE/api/restaurants/$restaurant_id")
+  if [ "$code" = "200" ]; then pass "delivery enabled by the owner"; else fail "enable delivery returned $code"; fi
+  zone_id=$($CURL -b "$jar" -H "Origin: $BASE" $json -d '{"name":"Smoke Centro","fee":1500,"minOrder":0,"isHome":true}' \
+    "$BASE/api/restaurants/$restaurant_id/delivery-zones" | sed -n 's/.*"id":"\([0-9a-f]\{24\}\)".*/\1/p')
+  if $CURL "$BASE/api/public/restaurants/$slug/delivery-zones" | grep -q '"isHome":true'; then
+    pass "public delivery zones list the home zone"
+  else
+    fail "public delivery zones"
+  fi
+  client_order_id=$(node -e 'console.log(crypto.randomUUID())' 2>/dev/null || cat /proc/sys/kernel/random/uuid)
+  body=$($CURL -H "Origin: $BASE" $json \
+    -d "{\"clientOrderId\":\"$client_order_id\",\"customerName\":\"Smoke\",\"customerPhone\":\"+56 9 2222 3333\",\"items\":[{\"productId\":\"$product_id\",\"quantity\":2,\"modifiers\":[]}],\"delivery\":{\"zoneId\":\"$zone_id\",\"address\":\"Calle Falsa 123\"},\"payment\":{\"method\":\"cash\",\"cashAmount\":10000}}" \
+    "$BASE/api/public/restaurants/$slug/delivery-orders" || true)
+  case "$body" in
+    *'"channel":"delivery"'*'"deliveryFee":1500'*'"total":9480'*'"change":520'*) pass "delivery order priced with the zone fee and the change" ;;
+    *) fail "place delivery order: $body" ;;
+  esac
+  order_id=$($CURL -b "$jar" "$BASE/api/restaurants/$restaurant_id/orders" |
+    grep -o '"id":"[0-9a-f]\{24\}","number":[0-9]*,"ticketNumber":[0-9]*,"businessDate":"[0-9-]*","channel":"delivery"' |
+    sed -n 's/"id":"\([0-9a-f]\{24\}\)".*/\1/p' | head -1)
+  orders_url="$BASE/api/restaurants/$restaurant_id/orders/$order_id"
+  code=$(status -b "$jar" -H "Origin: $BASE" $json -d '{"status":"accepted","readyInMinutes":30}' "$orders_url/status")
+  [ "$code" = "200" ] && code=$(status -b "$jar" -H "Origin: $BASE" $json -d '{"status":"preparing"}' "$orders_url/status")
+  [ "$code" = "200" ] && code=$(status -b "$jar" -H "Origin: $BASE" $json -d '{"status":"ready"}' "$orders_url/status")
+  [ "$code" = "200" ] && code=$(status -b "$jar" -H "Origin: $BASE" $json -d '{"status":"out_for_delivery"}' "$orders_url/status")
+  [ "$code" = "200" ] && code=$(status -b "$jar" -H "Origin: $BASE" $json -d '{"method":"cash"}' "$orders_url/payment")
+  [ "$code" = "200" ] && code=$(status -b "$jar" -H "Origin: $BASE" $json -d '{"status":"delivered"}' "$orders_url/status")
+  if [ "$code" = "200" ]; then pass "delivery dispatched, paid on delivery and delivered"; else fail "delivery flow returned $code"; fi
   rm -f "$jar" "$headers"
 fi
 

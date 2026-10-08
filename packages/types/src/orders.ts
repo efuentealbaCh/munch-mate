@@ -1,4 +1,4 @@
-/** Channels a customer can order through. dine_in (phase 3) and pickup (phase 4); delivery comes in phase 5. */
+/** Channels a customer can order through: dine_in (phase 3), pickup (phase 4), delivery (phase 5). */
 export const ORDER_CHANNELS = ["dine_in", "pickup", "delivery"] as const;
 export type OrderChannel = (typeof ORDER_CHANNELS)[number];
 
@@ -56,13 +56,26 @@ export const ORDER_LIMITS = {
   customerEmailMax: 254,
   noteMax: 200,
   rejectReasonMax: 200,
-  /** Pickup orders still in progress allowed per phone and restaurant (stops floods of fake orders). */
+  /** Pickup/delivery orders still in progress allowed per phone and restaurant (stops floods of fake orders). */
   activePickupOrdersPerPhone: 3,
+  addressMax: 120,
+  addressUnitMax: 30,
+  addressReferenceMax: 150,
 } as const;
 
 /** "Ready in" choices the staff picks when accepting a pickup order. */
 export const PICKUP_READY_MINUTES = [10, 15, 20, 30, 45, 60] as const;
 export type PickupReadyMinutes = (typeof PICKUP_READY_MINUTES)[number];
+
+/** "Arrives in" choices the staff picks when accepting a delivery order. */
+export const DELIVERY_ETA_MINUTES = [20, 30, 45, 60, 90] as const;
+export type DeliveryEtaMinutes = (typeof DELIVERY_ETA_MINUTES)[number];
+
+/** Time choices offered when accepting an order of a channel that needs one. */
+export const READY_MINUTES_BY_CHANNEL: Partial<Record<OrderChannel, readonly number[]>> = {
+  pickup: PICKUP_READY_MINUTES,
+  delivery: DELIVERY_ETA_MINUTES,
+};
 
 // ── Requests ────────────────────────────────────────────────────────────────
 
@@ -95,13 +108,44 @@ export interface CreatePickupOrderInput {
   note?: string;
 }
 
+/** Where a delivery goes. The zone fixes the fee and the minimum order; the rest is free text. */
+export interface DeliveryAddressInput {
+  zoneId: string;
+  /** Street and number. */
+  address: string;
+  /** Apartment, house, office. */
+  unit?: string;
+  /** How to find it ("portón verde", "frente a la plaza"). */
+  reference?: string;
+}
+
+/** How the customer plans to pay on delivery; `cashAmount` lets the rider bring change. */
+export interface ExpectedPaymentInput {
+  method: PaymentMethod;
+  /** Only with cash: the bill the customer will pay with (≥ total). */
+  cashAmount?: number;
+}
+
+export interface CreateDeliveryOrderInput extends CreatePickupOrderInput {
+  delivery: DeliveryAddressInput;
+  payment: ExpectedPaymentInput;
+}
+
 /** Body of `POST /restaurants/:id/orders/:orderId/status`. */
 export interface ChangeOrderStatusInput {
   status: OrderStatus;
   /** Mandatory when rejecting (shown to the customer). */
   reason?: string;
-  /** Mandatory when accepting a pickup order: when it will be ready. */
-  readyInMinutes?: PickupReadyMinutes;
+  /**
+   * Mandatory when accepting a pickup (ready in, `PICKUP_READY_MINUTES`) or a delivery order (arrives in,
+   * `DELIVERY_ETA_MINUTES`).
+   */
+  readyInMinutes?: number;
+}
+
+/** Body of `PUT /restaurants/:id/orders/:orderId/rider`: null unassigns. */
+export interface AssignRiderInput {
+  riderId: string | null;
 }
 
 // ── Views ───────────────────────────────────────────────────────────────────
@@ -123,6 +167,22 @@ export interface OrderItemView {
   note: string;
   /** (unitPrice + Σ priceDelta) × quantity. */
   lineTotal: number;
+}
+
+/** Delivery details snapshot (zone name and fee as they were when ordering). */
+export interface OrderDeliveryView {
+  zoneId: string;
+  zoneName: string;
+  address: string;
+  unit: string;
+  reference: string;
+}
+
+export interface ExpectedPaymentView {
+  method: PaymentMethod;
+  cashAmount: number | null;
+  /** cashAmount − total: change the rider must bring, or null. */
+  change: number | null;
 }
 
 export interface OrderStatusChange {
@@ -156,11 +216,18 @@ export interface OrderView {
   customerEmail: string;
   note: string;
   tableLabel: string | null;
-  /** Set when a pickup order is accepted. */
+  /** Set on acceptance: pickup → when it will be ready; delivery → when it should arrive. */
   estimatedReadyAt: string | null;
-  /** Whether the PDF receipt exists (pickup orders, once accepted). */
+  /** Whether the PDF receipt exists (pickup and delivery orders, once accepted). */
   receiptAvailable: boolean;
+  /** Delivery only (null otherwise). */
+  deliveryFee: number;
+  delivery: OrderDeliveryView | null;
+  expectedPayment: ExpectedPaymentView | null;
+  rider: { id: string; name: string } | null;
   createdAt: string;
+  /** Last write of any kind (status, payment, rider): tells which of two copies is newer. */
+  updatedAt: string;
 }
 
 /** What the customer sees on the tracking page (no staff names, no internal ids). */
@@ -172,11 +239,18 @@ export interface PublicOrderView {
   /** Present when status is "rejected". */
   rejectReason: string | null;
   items: OrderItemView[];
+  subtotal: number;
+  deliveryFee: number;
   total: number;
   currency: string;
   tableLabel: string | null;
-  /** Pickup: when the restaurant said it will be ready. */
+  /** Pickup: when it will be ready. Delivery: when it should arrive. */
   estimatedReadyAt: string | null;
+  /** Delivery only: where it goes and how the customer said they would pay. */
+  delivery: OrderDeliveryView | null;
+  expectedPayment: ExpectedPaymentView | null;
+  /** Delivery: first name of the assigned rider, if any. */
+  riderName: string | null;
   /** Whether the PDF receipt can be downloaded (`POST /api/public/orders/receipt`). */
   receiptAvailable: boolean;
   restaurant: { name: string; slug: string; phone: string };
@@ -207,6 +281,39 @@ export interface TableContext {
   tableLabel: string;
   restaurant: { name: string; slug: string };
   acceptingOrders: boolean;
+}
+
+// ── Delivery zones ──────────────────────────────────────────────────────────
+
+export const DELIVERY_ZONE_LIMITS = { nameMax: 60, zonesMax: 50, feeMax: 1_000_000 } as const;
+
+/** A commune or sector the restaurant delivers to, with its fee and minimum order (minor units). */
+export interface DeliveryZoneView {
+  id: string;
+  name: string;
+  fee: number;
+  minOrder: number;
+  active: boolean;
+  /** The restaurant's own commune: preselected at checkout. At most one zone has it. */
+  isHome: boolean;
+  position: number;
+}
+
+export interface DeliveryZoneInput {
+  name: string;
+  fee: number;
+  minOrder: number;
+  active?: boolean;
+  isHome?: boolean;
+}
+
+/** `GET /api/public/restaurants/:slug/delivery-zones`: active zones, home first. */
+export type PublicDeliveryZone = Pick<DeliveryZoneView, "id" | "name" | "fee" | "minOrder" | "isHome">;
+
+/** A member with the rider role, for the assignment picker. */
+export interface RiderView {
+  id: string;
+  name: string;
 }
 
 // ── Real-time (Socket.IO) ───────────────────────────────────────────────────

@@ -52,6 +52,7 @@ describe("escapeHtml", () => {
 describe("renderEmail order-confirmation", () => {
   const data = {
     to: "ana@example.com",
+    channel: "pickup" as const,
     customerName: "Ana <b>",
     restaurantName: "Don Pepe",
     restaurantPhone: "+56 2 2345 6789",
@@ -78,5 +79,28 @@ describe("renderEmail order-confirmation", () => {
 
     expect(email.text).toContain("Te avisaremos cuando esté listo.");
     expect(email.text).not.toContain("llama al local");
+  });
+});
+
+describe("renderEmail order-confirmation (delivery)", () => {
+  it("talks about the arrival time and paying on delivery", () => {
+    const email = renderEmail({
+      template: "order-confirmation",
+      data: {
+        to: "ana@example.com",
+        channel: "delivery",
+        customerName: "Ana",
+        restaurantName: "Don Pepe",
+        restaurantPhone: "",
+        ticketNumber: 4,
+        readyAt: "20:15",
+        total: "$7.500",
+        trackingUrl: "https://munchmate.cl/pedido#t=tok",
+        attachment: { key: "k.pdf", filename: "c.pdf" },
+      },
+    });
+
+    expect(email.text).toContain("Llegará aproximadamente a las 20:15.");
+    expect(email.text).toContain("El pago se realiza al recibir el pedido.");
   });
 });

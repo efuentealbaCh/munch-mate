@@ -32,7 +32,7 @@ Un usuario de staff puede tener varios roles dentro del mismo restaurante.
 | --- | --- | --- | --- |
 | `dine_in` | QR de la mesa → `/m/{tableToken}` | La mesa | En el local |
 | `pickup` | `/r/{slug}` (si el local activó el retiro) | Nombre y teléfono; email opcional para recibir el comprobante | En el local, al retirar |
-| `delivery` | `/r/{slug}` | Nombre, teléfono y dirección | Contra entrega |
+| `delivery` | `/r/{slug}` (si el local activó el delivery) | Nombre, teléfono, zona (viene elegida la del local) y dirección | Contra entrega; en efectivo puede indicar con cuánto paga |
 
 ---
 
@@ -96,7 +96,7 @@ pending ──► accepted ──► preparing ──► ready ──┬──�
 
 | Colección | Tenant | Campos clave |
 | --- | --- | --- |
-| `restaurants` | — | `slug` (único), `name`, `description`, `phone`, `logoKey`, `currency`, `timezone`, `status`, `createdBy`, `membershipVersion`, `acceptingOrders`, `pickupEnabled` ✅ · pendiente: `openingHours` |
+| `restaurants` | — | `slug` (único), `name`, `description`, `phone`, `logoKey`, `currency`, `timezone`, `status`, `createdBy`, `membershipVersion`, `acceptingOrders`, `pickupEnabled`, `deliveryEnabled` ✅ · pendiente: `openingHours` |
 | `users` | — | `email` (único), `passwordHash`, `name`, `emailVerifiedAt`, `platformRole?` ✅ |
 | `sessions` | — | `userId`, `familyId`, `tokenHash`, `expiresAt`, `rotatedAt`, `revokedAt` ✅ |
 | `one_time_tokens` | — | `type` (`verify_email` / `password_reset`), `tokenHash`, `userId`, `expiresAt`, `usedAt` ✅ |
@@ -106,8 +106,8 @@ pending ──► accepted ──► preparing ──► ready ──┬──�
 | `products` | ✔ | `categoryId`, `name`, `description`, `price`, `imageKey`, `available` (agotado), `visible`, `modifierGroupIds[]`, `position` ✅ |
 | `modifier_groups` | ✔ | `name`, `minSelect`, `maxSelect`, `options[]` (`name`, `priceDelta`, `available`) — biblioteca reutilizable entre productos ✅ |
 | `tables` | ✔ | `label`, `token` (único, va en el QR `/m/{token}`, regenerable), `active` ✅ |
-| `delivery_zones` | ✔ | `name`, `fee`, `minOrder`, `active` |
-| `orders` | ✔ | `number` (global), `ticketNumber` (diario), `businessDate`, `channel`, `status`, `statusHistory[]` (con quién y motivo), `paymentStatus`, `paymentMethod`, `items[]` (snapshot de precios y modificadores), `subtotal`, `total`, `currency`, `customerName`, `customerPhone` (normalizado), `customerEmail`, `estimatedReadyAt`, `note`, `tableId`, `tableLabel` (snapshot), `accessTokenHash`, `clientOrderId` ✅ · pendientes: `deliveryFee`, `customerId`, `delivery`, `riderId` (fases 5–6) |
+| `delivery_zones` | ✔ | `name`, `fee`, `minOrder`, `active`, `isHome` (zona del local, preseleccionada), `position` ✅ |
+| `orders` | ✔ | `number` (global), `ticketNumber` (diario), `businessDate`, `channel`, `status`, `statusHistory[]` (con quién y motivo), `paymentStatus`, `paymentMethod`, `items[]` (snapshot de precios y modificadores), `subtotal`, `total`, `currency`, `customerName`, `customerPhone` (normalizado), `customerEmail`, `estimatedReadyAt`, `note`, `tableId`, `tableLabel` (snapshot), `deliveryFee`, `delivery` (zona, dirección, depto, referencia), `expectedPayment` (medio y monto en efectivo), `riderId`, `riderName`, `accessTokenHash`, `clientOrderId` ✅ · pendiente: `customerId` (fase 6) |
 | `counters` | ✔ | `_id` (`order:{restaurantId}` / `ticket:{restaurantId}:{businessDate}`), `seq` ✅ |
 | `customer_addresses` | — | `userId`, `label`, `address`, `reference`, `zoneHint` |
 | `push_subscriptions` | — | `userId`, `endpoint`, `keys` |
@@ -161,3 +161,9 @@ Cada fase termina con sus tests, `smoke` actualizado y despliegue al VPS.
   - Contra pedidos falsos: límite por IP, máximo 3 pedidos en curso por teléfono y local, y el local acepta cada pedido antes de prepararlo.
   - El comprobante PDF y el email de confirmación se generan **al aceptar** el pedido, no al crearlo: así nunca se envía un comprobante de un pedido que el local rechaza.
   - Se puede marcar **Retirado** un pedido sin pagar; la web avisa y ofrece registrar el pago en ese momento.
+- **Delivery (fase 5):**
+  - El dueño activa el delivery y define sus zonas (comunas o sectores) con costo de envío y pedido mínimo. Una zona se marca como **zona del local**: el checkout la trae elegida y el cliente puede cambiarla. Sin mapas ni geocodificación.
+  - El cliente escribe calle y número, y opcionalmente depto y una referencia.
+  - Indica cómo pagará (efectivo, tarjeta POS, transferencia). En efectivo puede decir con cuánto paga y el repartidor ve el vuelto.
+  - Al aceptar, el local indica en cuánto llega (20, 30, 45, 60 o 90 min).
+  - El repartidor es opcional. Si hay uno asignado, ve solo sus entregas, las marca **En reparto** y **Entregado**, y registra el pago. Sin repartidor, lo hace caja o el dueño.

@@ -5,7 +5,7 @@ import { RestaurantLogo } from "@/components/restaurant-logo";
 import { telHref } from "@/lib/format";
 import { getPublicMenu } from "@/lib/public-menu";
 import { MenuBrowser } from "./menu-browser";
-import { PickupOrdering } from "./pickup-ordering";
+import { OnlineOrdering } from "./online-ordering";
 
 interface PageProps {
   params: Promise<{ slug: string }>;
@@ -40,6 +40,7 @@ export default async function PublicMenuPage({ params }: PageProps) {
   if (result.status === "busy") return <Busy />;
 
   const { restaurant, categories } = result.menu;
+  const ordersOnline = restaurant.pickupEnabled || restaurant.deliveryEnabled;
   return (
     <div className="flex min-h-dvh flex-col bg-background">
       <header className="border-b bg-card">
@@ -62,9 +63,9 @@ export default async function PublicMenuPage({ params }: PageProps) {
         </div>
       </header>
 
-      {restaurant.pickupEnabled ? (
-        // Pickup on: cart and checkout (the open/closed banner lives inside, it follows live refreshes).
-        <PickupOrdering initialMenu={result.menu} />
+      {ordersOnline ? (
+        // Pickup and/or delivery on: cart and checkout (the open/closed banner lives inside, it follows live refreshes).
+        <OnlineOrdering initialMenu={result.menu} />
       ) : categories.length === 0 ? (
         <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col items-center gap-2 px-4 py-16 text-center">
           <ClockIcon className="size-8 text-muted-foreground" aria-hidden />
@@ -76,7 +77,7 @@ export default async function PublicMenuPage({ params }: PageProps) {
       )}
 
       <footer className="border-t px-4 py-6 text-center text-xs text-muted-foreground">
-        {restaurant.pickupEnabled ? "Pedidos con" : "Menú creado con"} <span className="font-semibold text-foreground">Munch Mate</span>
+        {ordersOnline ? "Pedidos con" : "Menú creado con"} <span className="font-semibold text-foreground">Munch Mate</span>
       </footer>
     </div>
   );

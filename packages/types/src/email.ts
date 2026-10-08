@@ -16,9 +16,10 @@ export interface EmailJobs {
     roles: RestaurantRole[];
     url: string;
   };
-  /** Pickup order accepted: tracking link (holds the order's access token) and the PDF receipt attached. */
+  /** Pickup or delivery order accepted: tracking link (holds the order's access token) and the PDF receipt attached. */
   "order-confirmation": {
     to: string;
+    channel: "pickup" | "delivery";
     customerName: string;
     restaurantName: string;
     restaurantPhone: string;

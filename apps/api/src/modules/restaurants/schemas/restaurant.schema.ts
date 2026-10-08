@@ -31,6 +31,10 @@ export class Restaurant {
   @Prop({ default: false })
   pickupEnabled!: boolean;
 
+  /** Customers may order for delivery to the restaurant's delivery zones. Owner setting, off by default. */
+  @Prop({ default: false })
+  deliveryEnabled!: boolean;
+
   /** ISO 4217. Amounts are stored as integers in the currency's minor unit (CLP has none). */
   @Prop({ required: true, default: "CLP" })
   currency!: string;

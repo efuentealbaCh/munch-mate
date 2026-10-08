@@ -1,4 +1,11 @@
-import { ORDER_LIMITS, type OrderItemInput, type PublicModifierGroup, type PublicProduct } from "@app/types";
+import {
+  type DeliveryAddressInput,
+  type ExpectedPaymentInput,
+  ORDER_LIMITS,
+  type OrderItemInput,
+  type PublicModifierGroup,
+  type PublicProduct,
+} from "@app/types";
 
 /**
  * Customer cart (dine-in from a table QR, pickup from the public menu): modifier selection rules, line
@@ -225,12 +232,12 @@ export function toOrderItems(lines: readonly CartLine[]): OrderItemInput[] {
 const CART_VERSION = 1;
 
 /**
- * @param scope Table code for dine-in, `pickup:<slug>` for pickup (table codes are alphanumeric, so the two
+ * @param scope Table code for dine-in, `pickup:<slug>` for pickup and delivery (one cart per public menu) (table codes are alphanumeric, so the two
  *   never collide).
  */
 export const cartStorageKey = (scope: string) => `mm:cart:${scope}`;
 
-/** Cart scope of a pickup order from a restaurant's public menu. */
+/** Cart scope of a restaurant's public menu (pickup and delivery share it: switching keeps the cart). */
 export const pickupCartScope = (slug: string) => `pickup:${slug}`;
 
 /** Minimal Storage surface, so tests can pass a Map-backed fake. */
@@ -332,18 +339,31 @@ export interface CheckoutAttempt {
   fingerprint: string;
 }
 
-/** Stable serialization of what the customer is sending. Pickup adds the contact data. */
-export function checkoutFingerprint(input: {
+/** What a submission carries, for its fingerprint (delivery adds the address and the expected payment). */
+export interface CheckoutContent {
   items: OrderItemInput[];
   customerName?: string;
   note?: string;
   customerPhone?: string;
   customerEmail?: string;
-}): string {
+  delivery?: DeliveryAddressInput;
+  payment?: ExpectedPaymentInput;
+}
+
+/** Stable serialization of what the customer is sending. Pickup adds the contact data, delivery the address. */
+export function checkoutFingerprint(input: CheckoutContent): string {
   const base: unknown[] = [input.items, input.customerName ?? "", input.note ?? ""];
-  // Only when present, so dine-in fingerprints stay the same as before.
+  // Only when present, so dine-in (and pickup) fingerprints stay the same as before.
   if (input.customerPhone !== undefined || input.customerEmail !== undefined) {
     base.push(input.customerPhone ?? "", input.customerEmail ?? "");
+  }
+  // A different address or payment is a different order, not a retry of the previous one.
+  if (input.delivery || input.payment) {
+    const d = input.delivery;
+    base.push(
+      d ? [d.zoneId, d.address, d.unit ?? "", d.reference ?? ""] : null,
+      input.payment ? [input.payment.method, input.payment.cashAmount ?? null] : null,
+    );
   }
   return JSON.stringify(base);
 }

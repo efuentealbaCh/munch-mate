@@ -1,11 +1,11 @@
 "use client";
 
-import type { OrderItemInput } from "@app/types";
 import { useEffect, useReducer, useRef, useState } from "react";
 import { sessionStore } from "@/lib/browser-storage";
 import {
   cartReducer,
   type CheckoutAttempt,
+  type CheckoutContent,
   checkoutFingerprint,
   loadCart,
   loadCheckoutAttempt,
@@ -17,7 +17,7 @@ import {
 
 /**
  * Customer cart kept in sessionStorage (survives a reload, not a closed tab) plus the idempotent submission
- * id. Shared by the table page (/m/[token]) and the pickup menu (/r/[slug]).
+ * id. Shared by the table page (/m/[token]) and the public menu (/r/[slug], pickup and delivery).
  * @param scope Storage scope: the table code, or `pickupCartScope(slug)`.
  */
 export function useStoredCart(scope: string) {
@@ -40,13 +40,7 @@ export function useStoredCart(scope: string) {
    * `clientOrderId` for a submission: the same content as a failed attempt reuses its id, so the api returns
    * that order instead of creating a duplicate.
    */
-  function beginAttempt(content: {
-    items: OrderItemInput[];
-    customerName?: string;
-    note?: string;
-    customerPhone?: string;
-    customerEmail?: string;
-  }): string {
+  function beginAttempt(content: CheckoutContent): string {
     attempt.current = pickClientOrderId(attempt.current, checkoutFingerprint(content), () => newClientOrderId());
     saveCheckoutAttempt(sessionStore(), scope, attempt.current);
     return attempt.current.clientOrderId;

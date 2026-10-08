@@ -27,6 +27,8 @@ export interface RestaurantView {
   acceptingOrders: boolean;
   /** Customers may order for pickup from the public menu `/r/{slug}`. Owner setting, off by default. */
   pickupEnabled: boolean;
+  /** Customers may order for delivery to the restaurant's zones. Owner setting, off by default. */
+  deliveryEnabled: boolean;
   currency: string;
   timezone: string;
   status: RestaurantStatus;

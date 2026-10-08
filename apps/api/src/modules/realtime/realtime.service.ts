@@ -11,6 +11,8 @@ export interface RoomEmitter {
 
 export const restaurantRoom = (restaurantId: string) => `restaurant:${restaurantId}`;
 export const orderRoom = (orderId: string) => `order:${orderId}`;
+/** A rider-only member: receives just the deliveries assigned to them (customer data of other orders stays out). */
+export const riderRoom = (restaurantId: string, userId: string) => `rider:${restaurantId}:${userId}`;
 
 /**
  * Emits events to Socket.IO rooms from anywhere in the api. The gateway attaches the server once it starts;
@@ -27,6 +29,22 @@ export class RealtimeService {
   /** Staff of a restaurant (kitchen board, cashier). */
   toRestaurant(restaurantId: string): RoomEmitter {
     return this.room(restaurantRoom(restaurantId));
+  }
+
+  /**
+   * Staff updates of one order: the restaurant room plus the rooms of the given riders (the assigned one, and
+   * the previous one when it changes, so their screen drops it). Socket.IO delivers once per socket.
+   */
+  toStaffOf(restaurantId: string, riderIds: readonly (string | null)[]): RoomEmitter {
+    const rooms = [
+      restaurantRoom(restaurantId),
+      ...new Set(riderIds.filter((id): id is string => id !== null).map((id) => riderRoom(restaurantId, id))),
+    ];
+    return {
+      emit: (event, ...args) => {
+        this.server?.to(rooms).emit(event, ...args);
+      },
+    };
   }
 
   /** The customer tracking one order. */

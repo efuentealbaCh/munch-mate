@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { modifierGroupSchema, pickupCheckoutSchema, productSchema, restaurantProfileSchema } from "./validation";
+import {
+  deliveryCheckoutSchema,
+  deliveryZoneSchema,
+  modifierGroupSchema,
+  pickupCheckoutSchema,
+  productSchema,
+  restaurantProfileSchema,
+} from "./validation";
 
 const option = (name: string, priceDelta = "0") => ({ name, priceDelta, available: true });
 
@@ -99,5 +106,69 @@ describe("pickupCheckoutSchema", () => {
   it("rejects a malformed email and a long comment", () => {
     expect(firstError({ customerEmail: "ana@" })).toBe("Ingresa un correo válido o déjalo en blanco");
     expect(firstError({ note: "x".repeat(201) })).toMatch(/hasta 200/);
+  });
+});
+
+describe("deliveryCheckoutSchema", () => {
+  const zones = [
+    { id: "z1", name: "Ñuñoa", fee: 1990, minOrder: 8000, isHome: true },
+    { id: "z2", name: "Centro", fee: 0, minOrder: 0, isHome: false },
+  ];
+  const schema = (subtotal: number) => deliveryCheckoutSchema({ subtotal, zones, currency: "CLP" });
+  const valid = {
+    customerName: "Ana",
+    customerPhone: "9 1234 5678",
+    customerEmail: "",
+    note: "",
+    zoneId: "z1",
+    address: "Av. Italia 1234",
+    unit: "",
+    reference: "",
+    paymentMethod: "cash" as const,
+    cashAmount: "",
+  };
+
+  it("accepts a complete order, with or without the cash amount", () => {
+    expect(schema(15000).safeParse(valid).success).toBe(true);
+    expect(schema(15000).safeParse({ ...valid, cashAmount: "20.000" }).success).toBe(true);
+    expect(schema(15000).safeParse({ ...valid, paymentMethod: "transfer", cashAmount: "1" }).success).toBe(true);
+  });
+
+  it("requires the zone, the address and the payment method", () => {
+    expect(messages(schema(15000).safeParse({ ...valid, zoneId: "", address: " 1 ", paymentMethod: "" }))).toEqual([
+      "zoneId: Elige tu comuna o zona",
+      "address: Indica la calle y el número",
+      "paymentMethod: Elige cómo vas a pagar",
+    ]);
+  });
+
+  it("rejects an unknown zone and a subtotal below the zone minimum (fee not counted)", () => {
+    expect(messages(schema(15000).safeParse({ ...valid, zoneId: "gone" }))).toEqual(["zoneId: Esta zona ya no está disponible. Elige otra."]);
+    expect(messages(schema(7999).safeParse(valid))).toEqual(["zoneId: El pedido mínimo para Ñuñoa es $8.000 (sin el envío)"]);
+    expect(schema(8000).safeParse(valid).success).toBe(true);
+  });
+
+  it("checks the cash covers subtotal + fee", () => {
+    // 15.000 + 1.990 = 16.990
+    expect(messages(schema(15000).safeParse({ ...valid, cashAmount: "16.000" }))).toEqual(["cashAmount: Debe cubrir el total ($16.990)"]);
+    expect(schema(15000).safeParse({ ...valid, cashAmount: "16990" }).success).toBe(true);
+    expect(messages(schema(15000).safeParse({ ...valid, cashAmount: "veinte" }))).toEqual(["cashAmount: Usa solo números, ej. 20.000"]);
+  });
+});
+
+describe("deliveryZoneSchema", () => {
+  it("accepts a zone with free shipping and no minimum", () => {
+    expect(deliveryZoneSchema.safeParse({ name: "Centro", fee: "0", minOrder: "0", active: true, isHome: false }).success).toBe(true);
+  });
+
+  it("requires a name and valid amounts", () => {
+    expect(messages(deliveryZoneSchema.safeParse({ name: " ", fee: "", minOrder: "1,5", active: true, isHome: false }))).toEqual([
+      "name: Ingresa la comuna o sector, ej. Providencia",
+      "fee: Ingresa el costo de envío (0 si es gratis)",
+      "minOrder: Usa solo números, ej. 3.990",
+    ]);
+    expect(messages(deliveryZoneSchema.safeParse({ name: "X", fee: "2.000.000", minOrder: "0", active: true, isHome: false }))).toEqual([
+      "fee: El máximo es 1.000.000",
+    ]);
   });
 });

@@ -64,6 +64,11 @@ export class UpdateRestaurantDto {
   @IsOptional()
   @IsBoolean()
   pickupEnabled?: boolean;
+
+  /** Lets customers order for delivery to the restaurant's zones. */
+  @IsOptional()
+  @IsBoolean()
+  deliveryEnabled?: boolean;
 }
 
 export class SlugQueryDto {
