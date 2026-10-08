@@ -105,6 +105,10 @@ export interface PublicMenu {
     phone: string;
     currency: string;
     logo: LogoImage | null;
+    /** The open/closed switch: while false the menu is browsable but nothing can be ordered. */
+    acceptingOrders: boolean;
+    /** Whether customers may order for pickup from this menu (owner setting). */
+    pickupEnabled: boolean;
   };
   categories: { id: string; name: string; description: string; products: PublicProduct[] }[];
 }

@@ -16,6 +16,20 @@ export interface EmailJobs {
     roles: RestaurantRole[];
     url: string;
   };
+  /** Pickup order accepted: tracking link (holds the order's access token) and the PDF receipt attached. */
+  "order-confirmation": {
+    to: string;
+    customerName: string;
+    restaurantName: string;
+    restaurantPhone: string;
+    ticketNumber: number;
+    /** Already formatted for display in the restaurant's timezone ("13:45"), or null. */
+    readyAt: string | null;
+    /** Already formatted ("$10.470"). */
+    total: string;
+    trackingUrl: string;
+    attachment: { key: string; filename: string };
+  };
 }
 
 export type EmailTemplate = keyof EmailJobs;

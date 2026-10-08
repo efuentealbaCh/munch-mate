@@ -1,3 +1,5 @@
+import type { OrderChannel, OrderItemView } from "./orders";
+
 /**
  * BullMQ queue names shared by the api (producer) and the workers (consumers).
  * Feature queues (`pdf`, `notif`) are added in their phases.
@@ -19,6 +21,35 @@ export interface QrSheetJob {
   tables: { label: string; url: string }[];
   /** Private-bucket key where the worker stores the PDF. */
   outputKey: string;
+}
+
+/**
+ * `pdf:receipt` — internal receipt of a pickup order (not a tax document), generated when it is accepted.
+ * Carries the data to print, like QrSheetJob: the order items are an immutable snapshot anyway.
+ * When `email` is set, the worker enqueues the confirmation email with the PDF attached once it is stored.
+ */
+export interface ReceiptJob {
+  restaurantId: string;
+  orderId: string;
+  /** Private-bucket key where the worker stores the PDF. */
+  outputKey: string;
+  receipt: {
+    restaurant: { name: string; phone: string };
+    number: number;
+    ticketNumber: number;
+    channel: OrderChannel;
+    createdAt: string;
+    estimatedReadyAt: string | null;
+    /** IANA zone used to print dates and times. */
+    timezone: string;
+    customerName: string;
+    customerPhone: string;
+    items: OrderItemView[];
+    total: number;
+    currency: string;
+    note: string;
+  };
+  email: { to: string; trackingUrl: string } | null;
 }
 
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];
