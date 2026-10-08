@@ -2,8 +2,10 @@ import { ClockIcon, PhoneIcon } from "lucide-react";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { RestaurantLogo } from "@/components/restaurant-logo";
+import { telHref } from "@/lib/format";
 import { getPublicMenu } from "@/lib/public-menu";
 import { MenuBrowser } from "./menu-browser";
+import { PickupOrdering } from "./pickup-ordering";
 
 interface PageProps {
   params: Promise<{ slug: string }>;
@@ -29,11 +31,6 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
       ...(restaurant.logo ? { images: [{ url: restaurant.logo.md, width: 256, height: 256 }] } : {}),
     },
   };
-}
-
-/** "+56 9 1234 5678" → "+56912345678" for the tel: link. */
-function telHref(phone: string): string {
-  return `tel:${phone.replace(/[^\d+]/g, "")}`;
 }
 
 export default async function PublicMenuPage({ params }: PageProps) {
@@ -65,7 +62,10 @@ export default async function PublicMenuPage({ params }: PageProps) {
         </div>
       </header>
 
-      {categories.length === 0 ? (
+      {restaurant.pickupEnabled ? (
+        // Pickup on: cart and checkout (the open/closed banner lives inside, it follows live refreshes).
+        <PickupOrdering initialMenu={result.menu} />
+      ) : categories.length === 0 ? (
         <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col items-center gap-2 px-4 py-16 text-center">
           <ClockIcon className="size-8 text-muted-foreground" aria-hidden />
           <h2 className="text-lg font-semibold">El menú se está preparando</h2>
@@ -76,7 +76,7 @@ export default async function PublicMenuPage({ params }: PageProps) {
       )}
 
       <footer className="border-t px-4 py-6 text-center text-xs text-muted-foreground">
-        Menú creado con <span className="font-semibold text-foreground">Munch Mate</span>
+        {restaurant.pickupEnabled ? "Pedidos con" : "Menú creado con"} <span className="font-semibold text-foreground">Munch Mate</span>
       </footer>
     </div>
   );

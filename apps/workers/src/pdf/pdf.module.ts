@@ -6,7 +6,7 @@ import { PrivateStorageService } from "../storage/private-storage.service";
 import { PdfProcessor } from "./pdf.processor";
 
 @Module({
-  imports: [BullModule.registerQueue({ name: QUEUES.PDF })],
+  imports: [BullModule.registerQueue({ name: QUEUES.PDF }, { name: QUEUES.EMAIL })],
   providers: [PdfProcessor, PrivateStorageService, RealtimeEmitterService],
 })
 export class PdfModule {}

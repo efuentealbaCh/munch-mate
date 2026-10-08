@@ -1,5 +1,5 @@
 import { MENU_LIMITS, ORDER_LIMITS, RESTAURANT_ROLES } from "@app/types";
-import { slugProblem } from "@app/utils";
+import { normalizePhone, slugProblem } from "@app/utils";
 import { z } from "zod";
 import { modifierRulesProblem } from "./menu";
 import { parsePriceInput } from "./money";
@@ -154,6 +154,32 @@ export const checkoutSchema = z.object({
   note: z.string().trim().max(ORDER_LIMITS.noteMax, `El comentario puede tener hasta ${ORDER_LIMITS.noteMax} caracteres`),
 });
 
+/**
+ * Pickup checkout (CreatePickupOrderDto): name and phone are required so the restaurant can call; the email
+ * is optional (when present, the confirmation with the PDF receipt is sent there). The phone is checked
+ * with the same normalizePhone the api uses, so both accept exactly the same formats.
+ */
+export const pickupCheckoutSchema = z.object({
+  customerName: z
+    .string()
+    .trim()
+    .min(2, "Ingresa tu nombre para que te entreguen el pedido")
+    .max(ORDER_LIMITS.customerNameMax, `El nombre puede tener hasta ${ORDER_LIMITS.customerNameMax} caracteres`),
+  customerPhone: z
+    .string()
+    .trim()
+    .min(1, "Ingresa tu teléfono")
+    .max(30, "Revisa el teléfono, ej. +56 9 1234 5678")
+    .refine((value) => normalizePhone(value) !== null, "Revisa el teléfono, ej. +56 9 1234 5678"),
+  // Blank (or only spaces) means "no email".
+  customerEmail: z
+    .string()
+    .trim()
+    .max(ORDER_LIMITS.customerEmailMax, "El correo es demasiado largo")
+    .refine((value) => value === "" || z.email().safeParse(value).success, "Ingresa un correo válido o déjalo en blanco"),
+  note: z.string().trim().max(ORDER_LIMITS.noteMax, `El comentario puede tener hasta ${ORDER_LIMITS.noteMax} caracteres`),
+});
+
 /** Rejecting needs a reason: the customer sees it (ChangeStatusDto.reason). */
 export const rejectSchema = z.object({
   reason: z
@@ -204,6 +230,7 @@ export type CategoryValues = z.infer<typeof categorySchema>;
 export type ProductValues = z.infer<typeof productSchema>;
 export type ModifierGroupValues = z.infer<typeof modifierGroupSchema>;
 export type CheckoutValues = z.infer<typeof checkoutSchema>;
+export type PickupCheckoutValues = z.infer<typeof pickupCheckoutSchema>;
 export type RejectValues = z.infer<typeof rejectSchema>;
 export type TableValues = z.infer<typeof tableSchema>;
 export type BulkTablesValues = z.infer<typeof bulkTablesSchema>;

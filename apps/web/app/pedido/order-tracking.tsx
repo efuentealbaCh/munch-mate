@@ -1,7 +1,18 @@
 "use client";
 
-import { ORDER_STATUS_LABELS, type PublicOrderView } from "@app/types";
-import { CheckIcon, CircleXIcon, CloudOffIcon, ReceiptTextIcon, SearchXIcon, UtensilsIcon } from "lucide-react";
+import { ORDER_CHANNEL_LABELS, ORDER_STATUS_LABELS, type PublicOrderView } from "@app/types";
+import {
+  CheckIcon,
+  CircleXIcon,
+  ClockIcon,
+  CloudOffIcon,
+  DownloadIcon,
+  PartyPopperIcon,
+  PhoneIcon,
+  ReceiptTextIcon,
+  SearchXIcon,
+  UtensilsIcon,
+} from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -10,30 +21,26 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Spinner } from "@/components/ui/spinner";
+import { useReceiptDownload } from "@/hooks/use-receipt-download";
 import { subscribeWithTimeout, useOnVisible, useRealtime, useSocketEvent } from "@/hooks/use-realtime";
+import { localStore } from "@/lib/browser-storage";
 import { publicOrdersApi } from "@/lib/endpoints";
 import { errorMessage, hasCode } from "@/lib/errors";
-import { formatDateTime } from "@/lib/format";
+import { formatClockTime, formatDateTime, telHref } from "@/lib/format";
 import { formatPrice, formatPriceDelta } from "@/lib/money";
 import {
-  CUSTOMER_STATUS_HINTS,
-  DINE_IN_STEPS,
+  customerStatusHint,
+  customerSteps,
   findMyOrder,
   loadMyOrders,
   type MyOrder,
   parseTrackingHash,
+  showsReadyEstimate,
   stepIndex,
   trackingHref,
 } from "@/lib/order-tracking";
 import { cn } from "@/lib/utils";
-
-function localStore(): Storage | undefined {
-  try {
-    return window.localStorage;
-  } catch {
-    return undefined;
-  }
-}
 
 /** Keeps the newest copy: a REST answer and a socket event can arrive in any order. */
 function newest(current: PublicOrderView | null, incoming: PublicOrderView): PublicOrderView {
@@ -119,6 +126,9 @@ function TrackedOrder({ token }: { token: string }) {
     onSubscribed: () => void refetch(),
   });
   useSocketEvent(socket, "order.status", (incoming) => setOrder((current) => newest(current, incoming)));
+  // The customer's socket only joins this order's room: any receipt event is about this order.
+  const receipt = useReceiptDownload(socket);
+  const downloading = receipt.working.size > 0;
   // Phones suspend background tabs (and their sockets): catch up when the customer comes back.
   useOnVisible(() => void refetch());
 
@@ -163,12 +173,22 @@ function TrackedOrder({ token }: { token: string }) {
   }
 
   const finished = order.status === "rejected" || order.status === "cancelled";
+  const pickup = order.channel !== "dine_in";
+  const readyForPickup = pickup && order.status === "ready";
+  const destination = order.channel === "dine_in" ? order.tableLabel : ORDER_CHANNEL_LABELS[order.channel];
+  const orderMoreHref = tableToken ? `/m/${tableToken}` : pickup ? `/r/${order.restaurant.slug}` : null;
   return (
     <div className="flex flex-col gap-5">
-      <section className="flex flex-col items-center gap-1 rounded-2xl bg-card px-4 py-6 text-center ring-1 ring-foreground/10" aria-labelledby="ticket">
-        <p className="text-sm text-muted-foreground">
+      <section
+        className={cn(
+          "flex flex-col items-center gap-1 rounded-2xl px-4 py-6 text-center",
+          readyForPickup ? "bg-success/10 ring-2 ring-success" : "bg-card ring-1 ring-foreground/10",
+        )}
+        aria-labelledby="ticket"
+      >
+        <p className="text-sm text-muted-foreground" data-testid="order-destination">
           {order.restaurant.name}
-          {order.tableLabel ? ` · ${order.tableLabel}` : ""}
+          {destination ? ` · ${destination}` : ""}
         </p>
         <h1 id="ticket" className="text-6xl font-black tracking-tight tabular-nums" aria-label={`Pedido número ${order.ticketNumber}`}>
           #{order.ticketNumber}
@@ -184,7 +204,23 @@ function TrackedOrder({ token }: { token: string }) {
           >
             {ORDER_STATUS_LABELS[order.status]}
           </Badge>
-          <p className="text-sm text-muted-foreground">{CUSTOMER_STATUS_HINTS[order.status]}</p>
+          {readyForPickup ? (
+            <>
+              <p className="mt-1 flex items-center gap-2 text-lg font-bold text-success" data-testid="ready-for-pickup">
+                <PartyPopperIcon className="size-5" aria-hidden />
+                Ya puedes retirarlo
+              </p>
+              <p className="text-sm text-muted-foreground">Di tu número #{order.ticketNumber} al retirar.</p>
+            </>
+          ) : (
+            <p className="text-sm text-muted-foreground">{customerStatusHint(order.status, order.channel)}</p>
+          )}
+          {showsReadyEstimate(order) && order.estimatedReadyAt ? (
+            <p className="mt-2 flex items-center gap-1.5 rounded-lg bg-muted px-3 py-1.5 text-base font-semibold" data-testid="ready-at">
+              <ClockIcon className="size-4" aria-hidden />
+              Listo aprox. a las {formatClockTime(order.estimatedReadyAt)}
+            </p>
+          ) : null}
           {order.status === "rejected" && order.rejectReason ? (
             <p className="mt-1 rounded-lg bg-destructive/5 px-3 py-2 text-sm font-medium text-destructive" data-testid="reject-reason">
               Motivo: {order.rejectReason}
@@ -195,6 +231,17 @@ function TrackedOrder({ token }: { token: string }) {
       </section>
 
       {finished ? null : <StatusSteps order={order} />}
+
+      {pickup && order.restaurant.phone && !finished && order.status !== "picked_up" ? (
+        <a
+          href={telHref(order.restaurant.phone)}
+          className="flex min-h-11 items-center justify-center gap-2 self-center rounded-md px-3 text-sm font-medium text-primary underline-offset-4 outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
+          data-testid="restaurant-phone"
+        >
+          <PhoneIcon className="size-4" aria-hidden />
+          ¿Algún problema? Llama al local: {order.restaurant.phone}
+        </a>
+      ) : null}
 
       <section aria-labelledby="detalle" className="flex flex-col gap-2">
         <h2 id="detalle" className="font-semibold">
@@ -222,13 +269,25 @@ function TrackedOrder({ token }: { token: string }) {
             <span className="text-lg font-bold tabular-nums">{formatPrice(order.total, order.currency)}</span>
           </li>
         </ul>
-        <p className="text-xs text-muted-foreground">Pagas en el local.</p>
+        <p className="text-xs text-muted-foreground">{pickup ? "Pagas al retirar." : "Pagas en el local."}</p>
       </section>
 
       <div className="flex flex-col gap-2">
-        {tableToken ? (
-          <Button asChild size="lg">
-            <Link href={`/m/${tableToken}`}>
+        {order.receiptAvailable ? (
+          <Button
+            variant="outline"
+            size="lg"
+            disabled={downloading}
+            aria-busy={downloading || undefined}
+            onClick={() => void receipt.download("receipt", () => publicOrdersApi.receipt(token))}
+          >
+            {downloading ? <Spinner aria-hidden data-icon="inline-start" /> : <DownloadIcon aria-hidden data-icon="inline-start" />}
+            {downloading ? "Preparando comprobante…" : "Descargar comprobante"}
+          </Button>
+        ) : null}
+        {orderMoreHref ? (
+          <Button asChild size="lg" variant={pickup ? "secondary" : "default"}>
+            <Link href={orderMoreHref}>
               <UtensilsIcon aria-hidden data-icon="inline-start" />
               Pedir algo más
             </Link>
@@ -266,10 +325,10 @@ function LiveIndicator({ status }: { status: string }) {
 }
 
 function StatusSteps({ order }: { order: PublicOrderView }) {
-  const current = stepIndex(order.status);
+  const current = stepIndex(order.status, order.channel);
   return (
     <ol className="flex items-start justify-between gap-1" aria-label="Avance del pedido">
-      {DINE_IN_STEPS.map((status, index) => {
+      {customerSteps(order.channel).map((status, index) => {
         const done = index < current;
         const active = index === current;
         return (
@@ -302,7 +361,7 @@ function MyOrdersList({ orders, current }: { orders: MyOrder[]; current: string 
     return current ? null : (
       <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed bg-card px-6 py-10 text-center text-sm text-muted-foreground">
         <ReceiptTextIcon className="size-8" aria-hidden />
-        <p>Todavía no haces pedidos desde este teléfono. Escanea el QR de tu mesa para pedir.</p>
+        <p>Todavía no haces pedidos desde este teléfono. Escanea el QR de tu mesa o pide desde el menú del local.</p>
       </div>
     );
   }

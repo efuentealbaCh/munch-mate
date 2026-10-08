@@ -401,6 +401,9 @@ importers:
       '@app/types':
         specifier: workspace:*
         version: link:../../packages/types
+      '@app/utils':
+        specifier: workspace:*
+        version: link:../../packages/utils
       '@aws-sdk/client-s3':
         specifier: ^3.1146.0
         version: 3.1146.0

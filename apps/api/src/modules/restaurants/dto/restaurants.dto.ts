@@ -59,6 +59,11 @@ export class UpdateRestaurantDto {
   @IsString()
   @MaxLength(60, SLUG_BOUND)
   slug?: string;
+
+  /** Lets customers order for pickup from the public menu. */
+  @IsOptional()
+  @IsBoolean()
+  pickupEnabled?: boolean;
 }
 
 export class SlugQueryDto {

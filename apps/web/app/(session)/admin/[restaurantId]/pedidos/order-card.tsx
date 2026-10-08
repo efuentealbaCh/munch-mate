@@ -1,12 +1,23 @@
 "use client";
 
-import { type OrderStatus, type OrderView, PAYMENT_METHOD_LABELS } from "@app/types";
-import { ClockIcon, MessageSquareTextIcon, UserIcon } from "lucide-react";
+import { ORDER_CHANNEL_LABELS, type OrderStatus, type OrderView, PAYMENT_METHOD_LABELS } from "@app/types";
+import {
+  AlarmClockIcon,
+  ClockIcon,
+  DownloadIcon,
+  MailIcon,
+  MessageSquareTextIcon,
+  PhoneIcon,
+  ShoppingBagIcon,
+  UserIcon,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
+import { formatClockTime, formatPhone, telHref } from "@/lib/format";
 import { formatPrice, formatPriceDelta } from "@/lib/money";
-import { ACTION_LABELS, elapsedLabel, minutesSince } from "@/lib/orders-board";
+import { showsReadyEstimate } from "@/lib/order-tracking";
+import { ACTION_LABELS, elapsedLabel, isPastReadyTime, minutesSince } from "@/lib/orders-board";
 import { cn } from "@/lib/utils";
 
 /** Paid with its method, or "Sin pagar". */
@@ -32,10 +43,16 @@ interface OrderCardProps {
   busy: OrderStatus | "payment" | null;
   onAction(to: OrderStatus): void;
   onPay(): void;
+  /** The receipt PDF is being downloaded. */
+  receiptBusy: boolean;
+  onReceipt(): void;
 }
 
-/** One order on the kitchen board: big ticket number, table, age, items and the next steps. */
-export function OrderCard({ order, actions, canPay, now, fresh, busy, onAction, onPay }: OrderCardProps) {
+/**
+ * One order on the kitchen board: big ticket number, where it goes (table or pickup), age, customer, items
+ * and the next steps.
+ */
+export function OrderCard({ order, actions, canPay, now, fresh, busy, onAction, onPay, receiptBusy, onReceipt }: OrderCardProps) {
   const minutes = now ? minutesSince(order.createdAt, now) : 0;
   const forward = actions.filter((status) => status !== "rejected" && status !== "cancelled");
   const backward = actions.filter((status) => status === "rejected" || status === "cancelled");
@@ -50,13 +67,25 @@ export function OrderCard({ order, actions, canPay, now, fresh, busy, onAction, 
       )}
       data-testid="order-card"
       data-ticket={order.ticketNumber}
+      data-channel={order.channel}
     >
       <header className="flex items-start justify-between gap-3">
         <div className="flex flex-col">
           <h3 id={`order-${order.id}`} className="text-4xl leading-none font-black tracking-tight tabular-nums">
             <span className="sr-only">Pedido </span>#{order.ticketNumber}
           </h3>
-          {order.tableLabel ? <span className="mt-1 text-lg font-semibold">{order.tableLabel}</span> : null}
+          {order.channel === "dine_in" ? (
+            order.tableLabel ? (
+              <span className="mt-1 text-lg font-semibold" data-testid="order-destination">
+                {order.tableLabel}
+              </span>
+            ) : null
+          ) : (
+            <span className="mt-1.5 flex items-center gap-1.5 self-start rounded-md bg-brand-soft px-2 py-0.5 text-base font-semibold" data-testid="order-destination">
+              <ShoppingBagIcon className="size-4" aria-hidden />
+              {ORDER_CHANNEL_LABELS[order.channel]}
+            </span>
+          )}
         </div>
         <div className="flex flex-col items-end gap-1 text-right">
           {fresh ? <Badge>Nuevo</Badge> : null}
@@ -67,11 +96,45 @@ export function OrderCard({ order, actions, canPay, now, fresh, busy, onAction, 
         </div>
       </header>
 
-      {order.customerName ? (
-        <p className="flex items-center gap-1.5 text-sm">
-          <UserIcon className="size-4 text-muted-foreground" aria-hidden />
-          {order.customerName}
+      {showsReadyEstimate(order) && order.estimatedReadyAt ? (
+        <p
+          className={cn(
+            "flex items-center gap-1.5 text-sm font-semibold",
+            isPastReadyTime(order, now) ? "text-destructive" : "text-foreground",
+          )}
+          data-testid="ready-at"
+        >
+          <AlarmClockIcon className="size-4" aria-hidden />
+          Listo aprox. {formatClockTime(order.estimatedReadyAt)}
+          {isPastReadyTime(order, now) ? <span className="font-normal">(atrasado)</span> : null}
         </p>
+      ) : null}
+
+      {order.customerName || order.customerPhone || order.customerEmail ? (
+        <div className="flex flex-col gap-1 text-sm" data-testid="order-customer">
+          {order.customerName ? (
+            <p className="flex items-center gap-1.5">
+              <UserIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+              {order.customerName}
+            </p>
+          ) : null}
+          {order.customerPhone ? (
+            <a
+              href={telHref(order.customerPhone)}
+              className="flex min-h-8 items-center gap-1.5 self-start rounded-md font-medium text-primary underline-offset-4 outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
+            >
+              <PhoneIcon className="size-4 shrink-0" aria-hidden />
+              <span className="sr-only">Llamar al </span>
+              {formatPhone(order.customerPhone)}
+            </a>
+          ) : null}
+          {order.customerEmail ? (
+            <p className="flex items-center gap-1.5 text-muted-foreground">
+              <MailIcon className="size-4 shrink-0" aria-hidden />
+              <span className="break-all">{order.customerEmail}</span>
+            </p>
+          ) : null}
+        </div>
       ) : null}
 
       <ul className="flex flex-col gap-1.5 border-t pt-2" aria-label="Productos">
@@ -102,7 +165,7 @@ export function OrderCard({ order, actions, canPay, now, fresh, busy, onAction, 
         <PaymentBadge order={order} />
       </div>
 
-      {forward.length > 0 || backward.length > 0 || (canPay && order.paymentStatus === "unpaid") ? (
+      {forward.length > 0 || backward.length > 0 || (canPay && order.paymentStatus === "unpaid") || order.receiptAvailable ? (
         <div className="flex flex-col gap-2">
           {forward.map((status, index) => (
             <Button
@@ -118,6 +181,18 @@ export function OrderCard({ order, actions, canPay, now, fresh, busy, onAction, 
             </Button>
           ))}
           <div className="flex flex-wrap gap-2">
+            {order.receiptAvailable ? (
+              <Button
+                variant="outline"
+                className="flex-1"
+                disabled={receiptBusy}
+                aria-busy={receiptBusy || undefined}
+                onClick={onReceipt}
+              >
+                {receiptBusy ? <Spinner aria-hidden data-icon="inline-start" /> : <DownloadIcon aria-hidden data-icon="inline-start" />}
+                Comprobante
+              </Button>
+            ) : null}
             {canPay && order.paymentStatus === "unpaid" ? (
               <Button variant="outline" className="flex-1" disabled={disabled} onClick={onPay}>
                 Registrar pago

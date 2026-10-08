@@ -1,4 +1,11 @@
-import { FINAL_ORDER_STATUSES, type OrderStatus, type OrderView, type RestaurantRole } from "@app/types";
+import {
+  FINAL_ORDER_STATUSES,
+  ORDER_CHANNEL_LABELS,
+  type OrderChannel,
+  type OrderStatus,
+  type OrderView,
+  type RestaurantRole,
+} from "@app/types";
 
 /** Staff order board: columns, merging live events with REST data, and the day summary. */
 
@@ -31,6 +38,7 @@ export const ACTION_LABELS: Partial<Record<OrderStatus, string>> = {
   preparing: "Empezar",
   ready: "Listo",
   served: "Servido",
+  picked_up: "Entregar",
   rejected: "Rechazar",
   cancelled: "Cancelar",
 };
@@ -40,6 +48,50 @@ export const QUICK_REJECT_REASONS = ["Se acabó un ingrediente", "Cocina saturad
 
 export function isFinalStatus(status: OrderStatus): boolean {
   return FINAL_ORDER_STATUSES.includes(status);
+}
+
+/** Rejected or cancelled: final, but not a sale. */
+export function isDroppedStatus(status: OrderStatus): boolean {
+  return status === "rejected" || status === "cancelled";
+}
+
+// ── Channels ────────────────────────────────────────────────────────────────
+
+/** Where the order goes, as the staff read it on a card: "Mesa 4" or "Para retirar". */
+export function destinationLabel(order: Pick<OrderView, "channel" | "tableLabel">): string {
+  if (order.channel === "dine_in") return order.tableLabel ?? "Sin mesa";
+  return ORDER_CHANNEL_LABELS[order.channel];
+}
+
+export type ChannelFilter = "all" | Extract<OrderChannel, "dine_in" | "pickup">;
+
+export const CHANNEL_FILTERS = [
+  { value: "all", label: "Todos" },
+  { value: "dine_in", label: "Mesa" },
+  { value: "pickup", label: "Retiro" },
+] as const satisfies ReadonlyArray<{ value: ChannelFilter; label: string }>;
+
+export function filterByChannel(orders: readonly OrderView[], filter: ChannelFilter): OrderView[] {
+  return filter === "all" ? [...orders] : orders.filter((order) => order.channel === filter);
+}
+
+/**
+ * Handing over an unpaid order is allowed (the customer may pay at the counter afterwards), but the staff
+ * must see a warning first and get the chance to register the payment.
+ */
+export function needsPaymentWarning(order: Pick<OrderView, "paymentStatus">, to: OrderStatus): boolean {
+  return to === "picked_up" && order.paymentStatus === "unpaid";
+}
+
+/**
+ * The restaurant promised a time and it already passed while the order is not ready yet (shown in red).
+ * @param now Current time in ms (0 = unknown → never late).
+ */
+export function isPastReadyTime(order: Pick<OrderView, "status" | "estimatedReadyAt">, now: number): boolean {
+  if (!now || !order.estimatedReadyAt) return false;
+  if (order.status !== "accepted" && order.status !== "preparing") return false;
+  const eta = new Date(order.estimatedReadyAt).getTime();
+  return !Number.isNaN(eta) && now > eta;
 }
 
 const byCreatedAsc = (a: OrderView, b: OrderView) => a.createdAt.localeCompare(b.createdAt) || a.number - b.number;
@@ -145,7 +197,7 @@ export interface DayTotals {
 export function dayTotals(orders: readonly OrderView[]): DayTotals {
   const totals: DayTotals = { count: 0, total: 0, paid: 0, dropped: 0 };
   for (const order of orders) {
-    if (order.status === "rejected" || order.status === "cancelled") {
+    if (isDroppedStatus(order.status)) {
       totals.dropped += 1;
       continue;
     }

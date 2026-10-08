@@ -1,7 +1,9 @@
 import type {
   AdminMenuView,
+  ChangeOrderStatusInput,
   CreatedOrder,
   CreateDineInOrderInput,
+  CreatePickupOrderInput,
   InvitationPreview,
   InvitationView,
   MemberView,
@@ -10,6 +12,7 @@ import type {
   OrderStatus,
   OrderView,
   PaymentMethod,
+  PickupReadyMinutes,
   ProductView,
   PublicMenu,
   PublicOrderView,
@@ -21,6 +24,7 @@ import type {
   UserProfile,
 } from "@app/types";
 import { api } from "./api";
+import { type DownloadedFile, filenameFromDisposition } from "./download";
 
 /** Typed wrappers for every api endpoint the web uses. Paths are relative to /api. */
 
@@ -52,7 +56,11 @@ export const restaurantsApi = {
   get: (id: string, signal?: AbortSignal) => api.request<RestaurantView>(restaurantPath(id), { signal }),
   create: (body: { name: string; slug: string }) =>
     api.request<RestaurantView>("/restaurants", { method: "POST", body }),
-  update: (id: string, body: { name?: string; slug?: string; description?: string; phone?: string }) =>
+  /** pickupEnabled: lets customers order for pickup from the public menu (owner). */
+  update: (
+    id: string,
+    body: { name?: string; slug?: string; description?: string; phone?: string; pickupEnabled?: boolean },
+  ) =>
     api.request<RestaurantView>(restaurantPath(id), { method: "PATCH", body }),
   setLogo: (id: string, file: File) =>
     api.request<RestaurantView>(`${restaurantPath(id)}/logo`, { method: "PUT", body: imageForm(file) }),
@@ -179,18 +187,47 @@ export const ordersApi = {
     api.request<OrderView[]>(`${restaurantPath(restaurantId)}/orders?scope=${scope}`),
   get: (restaurantId: string, orderId: string) =>
     api.request<OrderView>(`${restaurantPath(restaurantId)}/orders/${segment(orderId)}`),
-  /** @throws ApiError INVALID_TRANSITION / ORDER_CHANGED (409), REASON_REQUIRED (400), FORBIDDEN_ROLE (403). */
-  changeStatus: (restaurantId: string, orderId: string, status: OrderStatus, reason?: string) =>
-    api.request<OrderView>(`${restaurantPath(restaurantId)}/orders/${segment(orderId)}/status`, {
+  /**
+   * @param extra `reason` when rejecting; `readyInMinutes` when accepting a pickup order.
+   * @throws ApiError INVALID_TRANSITION / ORDER_CHANGED (409), REASON_REQUIRED / READY_TIME_REQUIRED (400),
+   *   FORBIDDEN_ROLE (403).
+   */
+  changeStatus: (
+    restaurantId: string,
+    orderId: string,
+    status: OrderStatus,
+    extra: { reason?: string; readyInMinutes?: PickupReadyMinutes } = {},
+  ) => {
+    const body: ChangeOrderStatusInput = { status };
+    if (extra.reason) body.reason = extra.reason;
+    if (extra.readyInMinutes) body.readyInMinutes = extra.readyInMinutes;
+    return api.request<OrderView>(`${restaurantPath(restaurantId)}/orders/${segment(orderId)}/status`, {
       method: "POST",
-      body: reason ? { status, reason } : { status },
-    }),
+      body,
+    });
+  },
   markPaid: (restaurantId: string, orderId: string, method: PaymentMethod) =>
     api.request<OrderView>(`${restaurantPath(restaurantId)}/orders/${segment(orderId)}/payment`, {
       method: "POST",
       body: { method },
     }),
+  /**
+   * Receipt PDF of a pickup order.
+   * @returns The file, or null while the workers are still generating it (202).
+   * @throws ApiError RECEIPT_NOT_FOUND (the order has none: dine-in, or never accepted).
+   */
+  receipt: (restaurantId: string, orderId: string) =>
+    readReceipt(api.requestResponse(`${restaurantPath(restaurantId)}/orders/${segment(orderId)}/receipt`)),
 };
+
+async function readReceipt(pending: Promise<Response>): Promise<DownloadedFile | null> {
+  const response = await pending;
+  if (response.status === 202) return null;
+  return {
+    blob: await response.blob(),
+    filename: filenameFromDisposition(response.headers.get("Content-Disposition"), "comprobante.pdf"),
+  };
+}
 
 const tablesPath = (restaurantId: string) => `${restaurantPath(restaurantId)}/tables`;
 
@@ -224,6 +261,13 @@ export const tablesApi = {
 export const publicOrdersApi = {
   create: (tableToken: string, body: CreateDineInOrderInput) =>
     api.request<CreatedOrder>(`/public/tables/${segment(tableToken)}/orders`, { method: "POST", body }),
+  /**
+   * Pickup order from the public menu.
+   * @throws ApiError PICKUP_DISABLED / NOT_ACCEPTING_ORDERS / sold-out codes (409), INVALID_PHONE (400),
+   *   TOO_MANY_ACTIVE_ORDERS (429, with its own message), MENU_NOT_FOUND (404).
+   */
+  createPickup: (slug: string, body: CreatePickupOrderInput) =>
+    api.request<CreatedOrder>(`/public/restaurants/${segment(slug)}/orders`, { method: "POST", body }),
   lookup: (accessToken: string) =>
     api.request<PublicOrderView>("/public/orders/lookup", { method: "POST", body: { accessToken } }),
   /** @throws ApiError ORDER_NOT_CANCELLABLE once the restaurant took the order. */
@@ -232,4 +276,7 @@ export const publicOrdersApi = {
   /** Fresh menu after a sold-out error (the page itself is server-rendered). */
   menu: (slug: string) => api.request<PublicMenu>(`/public/restaurants/${segment(slug)}/menu`),
   table: (tableToken: string) => api.request<TableContext>(`/public/tables/${segment(tableToken)}`),
+  /** Receipt PDF (POST: the token stays out of the URL). @returns null while it is being generated (202). */
+  receipt: (accessToken: string) =>
+    readReceipt(api.requestResponse("/public/orders/receipt", { method: "POST", body: { accessToken } })),
 };

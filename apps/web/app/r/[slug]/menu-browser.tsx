@@ -11,7 +11,8 @@ import { cn } from "@/lib/utils";
 
 /**
  * Interactive part of the public (read-only) menu: sticky category bar (highlights the section in view) and
- * the product detail sheet. Ordering happens from a table QR (/m/[token]).
+ * the product detail sheet. Ordering happens from a table QR (/m/[token]), or here with PickupOrdering when
+ * the restaurant takes pickup orders.
  */
 export function MenuBrowser({ categories, currency }: { categories: PublicCategory[]; currency: string }) {
   const [selected, setSelected] = useState<PublicProduct | null>(null);

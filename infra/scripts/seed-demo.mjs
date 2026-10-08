@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Creates the demo restaurants of infra/demo/demo-restaurants.json through the public api, exactly as a
 // user would: register (or log in), verify the email via Mailpit, create restaurants, profile, logo,
-// modifier groups, categories and products with photos, tables, and open the restaurant for orders.
+// modifier groups, categories and products with photos, tables, pickup, and open the restaurant for orders.
 //
 // Usage (from the repo root, with the local stack or `pnpm dev` running):
 //   node infra/scripts/seed-demo.mjs
@@ -149,7 +149,11 @@ async function seedRestaurant(spec, existing) {
   if (!restaurant) restaurant = await api("POST", "/restaurants", { name: spec.name });
   const base = `/restaurants/${restaurant.id}`;
 
-  restaurant = await api("PATCH", base, { description: spec.description, phone: spec.phone });
+  restaurant = await api("PATCH", base, {
+    description: spec.description,
+    phone: spec.phone,
+    ...(spec.pickupEnabled !== undefined ? { pickupEnabled: spec.pickupEnabled } : {}),
+  });
   if (!restaurant.logo) await upload(`${base}/logo`, spec.logo);
 
   const menu = await api("GET", `${base}/menu`);
@@ -228,7 +232,7 @@ try {
   console.log(`  Panel:       ${BASE_URL}/admin`);
   for (const r of restaurants) {
     console.log(`  ${r.name}`);
-    console.log(`    Menú público: ${BASE_URL}/r/${r.slug}`);
+    console.log(`    Menú público${r.pickupEnabled ? " (pedidos para retirar)" : ""}: ${BASE_URL}/r/${r.slug}`);
     const first = r.tables?.[0];
     if (first) console.log(`    Pedir desde ${first.label}: ${BASE_URL}/m/${first.token}`);
   }

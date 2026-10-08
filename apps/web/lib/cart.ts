@@ -1,7 +1,8 @@
 import { ORDER_LIMITS, type OrderItemInput, type PublicModifierGroup, type PublicProduct } from "@app/types";
 
 /**
- * Customer cart for dine-in orders: modifier selection rules, line prices and the cart reducer.
+ * Customer cart (dine-in from a table QR, pickup from the public menu): modifier selection rules, line
+ * prices and the cart reducer.
  * Prices here are ESTIMATES for display: the api prices every order from the current menu and its answer
  * is the truth (the cart only sends ids and quantities).
  */
@@ -110,6 +111,9 @@ export function clampQuantity(quantity: number): number {
 }
 
 // ── Cart ────────────────────────────────────────────────────────────────────
+
+/** Codes the api answers (409, with meta.productId) when a cart line no longer matches the menu. */
+export const LINE_ERRORS: readonly string[] = ["PRODUCT_SOLD_OUT", "PRODUCT_NOT_AVAILABLE", "OPTION_SOLD_OUT", "INVALID_MODIFIERS"];
 
 export interface CartLine {
   /** Same product + same options + same note → same key (adding it again increases the quantity). */
@@ -220,7 +224,14 @@ export function toOrderItems(lines: readonly CartLine[]): OrderItemInput[] {
 /** Bump when the stored shape changes: older carts are then discarded instead of misread. */
 const CART_VERSION = 1;
 
-export const cartStorageKey = (tableToken: string) => `mm:cart:${tableToken}`;
+/**
+ * @param scope Table code for dine-in, `pickup:<slug>` for pickup (table codes are alphanumeric, so the two
+ *   never collide).
+ */
+export const cartStorageKey = (scope: string) => `mm:cart:${scope}`;
+
+/** Cart scope of a pickup order from a restaurant's public menu. */
+export const pickupCartScope = (slug: string) => `pickup:${slug}`;
 
 /** Minimal Storage surface, so tests can pass a Map-backed fake. */
 export interface KeyValueStorage {
@@ -321,9 +332,20 @@ export interface CheckoutAttempt {
   fingerprint: string;
 }
 
-/** Stable serialization of what the customer is sending. */
-export function checkoutFingerprint(input: { items: OrderItemInput[]; customerName?: string; note?: string }): string {
-  return JSON.stringify([input.items, input.customerName ?? "", input.note ?? ""]);
+/** Stable serialization of what the customer is sending. Pickup adds the contact data. */
+export function checkoutFingerprint(input: {
+  items: OrderItemInput[];
+  customerName?: string;
+  note?: string;
+  customerPhone?: string;
+  customerEmail?: string;
+}): string {
+  const base: unknown[] = [input.items, input.customerName ?? "", input.note ?? ""];
+  // Only when present, so dine-in fingerprints stay the same as before.
+  if (input.customerPhone !== undefined || input.customerEmail !== undefined) {
+    base.push(input.customerPhone ?? "", input.customerEmail ?? "");
+  }
+  return JSON.stringify(base);
 }
 
 /**

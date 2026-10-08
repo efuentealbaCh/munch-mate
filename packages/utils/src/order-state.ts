@@ -10,6 +10,8 @@ interface Transition {
   customer?: boolean;
   /** A reason is mandatory (shown to the customer). */
   requiresReason?: boolean;
+  /** The staff must say when the order will be ready (pickup acceptance). */
+  requiresReadyTime?: boolean;
 }
 
 const FLOOR: readonly RestaurantRole[] = ["owner", "cashier", "kitchen"];
@@ -18,6 +20,7 @@ const FLOOR: readonly RestaurantRole[] = ["owner", "cashier", "kitchen"];
  * Allowed transitions per channel. Shared by the api (enforcement) and the web (which buttons to show).
  *
  *   pending ──► accepted ──► preparing ──► ready ──► served            (dine_in)
+ *                                                  └──► picked_up         (pickup; accepting asks for a ready time)
  *      │           │
  *      ├──► rejected (staff, with reason)
  *      └───────────┴──► cancelled (staff; the customer only while pending)
@@ -36,13 +39,26 @@ const TRANSITIONS: Record<OrderChannel, Partial<Record<OrderStatus, Transition[]
     preparing: [{ to: "ready", roles: FLOOR }],
     ready: [{ to: "served", roles: FLOOR }],
   },
-  // Phases 4 and 5.
-  pickup: {},
+  pickup: {
+    pending: [
+      { to: "accepted", roles: FLOOR, requiresReadyTime: true },
+      { to: "rejected", roles: FLOOR, requiresReason: true },
+      { to: "cancelled", roles: FLOOR, customer: true },
+    ],
+    accepted: [
+      { to: "preparing", roles: FLOOR },
+      { to: "cancelled", roles: FLOOR },
+    ],
+    preparing: [{ to: "ready", roles: FLOOR }],
+    // Handing over an unpaid order is allowed: the web warns and offers to register the payment first.
+    ready: [{ to: "picked_up", roles: FLOOR }],
+  },
+  // Phase 5.
   delivery: {},
 };
 
 export type TransitionCheck =
-  | { ok: true; requiresReason: boolean }
+  | { ok: true; requiresReason: boolean; requiresReadyTime: boolean }
   | { ok: false; reason: "invalid_transition" | "forbidden" };
 
 /**
@@ -63,7 +79,13 @@ export function checkTransition(
     actor.kind === "customer"
       ? transition.customer === true
       : transition.roles.some((role) => actor.roles.includes(role));
-  return allowed ? { ok: true, requiresReason: transition.requiresReason === true } : { ok: false, reason: "forbidden" };
+  return allowed
+    ? {
+        ok: true,
+        requiresReason: transition.requiresReason === true,
+        requiresReadyTime: transition.requiresReadyTime === true,
+      }
+    : { ok: false, reason: "forbidden" };
 }
 
 /** Statuses the actor can move the order to next, in display order (primary action first). */

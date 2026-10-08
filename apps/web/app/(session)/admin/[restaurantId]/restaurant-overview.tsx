@@ -12,6 +12,7 @@ import { usePublicHost } from "@/hooks/use-slug-availability";
 import { useAuth } from "@/lib/auth-context";
 import { teamApi } from "@/lib/endpoints";
 import { errorMessage } from "@/lib/errors";
+import { PickupSettings } from "./pickup-settings";
 import { useRestaurant } from "./restaurant-context";
 import { ProfileForm } from "./profile-form";
 import { SettingsForm } from "./settings-form";
@@ -55,6 +56,12 @@ export function RestaurantOverview() {
                 <RoleBadges roles={restaurant.myRoles} />
               </dd>
             </div>
+            {isOwner ? null : (
+              <div>
+                <dt className="text-muted-foreground">Pedidos para retirar</dt>
+                <dd data-testid="pickup-status">{restaurant.pickupEnabled ? "Activados" : "Desactivados (lo cambia el dueño)"}</dd>
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <dt className="text-muted-foreground">Moneda</dt>
@@ -81,6 +88,17 @@ export function RestaurantOverview() {
             <CardContent>
               {/* Remount after each save so the form starts from the stored values. */}
               <SettingsForm key={`${restaurant.name}|${restaurant.slug}`} />
+            </CardContent>
+          </Card>
+          <Card className={CARD_SPACING}>
+            <CardHeader>
+              <CardTitle>
+                <h2>Retiro en local</h2>
+              </CardTitle>
+              <CardDescription>Pedidos desde tu menú público para retirar en el local.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <PickupSettings />
             </CardContent>
           </Card>
           <Card className={CARD_SPACING}>

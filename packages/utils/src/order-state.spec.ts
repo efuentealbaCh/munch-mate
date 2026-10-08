@@ -6,14 +6,14 @@ const customer = { kind: "customer" as const };
 
 describe("checkTransition (dine_in)", () => {
   it("follows the happy path", () => {
-    expect(checkTransition("dine_in", "pending", "accepted", kitchen)).toEqual({ ok: true, requiresReason: false });
+    expect(checkTransition("dine_in", "pending", "accepted", kitchen)).toEqual({ ok: true, requiresReason: false, requiresReadyTime: false });
     expect(checkTransition("dine_in", "accepted", "preparing", kitchen).ok).toBe(true);
     expect(checkTransition("dine_in", "preparing", "ready", kitchen).ok).toBe(true);
     expect(checkTransition("dine_in", "ready", "served", kitchen).ok).toBe(true);
   });
 
   it("requires a reason to reject", () => {
-    expect(checkTransition("dine_in", "pending", "rejected", kitchen)).toEqual({ ok: true, requiresReason: true });
+    expect(checkTransition("dine_in", "pending", "rejected", kitchen)).toEqual({ ok: true, requiresReason: true, requiresReadyTime: false });
   });
 
   it("rejects transitions the state machine does not have", () => {
@@ -41,5 +41,33 @@ describe("nextStatuses", () => {
     expect(nextStatuses("dine_in", "pending", kitchen)).toEqual(["accepted", "rejected", "cancelled"]);
     expect(nextStatuses("dine_in", "pending", customer)).toEqual(["cancelled"]);
     expect(nextStatuses("dine_in", "served", kitchen)).toEqual([]);
+  });
+});
+
+describe("checkTransition (pickup)", () => {
+  it("asks for a ready time when accepting and ends in picked_up", () => {
+    expect(checkTransition("pickup", "pending", "accepted", kitchen)).toEqual({
+      ok: true,
+      requiresReason: false,
+      requiresReadyTime: true,
+    });
+    expect(checkTransition("pickup", "accepted", "preparing", kitchen).ok).toBe(true);
+    expect(checkTransition("pickup", "preparing", "ready", kitchen).ok).toBe(true);
+    expect(checkTransition("pickup", "ready", "picked_up", kitchen).ok).toBe(true);
+  });
+
+  it("never serves a pickup order nor picks up a dine-in one", () => {
+    expect(checkTransition("pickup", "ready", "served", kitchen)).toEqual({ ok: false, reason: "invalid_transition" });
+    expect(checkTransition("dine_in", "ready", "picked_up", kitchen)).toEqual({
+      ok: false,
+      reason: "invalid_transition",
+    });
+  });
+
+  it("lets the customer cancel only while pending, and riders do nothing", () => {
+    expect(checkTransition("pickup", "pending", "cancelled", customer).ok).toBe(true);
+    expect(checkTransition("pickup", "accepted", "cancelled", customer)).toEqual({ ok: false, reason: "forbidden" });
+    expect(checkTransition("pickup", "pending", "accepted", rider)).toEqual({ ok: false, reason: "forbidden" });
+    expect(nextStatuses("pickup", "ready", kitchen)).toEqual(["picked_up"]);
   });
 });

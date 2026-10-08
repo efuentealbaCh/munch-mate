@@ -25,6 +25,8 @@ export interface RestaurantView {
   logo: LogoImage | null;
   /** Manual "open/closed" switch: customers can only place orders while true. */
   acceptingOrders: boolean;
+  /** Customers may order for pickup from the public menu `/r/{slug}`. Owner setting, off by default. */
+  pickupEnabled: boolean;
   currency: string;
   timezone: string;
   status: RestaurantStatus;

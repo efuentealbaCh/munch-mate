@@ -1,7 +1,13 @@
 "use client";
 
-import { ORDER_STATUS_LABELS, type OrderStatus, type OrderView, type PaymentMethod } from "@app/types";
-import { nextStatuses } from "@app/utils";
+import {
+  ORDER_STATUS_LABELS,
+  type OrderStatus,
+  type OrderView,
+  type PaymentMethod,
+  type PickupReadyMinutes,
+} from "@app/types";
+import { checkTransition, nextStatuses } from "@app/utils";
 import { BellOffIcon, BellRingIcon, InboxIcon, WifiOffIcon } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useId, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -16,6 +22,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useChime } from "@/hooks/use-chime";
 import { useNow } from "@/hooks/use-now";
 import { useSocketEvent } from "@/hooks/use-realtime";
+import { useReceiptDownload } from "@/hooks/use-receipt-download";
 import { ordersApi, restaurantsApi } from "@/lib/endpoints";
 import { errorMessage, hasCode } from "@/lib/errors";
 import { formatPrice } from "@/lib/money";
@@ -23,11 +30,16 @@ import {
   BOARD_COLUMNS,
   boardTitle,
   canRegisterPayment,
+  CHANNEL_FILTERS,
+  type ChannelFilter,
   canWorkOrders,
   dayTotals,
+  destinationLabel,
+  filterByChannel,
   groupByColumn,
-  isFinalStatus,
+  isDroppedStatus,
   mergeFetched,
+  needsPaymentWarning,
   pendingCount,
   sortNewestFirst,
   upsertOrder,
@@ -36,7 +48,7 @@ import { cn } from "@/lib/utils";
 import { useRestaurant } from "../restaurant-context";
 import { useRestaurantRealtime } from "../restaurant-realtime";
 import { OrderCard, PaymentBadge } from "./order-card";
-import { PaymentDialog, RejectDialog } from "./order-dialogs";
+import { HandOverDialog, PaymentDialog, ReadyTimeDialog, RejectDialog } from "./order-dialogs";
 
 /** How long a new order stays highlighted. */
 const FRESH_MS = 10_000;
@@ -113,8 +125,13 @@ function OrdersBoard() {
   const [cancelling, setCancelling] = useState<OrderView | null>(null);
   const [paying, setPaying] = useState<OrderView | null>(null);
   const [payMethod, setPayMethod] = useState<PaymentMethod | null>(null);
+  const [acceptingPickup, setAcceptingPickup] = useState<OrderView | null>(null);
+  const [handingOver, setHandingOver] = useState<OrderView | null>(null);
+  const [handOverPending, setHandOverPending] = useState<PaymentMethod | "handover" | null>(null);
+  const [channel, setChannel] = useState<ChannelFilter>("all");
   const [savingAccepting, setSavingAccepting] = useState(false);
   const switchId = useId();
+  const receipts = useReceiptDownload(socket);
 
   const applyEverywhere = useCallback(
     (order: OrderView) => {
@@ -127,7 +144,7 @@ function OrdersBoard() {
   useSocketEvent(socket, "order.created", (order) => {
     applyEverywhere(order);
     chime.play();
-    toast(`Nuevo pedido #${order.ticketNumber}${order.tableLabel ? ` · ${order.tableLabel}` : ""}`);
+    toast(`Nuevo pedido #${order.ticketNumber} · ${destinationLabel(order)}`);
     setFresh((current) => new Set(current).add(order.id));
     setTimeout(
       () =>
@@ -177,10 +194,14 @@ function OrdersBoard() {
     if (hasCode(failure, "FORBIDDEN_ROLE")) reloadRestaurant();
   }
 
-  async function changeStatus(order: OrderView, to: OrderStatus, reason?: string): Promise<boolean> {
+  async function changeStatus(
+    order: OrderView,
+    to: OrderStatus,
+    extra?: { reason?: string; readyInMinutes?: PickupReadyMinutes },
+  ): Promise<boolean> {
     setBusyFor(order.id, to);
     try {
-      applyEverywhere(await ordersApi.changeStatus(restaurant.id, order.id, to, reason));
+      applyEverywhere(await ordersApi.changeStatus(restaurant.id, order.id, to, extra));
       return true;
     } catch (failure) {
       handleFailure(failure);
@@ -191,9 +212,46 @@ function OrdersBoard() {
   }
 
   function onAction(order: OrderView, to: OrderStatus) {
+    const check = checkTransition(order.channel, order.status, to, { kind: "staff", roles });
     if (to === "rejected") setRejecting(order);
     else if (to === "cancelled") setCancelling(order);
+    // Pickup: the customer is told when to come, so accepting asks for the minutes first.
+    else if (check.ok && check.requiresReadyTime) setAcceptingPickup(order);
+    else if (needsPaymentWarning(order, to)) setHandingOver(order);
     else void changeStatus(order, to);
+  }
+
+  /** Registers the payment, then hands the order over. Stops (and says so) if the payment fails. */
+  async function payAndHandOver(order: OrderView, method: PaymentMethod) {
+    setHandOverPending(method);
+    setBusyFor(order.id, "payment");
+    let paid: OrderView;
+    try {
+      paid = await ordersApi.markPaid(restaurant.id, order.id, method);
+      applyEverywhere(paid);
+    } catch (failure) {
+      handleFailure(failure);
+      setBusyFor(order.id, null);
+      setHandOverPending(null);
+      return;
+    }
+    setBusyFor(order.id, null);
+    const ok = await changeStatus(paid, "picked_up");
+    setHandOverPending(null);
+    setHandingOver(null);
+    if (ok) toast.success(`Pago registrado y pedido #${order.ticketNumber} entregado`);
+  }
+
+  async function handOverUnpaid(order: OrderView) {
+    setHandOverPending("handover");
+    const ok = await changeStatus(order, "picked_up");
+    setHandOverPending(null);
+    setHandingOver(null);
+    if (ok) toast.success(`Pedido #${order.ticketNumber} entregado sin pago registrado`);
+  }
+
+  function downloadReceipt(order: OrderView) {
+    void receipts.download(order.id, () => ordersApi.receipt(restaurant.id, order.id), order.id);
   }
 
   async function pay(order: OrderView, method: PaymentMethod) {
@@ -229,6 +287,12 @@ function OrdersBoard() {
 
   const actionsFor = (order: OrderView) => nextStatuses(order.channel, order.status, { kind: "staff", roles });
   const rejectingBusy = rejecting ? busy[rejecting.id] === "rejected" : false;
+  const acceptingBusy = acceptingPickup ? busy[acceptingPickup.id] === "accepted" : false;
+  // The filter only makes sense once pickup orders exist (or can arrive).
+  const showChannelFilter =
+    restaurant.pickupEnabled || [...(active.orders ?? []), ...(today.orders ?? [])].some((order) => order.channel !== "dine_in");
+  const shownActive = active.orders && filterByChannel(active.orders, channel);
+  const shownToday = today.orders && filterByChannel(today.orders, channel);
   const cancellingBusy = cancelling ? busy[cancelling.id] === "cancelled" : false;
 
   return (
@@ -252,7 +316,9 @@ function OrdersBoard() {
             <span className="text-lg font-semibold">Recibiendo pedidos</span>
             <span className="text-sm text-muted-foreground">
               {restaurant.acceptingOrders
-                ? "Los clientes pueden pedir desde el QR de su mesa."
+                ? restaurant.pickupEnabled
+                  ? "Los clientes pueden pedir desde el QR de su mesa y para retirar."
+                  : "Los clientes pueden pedir desde el QR de su mesa."
                 : "Cerrado: los clientes ven el menú pero no pueden pedir."}
             </span>
           </span>
@@ -272,18 +338,22 @@ function OrdersBoard() {
       ) : null}
 
       <Tabs value={tab} onValueChange={(value) => setTab(value as "board" | "today")} className="gap-4">
-        <TabsList className="h-10 w-full sm:w-fit">
-          <TabsTrigger value="board" className="px-4">
-            En curso{pending > 0 ? <Badge className="ml-1">{pending}</Badge> : null}
-          </TabsTrigger>
-          <TabsTrigger value="today" className="px-4">
-            Hoy
-          </TabsTrigger>
-        </TabsList>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <TabsList className="h-10 w-full sm:w-fit">
+            <TabsTrigger value="board" className="px-4">
+              En curso{pending > 0 ? <Badge className="ml-1">{pending}</Badge> : null}
+            </TabsTrigger>
+            <TabsTrigger value="today" className="px-4">
+              Hoy
+            </TabsTrigger>
+          </TabsList>
+          {showChannelFilter ? <ChannelFilterBar value={channel} onChange={setChannel} /> : null}
+        </div>
 
         <TabsContent value="board">
           <BoardColumns
-            orders={active.orders}
+            orders={shownActive}
+            filtered={channel !== "all"}
             error={active.error}
             onRetry={() => void active.refetch()}
             render={(order) => (
@@ -297,13 +367,15 @@ function OrdersBoard() {
                 busy={busy[order.id] ?? null}
                 onAction={(to) => onAction(order, to)}
                 onPay={() => setPaying(order)}
+                receiptBusy={receipts.working.has(order.id)}
+                onReceipt={() => downloadReceipt(order)}
               />
             )}
           />
         </TabsContent>
         <TabsContent value="today">
           <TodayList
-            orders={today.orders}
+            orders={shownToday}
             error={today.error}
             canPay={canPay}
             busy={busy}
@@ -320,7 +392,7 @@ function OrdersBoard() {
         onReject={(reason) => {
           const order = rejecting;
           if (!order) return;
-          void changeStatus(order, "rejected", reason).then((ok) => {
+          void changeStatus(order, "rejected", { reason }).then((ok) => {
             setRejecting(null);
             if (ok) toast.success(`Pedido #${order.ticketNumber} rechazado`);
           });
@@ -339,6 +411,28 @@ function OrdersBoard() {
           if (!order) return;
           void changeStatus(order, "cancelled").then(() => setCancelling(null));
         }}
+      />
+      <ReadyTimeDialog
+        order={acceptingPickup}
+        pending={acceptingBusy}
+        now={now}
+        onOpenChange={(open) => !open && setAcceptingPickup(null)}
+        onAccept={(readyInMinutes) => {
+          const order = acceptingPickup;
+          if (!order) return;
+          void changeStatus(order, "accepted", { readyInMinutes }).then((ok) => {
+            setAcceptingPickup(null);
+            if (ok) toast.success(`Pedido #${order.ticketNumber} aceptado · listo en ${readyInMinutes} min`);
+          });
+        }}
+      />
+      <HandOverDialog
+        order={handingOver}
+        canPay={canPay}
+        pending={handOverPending}
+        onOpenChange={(open) => !open && setHandingOver(null)}
+        onPayAndHandOver={(method) => handingOver && void payAndHandOver(handingOver, method)}
+        onHandOver={() => handingOver && void handOverUnpaid(handingOver)}
       />
       <PaymentDialog
         order={paying}
@@ -367,6 +461,26 @@ function LiveBadge({ status }: { status: string }) {
   );
 }
 
+/** Todos / Mesa / Retiro: applies to both tabs. */
+function ChannelFilterBar({ value, onChange }: { value: ChannelFilter; onChange(value: ChannelFilter): void }) {
+  return (
+    <div role="group" aria-label="Filtrar por canal" className="flex gap-1 rounded-lg bg-muted p-1">
+      {CHANNEL_FILTERS.map((filter) => (
+        <Button
+          key={filter.value}
+          size="sm"
+          variant={value === filter.value ? "secondary" : "ghost"}
+          className={cn("h-8 flex-1 px-3 sm:flex-none", value === filter.value && "bg-background shadow-sm")}
+          aria-pressed={value === filter.value}
+          onClick={() => onChange(filter.value)}
+        >
+          {filter.label}
+        </Button>
+      ))}
+    </div>
+  );
+}
+
 function ListState({ error, onRetry }: { error: unknown; onRetry(): void }) {
   if (error) {
     return (
@@ -389,11 +503,14 @@ function ListState({ error, onRetry }: { error: unknown; onRetry(): void }) {
 
 function BoardColumns({
   orders,
+  filtered,
   error,
   onRetry,
   render,
 }: {
   orders: OrderView[] | null;
+  /** A channel filter is on (changes the empty message). */
+  filtered: boolean;
   error: unknown;
   onRetry(): void;
   render(order: OrderView): ReactNode;
@@ -406,7 +523,11 @@ function BoardColumns({
       {orders.length === 0 ? (
         <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed bg-card px-6 py-10 text-center text-sm text-muted-foreground">
           <InboxIcon className="size-8" aria-hidden />
-          <p>No hay pedidos en curso. Los nuevos aparecen aquí al instante.</p>
+          <p>
+            {filtered
+              ? "No hay pedidos en curso de este tipo."
+              : "No hay pedidos en curso. Los nuevos aparecen aquí al instante."}
+          </p>
         </div>
       ) : null}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
@@ -475,20 +596,20 @@ function TodayList({
               <span className="w-14 text-xl font-black tabular-nums">#{order.ticketNumber}</span>
               <span className="flex min-w-0 flex-1 flex-col">
                 <span className="text-sm font-medium">
-                  {order.tableLabel ?? "Sin mesa"}
+                  {destinationLabel(order)}
                   {order.customerName ? ` · ${order.customerName}` : ""}
                 </span>
                 <span className="text-xs text-muted-foreground">
                   {new Date(order.createdAt).toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit" })}
                 </span>
               </span>
-              <Badge variant={isFinalStatus(order.status) && order.status !== "served" ? "destructive" : "secondary"}>
+              <Badge variant={isDroppedStatus(order.status) ? "destructive" : "secondary"}>
                 {ORDER_STATUS_LABELS[order.status]}
               </Badge>
               <span className="w-20 text-right font-semibold tabular-nums">{formatPrice(order.total, order.currency)}</span>
               <span className="flex w-full items-center justify-end gap-2 sm:w-auto">
                 <PaymentBadge order={order} />
-                {canPay && order.paymentStatus === "unpaid" && order.status !== "rejected" && order.status !== "cancelled" ? (
+                {canPay && order.paymentStatus === "unpaid" && !isDroppedStatus(order.status) ? (
                   <Button size="sm" variant="outline" disabled={busy[order.id] !== undefined} onClick={() => onPay(order)}>
                     Registrar pago
                   </Button>

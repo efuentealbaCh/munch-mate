@@ -55,6 +55,44 @@ export async function waitForEmailLink(to: string, path: string, timeoutMs = 20_
   throw new Error(`no email to ${to} with a ${path} link within ${timeoutMs} ms`);
 }
 
+export interface MailpitMessage {
+  Subject: string;
+  Text?: string;
+  Attachments?: Array<{ PartID: string; FileName: string; ContentType: string; Size: number }>;
+}
+
+/**
+ * Waits for the first email to `to` whose subject matches and returns it with its attachments' metadata,
+ * plus `attachment(fileName)` to download one attachment's bytes.
+ */
+export async function waitForEmail(
+  to: string,
+  subject: RegExp,
+  timeoutMs = 60_000,
+): Promise<MailpitMessage & { attachment: (fileName: RegExp) => Promise<Buffer> }> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const search = (await (
+      await fetch(`${MAILPIT_URL}/api/v1/search?query=${encodeURIComponent(`to:${to}`)}`)
+    ).json()) as MailpitSearch;
+    const found = (search.messages ?? []).find((m) => subject.test(m.Subject));
+    if (found) {
+      const message = (await (await fetch(`${MAILPIT_URL}/api/v1/message/${found.ID}`)).json()) as MailpitMessage;
+      return {
+        ...message,
+        attachment: async (fileName) => {
+          const part = message.Attachments?.find((a) => fileName.test(a.FileName));
+          if (!part) throw new Error(`no attachment matching ${fileName} in "${message.Subject}"`);
+          const response = await fetch(`${MAILPIT_URL}/api/v1/message/${found.ID}/part/${part.PartID}`);
+          return Buffer.from(await response.arrayBuffer());
+        },
+      };
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error(`no email to ${to} with subject ${subject} within ${timeoutMs} ms`);
+}
+
 /**
  * Registers a user through the api with the given request context (a page's `request` shares its cookies).
  * Registration is rate-limited (5/min per IP), so specs register as few users as possible; when the whole

@@ -1,58 +1,26 @@
 "use client";
 
 import type { PublicMenu, PublicProduct, TableContext } from "@app/types";
-import { ClockIcon, ReceiptTextIcon, ShoppingBagIcon, StoreIcon } from "lucide-react";
+import { ClockIcon, ReceiptTextIcon, StoreIcon } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
+import { CartBar, type LineProblem } from "@/components/cart-sheet";
+import { OrderProductSheet } from "@/components/order-product-sheet";
 import { MenuSections } from "@/components/public-menu";
 import { RestaurantLogo } from "@/components/restaurant-logo";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { useOnVisible } from "@/hooks/use-realtime";
+import { useStoredCart } from "@/hooks/use-stored-cart";
 import { ApiError } from "@/lib/api";
-import {
-  type CartLine,
-  cartCount,
-  cartReducer,
-  cartTotal,
-  type CheckoutAttempt,
-  checkoutFingerprint,
-  loadCart,
-  loadCheckoutAttempt,
-  newClientOrderId,
-  pickClientOrderId,
-  saveCart,
-  saveCheckoutAttempt,
-  toOrderItems,
-} from "@/lib/cart";
+import { localStore } from "@/lib/browser-storage";
+import { type CartLine, cartCount, cartTotal, LINE_ERRORS, toOrderItems } from "@/lib/cart";
 import { publicOrdersApi } from "@/lib/endpoints";
 import { hasCode } from "@/lib/errors";
-import { formatPrice } from "@/lib/money";
 import { loadMyOrders, rememberOrder, trackingHref } from "@/lib/order-tracking";
 import type { CheckoutValues } from "@/lib/validation";
-import { CartSheet, type LineProblem } from "./cart-sheet";
-import { OrderProductSheet } from "./order-product-sheet";
-
-/** Codes the api answers (409, with meta.productId) when a cart line no longer matches the menu. */
-const LINE_ERRORS = ["PRODUCT_SOLD_OUT", "PRODUCT_NOT_AVAILABLE", "OPTION_SOLD_OUT", "INVALID_MODIFIERS"];
-
-/** Browser storage that may be missing or throw (private mode); every helper copes with undefined. */
-function sessionStore(): Storage | undefined {
-  try {
-    return window.sessionStorage;
-  } catch {
-    return undefined;
-  }
-}
-function localStore(): Storage | undefined {
-  try {
-    return window.localStorage;
-  } catch {
-    return undefined;
-  }
-}
+import { TableCartSheet } from "./cart-sheet";
 
 interface TableOrderingProps {
   tableToken: string;
@@ -66,8 +34,7 @@ export function TableOrdering({ tableToken, table, initialMenu }: TableOrderingP
   const [menu, setMenu] = useState(initialMenu);
   const [accepting, setAccepting] = useState(table.acceptingOrders);
   const [tableGone, setTableGone] = useState(false);
-  const [lines, dispatch] = useReducer(cartReducer, []);
-  const [hydrated, setHydrated] = useState(false);
+  const { lines, dispatch, beginAttempt, completeOrder } = useStoredCart(tableToken);
   const [selected, setSelected] = useState<PublicProduct | null>(null);
   const [cartOpen, setCartOpen] = useState(false);
   const [checkout, setCheckout] = useState<CheckoutValues>({ customerName: "", note: "" });
@@ -75,21 +42,10 @@ export function TableOrdering({ tableToken, table, initialMenu }: TableOrderingP
   const [error, setError] = useState<unknown>(null);
   const [problem, setProblem] = useState<LineProblem | null>(null);
   const [myOrdersCount, setMyOrdersCount] = useState(0);
-  const attempt = useRef<CheckoutAttempt | null>(null);
   const currency = menu.restaurant.currency;
   const canOrder = accepting && !tableGone;
 
-  // Restore after hydration (the server render has no access to sessionStorage).
-  useEffect(() => {
-    dispatch({ type: "replace", lines: loadCart(sessionStore(), tableToken) });
-    attempt.current = loadCheckoutAttempt(sessionStore(), tableToken);
-    setMyOrdersCount(loadMyOrders(localStore()).length);
-    setHydrated(true);
-  }, [tableToken]);
-
-  useEffect(() => {
-    if (hydrated) saveCart(sessionStore(), tableToken, lines);
-  }, [hydrated, lines, tableToken]);
+  useEffect(() => setMyOrdersCount(loadMyOrders(localStore()).length), []);
 
   // Back from another app or tab: the restaurant may have opened or closed meanwhile.
   const refreshTable = useCallback(async () => {
@@ -127,13 +83,12 @@ export function TableOrdering({ tableToken, table, initialMenu }: TableOrderingP
       ...(values.note ? { note: values.note } : {}),
     };
     // Same content as a failed attempt → same id, so the api returns that order instead of a duplicate.
-    attempt.current = pickClientOrderId(attempt.current, checkoutFingerprint(body), () => newClientOrderId());
-    saveCheckoutAttempt(sessionStore(), tableToken, attempt.current);
+    const clientOrderId = beginAttempt(body);
     setSubmitting(true);
     setError(null);
     setProblem(null);
     try {
-      const created = await publicOrdersApi.create(tableToken, { clientOrderId: attempt.current.clientOrderId, ...body });
+      const created = await publicOrdersApi.create(tableToken, { clientOrderId, ...body });
       rememberOrder(localStore(), {
         accessToken: created.accessToken,
         ticketNumber: created.order.ticketNumber,
@@ -141,10 +96,7 @@ export function TableOrdering({ tableToken, table, initialMenu }: TableOrderingP
         createdAt: created.order.createdAt,
         tableToken,
       });
-      attempt.current = null;
-      saveCheckoutAttempt(sessionStore(), tableToken, null);
-      dispatch({ type: "clear" });
-      saveCart(sessionStore(), tableToken, []);
+      completeOrder();
       router.push(trackingHref(created.accessToken));
     } catch (failure) {
       setSubmitting(false);
@@ -209,19 +161,7 @@ export function TableOrdering({ tableToken, table, initialMenu }: TableOrderingP
         <MenuSections categories={categories} currency={currency} onOpen={setSelected} className={count > 0 ? "pb-28" : undefined} />
       )}
 
-      {count > 0 ? (
-        <div className="fixed inset-x-0 bottom-0 z-40 border-t bg-card/95 p-3 backdrop-blur supports-[backdrop-filter]:bg-card/80">
-          <div className="mx-auto max-w-3xl">
-            <Button size="lg" className="h-12 w-full justify-between text-base" onClick={() => setCartOpen(true)} aria-haspopup="dialog">
-              <span className="flex items-center gap-2">
-                <ShoppingBagIcon aria-hidden />
-                Ver pedido ({count})
-              </span>
-              <span className="tabular-nums">{formatPrice(cartTotal(lines), currency)}</span>
-            </Button>
-          </div>
-        </div>
-      ) : null}
+      <CartBar count={count} total={cartTotal(lines)} currency={currency} onOpen={() => setCartOpen(true)} />
 
       <footer className="border-t px-4 py-6 text-center text-xs text-muted-foreground">
         Pedidos con <span className="font-semibold text-foreground">Munch Mate</span>
@@ -234,7 +174,7 @@ export function TableOrdering({ tableToken, table, initialMenu }: TableOrderingP
         onClose={() => setSelected(null)}
         onAdd={addLine}
       />
-      <CartSheet
+      <TableCartSheet
         open={cartOpen}
         onOpenChange={(open) => {
           setCartOpen(open);

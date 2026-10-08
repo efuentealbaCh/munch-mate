@@ -1,4 +1,4 @@
-import type { OrderStatus } from "@app/types";
+import type { OrderChannel, OrderStatus } from "@app/types";
 import type { KeyValueStorage } from "./cart";
 
 /**
@@ -96,15 +96,23 @@ export function findMyOrder(storage: KeyValueStorage | undefined, accessToken: s
 /** Happy path of a dine-in order, as shown in the step indicator. */
 export const DINE_IN_STEPS: readonly OrderStatus[] = ["pending", "accepted", "preparing", "ready", "served"];
 
-/**
- * Position of a status in {@link DINE_IN_STEPS}.
- * @returns The index, or -1 for statuses outside the happy path (rejected, cancelled).
- */
-export function stepIndex(status: OrderStatus): number {
-  return DINE_IN_STEPS.indexOf(status);
+/** Happy path of a pickup order: ends when the customer picks it up. */
+export const PICKUP_STEPS: readonly OrderStatus[] = ["pending", "accepted", "preparing", "ready", "picked_up"];
+
+/** Steps shown to the customer for a channel (delivery arrives in phase 5; until then it uses pickup's). */
+export function customerSteps(channel: OrderChannel): readonly OrderStatus[] {
+  return channel === "dine_in" ? DINE_IN_STEPS : PICKUP_STEPS;
 }
 
-/** Short explanation under the status, in the customer's words. */
+/**
+ * Position of a status in its channel's steps.
+ * @returns The index, or -1 for statuses outside the happy path (rejected, cancelled).
+ */
+export function stepIndex(status: OrderStatus, channel: OrderChannel = "dine_in"): number {
+  return customerSteps(channel).indexOf(status);
+}
+
+/** Short explanation under the status, in the customer's words (dine-in). */
 export const CUSTOMER_STATUS_HINTS: Partial<Record<OrderStatus, string>> = {
   pending: "El local está revisando tu pedido.",
   accepted: "¡Tu pedido fue aceptado! Pronto empiezan a prepararlo.",
@@ -114,3 +122,24 @@ export const CUSTOMER_STATUS_HINTS: Partial<Record<OrderStatus, string>> = {
   rejected: "El local no pudo tomar tu pedido.",
   cancelled: "Este pedido fue cancelado.",
 };
+
+/** Pickup wording: nobody brings it to a table, the customer comes for it. */
+const PICKUP_STATUS_HINTS: Partial<Record<OrderStatus, string>> = {
+  ...CUSTOMER_STATUS_HINTS,
+  pending: "El local está revisando tu pedido. Te avisamos aquí cuando lo acepte.",
+  ready: "¡Tu pedido está listo! Ya puedes retirarlo.",
+  picked_up: "¡Gracias! Ya retiraste tu pedido.",
+};
+
+/** Hint under the status for the order's channel. */
+export function customerStatusHint(status: OrderStatus, channel: OrderChannel): string | undefined {
+  return (channel === "dine_in" ? CUSTOMER_STATUS_HINTS : PICKUP_STATUS_HINTS)[status];
+}
+
+/**
+ * Whether the "ready at about HH:MM" estimate is still worth showing: once the order is ready (or over) the
+ * customer needs "come for it" instead of a time.
+ */
+export function showsReadyEstimate(order: { status: OrderStatus; estimatedReadyAt: string | null }): boolean {
+  return order.estimatedReadyAt !== null && (order.status === "accepted" || order.status === "preparing");
+}
