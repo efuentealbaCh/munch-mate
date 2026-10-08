@@ -10,7 +10,9 @@ import { toast } from "sonner";
 import { CartBar, type LineProblem } from "@/components/cart-sheet";
 import { OrderProductSheet } from "@/components/order-product-sheet";
 import { MenuSections } from "@/components/public-menu";
+import { useNow } from "@/hooks/use-now";
 import { useOnVisible } from "@/hooks/use-realtime";
+import { useRefreshAt } from "@/hooks/use-refresh-at";
 import { useStoredCart } from "@/hooks/use-stored-cart";
 import { ApiError } from "@/lib/api";
 import { localStore } from "@/lib/browser-storage";
@@ -19,6 +21,7 @@ import { loadDeliveryContact, type OnlineChannel, onlineChannels, resolveChannel
 import { publicOrdersApi } from "@/lib/endpoints";
 import { hasCode } from "@/lib/errors";
 import { parsePriceInput } from "@/lib/money";
+import { closedByScheduleText, closedStateFromError } from "@/lib/opening-hours";
 import { loadMyOrders, rememberOrder, trackingHref } from "@/lib/order-tracking";
 import type { DeliveryCheckoutValues } from "@/lib/validation";
 import { CheckoutSheet } from "./checkout-sheet";
@@ -68,8 +71,16 @@ export function OnlineOrdering({ initialMenu }: { initialMenu: PublicMenu }) {
   const currency = restaurant.currency;
   const channels = onlineChannels(restaurant);
   const channel = resolveChannel(chosenChannel, channels) ?? "pickup";
-  const canOrder = restaurant.acceptingOrders && channels.length > 0;
-  const closedMessage = channels.length > 0 ? CLOSED_MESSAGE : ONLINE_OFF_MESSAGE;
+  const now = useNow(30_000);
+  // The switch is on but the opening hours keep the restaurant closed: say when it opens.
+  const closedBySchedule = channels.length > 0 && restaurant.acceptingOrders && !restaurant.openState.openNow;
+  const canOrder = restaurant.acceptingOrders && restaurant.openState.openNow && channels.length > 0;
+  const closedMessage =
+    channels.length === 0
+      ? ONLINE_OFF_MESSAGE
+      : closedBySchedule
+        ? `${closedByScheduleText(restaurant.openState, now ? new Date(now) : null)}.`
+        : CLOSED_MESSAGE;
 
   useEffect(() => {
     setMyOrdersCount(loadMyOrders(localStore()).length);
@@ -108,6 +119,8 @@ export function OnlineOrdering({ initialMenu }: { initialMenu: PublicMenu }) {
 
   // Back from another app or tab: the restaurant may have opened or closed meanwhile.
   useOnVisible(() => void refreshMenu());
+  // Closed by the schedule: refresh when it opens, so the cart unlocks without reloading the page.
+  useRefreshAt(closedBySchedule ? restaurant.openState.nextOpeningAt : null, () => void refreshMenu());
 
   function addLine(line: CartLine) {
     dispatch({ type: "add", line });
@@ -140,6 +153,12 @@ export function OnlineOrdering({ initialMenu }: { initialMenu: PublicMenu }) {
         setProblem({ productId: failure.meta.productId, message: failure.message });
         void refreshMenu();
         return false;
+      }
+      if (hasCode(failure, "OUTSIDE_OPENING_HOURS")) {
+        // The schedule closed while the customer was ordering: show the banner now, then confirm with the api.
+        const openState = closedStateFromError(failure.meta);
+        setMenu((m) => ({ ...m, restaurant: { ...m.restaurant, openState } }));
+        void refreshMenu();
       }
       if (hasCode(failure, "NOT_ACCEPTING_ORDERS")) setMenu((m) => ({ ...m, restaurant: { ...m.restaurant, acceptingOrders: false } }));
       if (hasCode(failure, "PICKUP_DISABLED")) setMenu((m) => ({ ...m, restaurant: { ...m.restaurant, pickupEnabled: false } }));

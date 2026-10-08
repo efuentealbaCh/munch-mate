@@ -5,6 +5,7 @@ import type {
   CreateDeliveryOrderInput,
   CreateDineInOrderInput,
   CreatePickupOrderInput,
+  DailySummary,
   DeliveryZoneInput,
   DeliveryZoneView,
   InvitationPreview,
@@ -15,17 +16,20 @@ import type {
   OrderStatus,
   OrderView,
   PaymentMethod,
+  PlatformRestaurantPage,
   ProductView,
   PublicDeliveryZone,
   PublicMenu,
   PublicOrderView,
   RestaurantRole,
+  RestaurantStatus,
   RestaurantView,
   RiderView,
   SlugAvailability,
   TableContext,
   TableView,
   UserProfile,
+  WeeklyHours,
 } from "@app/types";
 import { api } from "./api";
 import { type DownloadedFile, filenameFromDisposition } from "./download";
@@ -79,6 +83,12 @@ export const restaurantsApi = {
   /** Opens/closes the restaurant for orders (owner, cashier, kitchen). */
   setAcceptingOrders: (id: string, acceptingOrders: boolean) =>
     api.request<RestaurantView>(`${restaurantPath(id)}/accepting-orders`, { method: "PUT", body: { acceptingOrders } }),
+  /**
+   * Weekly opening hours (owner); null removes the schedule (only the manual switch decides).
+   * @throws ApiError INVALID_OPENING_HOURS (400).
+   */
+  setOpeningHours: (id: string, openingHours: WeeklyHours | null) =>
+    api.request<RestaurantView>(`${restaurantPath(id)}/opening-hours`, { method: "PUT", body: { openingHours } }),
   slugAvailability: (slug: string, signal?: AbortSignal) =>
     api.request<SlugAvailability>(`/restaurants/slug-availability?slug=${encodeURIComponent(slug)}`, { signal }),
 };
@@ -251,6 +261,31 @@ async function readReceipt(pending: Promise<Response>): Promise<DownloadedFile |
     filename: filenameFromDisposition(response.headers.get("Content-Disposition"), "comprobante.pdf"),
   };
 }
+
+/** Sales reports (owner, cashier). */
+export const reportsApi = {
+  /** @param date Business date YYYY-MM-DD in the restaurant's zone (omitted = today). */
+  daily: (restaurantId: string, date?: string, signal?: AbortSignal) =>
+    api.request<DailySummary>(
+      `${restaurantPath(restaurantId)}/reports/daily${date ? `?date=${encodeURIComponent(date)}` : ""}`,
+      { signal },
+    ),
+};
+
+/** Platform administration (platformRole "admin"; anyone else gets 404 NOT_FOUND). */
+export const platformApi = {
+  /** 25 per page, newest first. @param page 1-based. */
+  restaurants: (params: { q?: string; status?: RestaurantStatus; page?: number }, signal?: AbortSignal) => {
+    const query = new URLSearchParams();
+    if (params.q) query.set("q", params.q);
+    if (params.status) query.set("status", params.status);
+    if (params.page && params.page > 1) query.set("page", String(params.page));
+    const search = query.toString();
+    return api.request<PlatformRestaurantPage>(`/platform/restaurants${search ? `?${search}` : ""}`, { signal });
+  },
+  setStatus: (restaurantId: string, status: RestaurantStatus) =>
+    api.request<void>(`/platform/restaurants/${encodeURIComponent(restaurantId)}/status`, { method: "PUT", body: { status } }),
+};
 
 const deliveriesPath = (restaurantId: string) => `${restaurantPath(restaurantId)}/deliveries`;
 

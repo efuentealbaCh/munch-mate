@@ -1,7 +1,8 @@
 "use client";
 
 import type { UserProfile } from "@app/types";
-import { ChevronDownIcon, LogOutIcon } from "lucide-react";
+import { ChevronDownIcon, LogOutIcon, ShieldIcon, StoreIcon } from "lucide-react";
+import Link from "next/link";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -39,6 +40,24 @@ export function UserMenu({ user, onLogout }: { user: UserProfile; onLogout: () =
           <span className="truncate text-xs text-muted-foreground">{user.email}</span>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
+        {/* Only platform admins see it; the api answers 404 to everyone else anyway. */}
+        {user.platformRole === "admin" ? (
+          <>
+            <DropdownMenuItem asChild className="min-h-10">
+              <Link href="/admin">
+                <StoreIcon aria-hidden />
+                Mis restaurantes
+              </Link>
+            </DropdownMenuItem>
+            <DropdownMenuItem asChild className="min-h-10">
+              <Link href="/plataforma">
+                <ShieldIcon aria-hidden />
+                Plataforma
+              </Link>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+          </>
+        ) : null}
         <DropdownMenuItem className="min-h-10" onSelect={() => void onLogout()}>
           <LogOutIcon aria-hidden />
           Cerrar sesión

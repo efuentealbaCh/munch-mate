@@ -9,6 +9,7 @@ import {
   LayoutDashboardIcon,
   PackageCheckIcon,
   QrCodeIcon,
+  ReceiptIcon,
   SearchXIcon,
   UsersIcon,
 } from "lucide-react";
@@ -21,9 +22,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useApiQuery } from "@/hooks/use-api-query";
+import { useNow } from "@/hooks/use-now";
 import { restaurantsApi } from "@/lib/endpoints";
 import { hasCode } from "@/lib/errors";
 import { canManageAvailability } from "@/lib/menu";
+import { liveOpenState } from "@/lib/opening-hours";
+import { canViewSales } from "@/lib/daily-summary";
 import { canWorkOrders, isRider } from "@/lib/orders-board";
 import { cn } from "@/lib/utils";
 import { RestaurantContext, type RestaurantContextValue } from "./restaurant-context";
@@ -88,7 +92,7 @@ export function RestaurantShell({ children }: { children: ReactNode }) {
               <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <h1 className="text-2xl font-bold tracking-tight break-words">{restaurant.name}</h1>
                 {restaurant.status === "suspended" ? <Badge variant="destructive">Suspendido</Badge> : null}
-                <OpenBadge open={restaurant.acceptingOrders} />
+                <OpenBadge restaurant={restaurant} />
               </div>
             </div>
             <SectionTabs restaurantId={restaurant.id} isOwner={isOwner} roles={restaurant.myRoles} />
@@ -116,6 +120,7 @@ function SectionTabs({
     { href: base, label: "Resumen", icon: LayoutDashboardIcon, show: true },
     { href: `${base}/pedidos`, label: "Pedidos", icon: ClipboardListIcon, show: canWorkOrders(roles) },
     { href: `${base}/repartos`, label: "Repartos", icon: BikeIcon, show: isRider(roles) },
+    { href: `${base}/ventas`, label: "Ventas", icon: ReceiptIcon, show: canViewSales(roles) },
     { href: `${base}/menu`, label: "Menú", icon: BookOpenIcon, show: isOwner },
     { href: `${base}/disponibilidad`, label: "Disponibilidad", icon: PackageCheckIcon, show: canManageAvailability(roles) },
     { href: `${base}/mesas`, label: "Mesas", icon: QrCodeIcon, show: isOwner },
@@ -149,16 +154,26 @@ function SectionTabs({
   );
 }
 
-/** Whether customers can order right now (the switch lives on the Pedidos screen). */
-function OpenBadge({ open }: { open: boolean }) {
+/**
+ * Whether customers can order right now (the switch lives on the Pedidos screen). With the switch on but
+ * outside the opening hours it says "Fuera de horario", recomputed with the clock.
+ */
+function OpenBadge({ restaurant }: { restaurant: RestaurantView }) {
+  const now = useNow(30_000);
+  const schedule = liveOpenState(restaurant.openingHours, restaurant.timezone, now, restaurant.openState);
+  const accepting = restaurant.acceptingOrders;
+  const open = accepting && schedule.openNow;
   return (
     <Badge
       variant={open ? "secondary" : "outline"}
-      className={open ? "bg-success/10 text-success" : "text-muted-foreground"}
+      className={open ? "bg-success/10 text-success" : accepting ? "border-warning-foreground/40 bg-warning text-warning-foreground" : "text-muted-foreground"}
       data-testid="open-badge"
     >
-      <span className={cn("size-1.5 rounded-full", open ? "bg-success" : "bg-muted-foreground")} aria-hidden />
-      {open ? "Recibiendo pedidos" : "Cerrado"}
+      <span
+        className={cn("size-1.5 rounded-full", open ? "bg-success" : accepting ? "bg-warning-foreground" : "bg-muted-foreground")}
+        aria-hidden
+      />
+      {open ? "Recibiendo pedidos" : accepting ? "Fuera de horario" : "Cerrado"}
     </Badge>
   );
 }

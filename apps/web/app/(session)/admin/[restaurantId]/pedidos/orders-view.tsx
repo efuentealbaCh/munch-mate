@@ -20,6 +20,7 @@ import { useReceiptDownload } from "@/hooks/use-receipt-download";
 import { ordersApi, restaurantsApi } from "@/lib/endpoints";
 import { errorMessage, hasCode } from "@/lib/errors";
 import { formatPrice } from "@/lib/money";
+import { liveOpenState, nextOpeningLabel } from "@/lib/opening-hours";
 import {
   availableChannelFilters,
   type BOARD_COLUMNS,
@@ -323,6 +324,10 @@ function OrdersBoard() {
   const shownToday = today.orders && filterByChannel(today.orders, effectiveChannel);
   const columns = boardColumns(restaurant.deliveryEnabled || allOrders.some((order) => order.channel === "delivery"));
   const cancellingBusy = cancelling ? busy[cancelling.id] === "cancelled" : false;
+  // The switch is on but the opening hours keep customers out (recomputed with the clock, not only at load).
+  const schedule = liveOpenState(restaurant.openingHours, restaurant.timezone, now, restaurant.openState);
+  const outsideHours = restaurant.acceptingOrders && !schedule.openNow;
+  const openingLabel = outsideHours ? nextOpeningLabel(schedule.nextOpeningAt, new Date(now || Date.now())) : null;
 
   return (
     <div className="flex flex-col gap-5">
@@ -330,26 +335,42 @@ function OrdersBoard() {
         aria-label="Estado del local"
         className={cn(
           "flex flex-col gap-3 rounded-xl p-4 ring-1 sm:flex-row sm:items-center sm:justify-between",
-          restaurant.acceptingOrders ? "bg-success/5 ring-success/30" : "bg-muted ring-foreground/10",
+          restaurant.acceptingOrders && !outsideHours
+            ? "bg-success/5 ring-success/30"
+            : outsideHours
+              ? "bg-warning ring-warning-foreground/30"
+              : "bg-muted ring-foreground/10",
         )}
       >
-        <label htmlFor={switchId} className="flex cursor-pointer items-center gap-4">
-          <Switch
-            id={switchId}
-            size="lg"
-            checked={restaurant.acceptingOrders}
-            disabled={savingAccepting || restaurant.status === "suspended"}
-            onCheckedChange={(checked) => void setAccepting(checked)}
-          />
-          <span className="flex flex-col">
-            <span className="text-lg font-semibold">Recibiendo pedidos</span>
-            <span className="text-sm text-muted-foreground">
-              {restaurant.acceptingOrders
-                ? acceptingDescription(restaurant.pickupEnabled, restaurant.deliveryEnabled)
-                : "Cerrado: los clientes ven el menú pero no pueden pedir."}
+        <div className="flex flex-col gap-2">
+          <label htmlFor={switchId} className="flex cursor-pointer items-center gap-4">
+            <Switch
+              id={switchId}
+              size="lg"
+              checked={restaurant.acceptingOrders}
+              disabled={savingAccepting || restaurant.status === "suspended"}
+              onCheckedChange={(checked) => void setAccepting(checked)}
+            />
+            <span className="flex flex-col">
+              <span className="text-lg font-semibold">Recibiendo pedidos</span>
+              <span className="text-sm text-muted-foreground">
+                {restaurant.acceptingOrders
+                  ? acceptingDescription(restaurant.pickupEnabled, restaurant.deliveryEnabled)
+                  : "Cerrado: los clientes ven el menú pero no pueden pedir."}
+              </span>
             </span>
-          </span>
-        </label>
+          </label>
+          {outsideHours ? (
+            <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm" role="status" data-testid="outside-hours">
+              <Badge variant="outline" className="border-warning-foreground/40 bg-warning text-warning-foreground">
+                Fuera de horario
+              </Badge>
+              <span className="text-warning-foreground">
+                Los clientes no pueden pedir.{openingLabel ? ` ${openingLabel}.` : ""}
+              </span>
+            </p>
+          ) : null}
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button variant={chime.enabled ? "secondary" : "outline"} onClick={chime.toggle} aria-pressed={chime.enabled}>
             {chime.enabled ? <BellRingIcon aria-hidden data-icon="inline-start" /> : <BellOffIcon aria-hidden data-icon="inline-start" />}

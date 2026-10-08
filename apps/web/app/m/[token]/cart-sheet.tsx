@@ -21,6 +21,8 @@ interface TableCartSheetProps {
   currency: string;
   tableLabel: string;
   canOrder: boolean;
+  /** Shown under the button while ordering is not possible (defaults to the closed-restaurant text). */
+  closedMessage?: string;
   submitting: boolean;
   /** Error not tied to a line (closed restaurant, network, validation). */
   error: unknown;
@@ -52,6 +54,7 @@ function TableCheckout({
   lines,
   currency,
   canOrder,
+  closedMessage = "El local no está recibiendo pedidos ahora.",
   submitting,
   error,
   problem,
@@ -108,7 +111,7 @@ function TableCheckout({
           Enviar pedido · {formatPrice(total, currency)}
         </SubmitButton>
         {!canOrder ? (
-          <p className="text-center text-sm text-muted-foreground">El local no está recibiendo pedidos ahora.</p>
+          <p className="text-center text-sm text-muted-foreground">{closedMessage}</p>
         ) : null}
       </SheetFooter>
     </form>

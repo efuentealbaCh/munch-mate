@@ -13,6 +13,7 @@ import { useAuth } from "@/lib/auth-context";
 import { teamApi } from "@/lib/endpoints";
 import { errorMessage } from "@/lib/errors";
 import { DeliverySettings } from "./delivery-settings";
+import { OpeningHoursSettings } from "./opening-hours-settings";
 import { PickupSettings } from "./pickup-settings";
 import { useRestaurant } from "./restaurant-context";
 import { ProfileForm } from "./profile-form";
@@ -97,6 +98,7 @@ export function RestaurantOverview() {
               <SettingsForm key={`${restaurant.name}|${restaurant.slug}`} />
             </CardContent>
           </Card>
+          <OpeningHoursCard />
           <Card className={CARD_SPACING}>
             <CardHeader>
               <CardTitle>
@@ -132,9 +134,29 @@ export function RestaurantOverview() {
           </Card>
         </div>
       ) : (
-        <LeaveCard />
+        <div className="flex flex-col gap-6">
+          <OpeningHoursCard />
+          <LeaveCard />
+        </div>
       )}
     </div>
+  );
+}
+
+/** Opening hours: editable by the owner, read-only for the rest of the team. */
+function OpeningHoursCard() {
+  return (
+    <Card className={CARD_SPACING}>
+      <CardHeader>
+        <CardTitle>
+          <h2>Horario de atención</h2>
+        </CardTitle>
+        <CardDescription>Cuándo pueden pedir tus clientes (QR de mesa, retiro y delivery).</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <OpeningHoursSettings />
+      </CardContent>
+    </Card>
   );
 }
 
