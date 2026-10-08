@@ -1,4 +1,4 @@
-import type { OrderChannel, OrderItemView } from "./orders";
+import type { ExpectedPaymentView, OrderChannel, OrderDeliveryView, OrderItemView } from "./orders";
 
 /**
  * BullMQ queue names shared by the api (producer) and the workers (consumers).
@@ -24,7 +24,7 @@ export interface QrSheetJob {
 }
 
 /**
- * `pdf:receipt` — internal receipt of a pickup order (not a tax document), generated when it is accepted.
+ * `pdf:receipt` — internal receipt of a pickup or delivery order (not a tax document), generated when it is accepted.
  * Carries the data to print, like QrSheetJob: the order items are an immutable snapshot anyway.
  * When `email` is set, the worker enqueues the confirmation email with the PDF attached once it is stored.
  */
@@ -45,9 +45,13 @@ export interface ReceiptJob {
     customerName: string;
     customerPhone: string;
     items: OrderItemView[];
+    subtotal: number;
+    deliveryFee: number;
     total: number;
     currency: string;
     note: string;
+    delivery: OrderDeliveryView | null;
+    expectedPayment: ExpectedPaymentView | null;
   };
   email: { to: string; trackingUrl: string } | null;
 }

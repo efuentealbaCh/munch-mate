@@ -71,3 +71,26 @@ describe("checkTransition (pickup)", () => {
     expect(nextStatuses("pickup", "ready", kitchen)).toEqual(["picked_up"]);
   });
 });
+
+describe("checkTransition (delivery)", () => {
+  it("asks for an ETA when accepting and lets riders take it out and hand it over", () => {
+    expect(checkTransition("delivery", "pending", "accepted", kitchen)).toEqual({
+      ok: true,
+      requiresReason: false,
+      requiresReadyTime: true,
+    });
+    expect(checkTransition("delivery", "ready", "out_for_delivery", rider).ok).toBe(true);
+    expect(checkTransition("delivery", "out_for_delivery", "delivered", rider).ok).toBe(true);
+    expect(checkTransition("delivery", "ready", "out_for_delivery", kitchen).ok).toBe(true);
+  });
+
+  it("keeps riders out of the kitchen steps and never picks up a delivery", () => {
+    expect(checkTransition("delivery", "pending", "accepted", rider)).toEqual({ ok: false, reason: "forbidden" });
+    expect(checkTransition("delivery", "preparing", "ready", rider)).toEqual({ ok: false, reason: "forbidden" });
+    expect(checkTransition("delivery", "ready", "picked_up", kitchen)).toEqual({
+      ok: false,
+      reason: "invalid_transition",
+    });
+    expect(nextStatuses("delivery", "out_for_delivery", rider)).toEqual(["delivered"]);
+  });
+});

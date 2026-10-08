@@ -109,6 +109,8 @@ export interface PublicMenu {
     acceptingOrders: boolean;
     /** Whether customers may order for pickup from this menu (owner setting). */
     pickupEnabled: boolean;
+    /** Whether customers may order for delivery (owner setting; zones at `/delivery-zones`). */
+    deliveryEnabled: boolean;
   };
   categories: { id: string; name: string; description: string; products: PublicProduct[] }[];
 }
