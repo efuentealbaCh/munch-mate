@@ -3,6 +3,8 @@ dist/
 .next/
 out/
 coverage/
+test-results/
+playwright-report/
 *.tsbuildinfo
 
 # Secrets — only .env.example and SOPS-encrypted files are committed
@@ -17,3 +19,9 @@ backups/
 .DS_Store
 *.log
 next-env.d.ts
+
+# Temporary file of infra/scripts/smoke.sh (deleted at the end of the run)
+.smoke-photo-*.jpg
+
+# Photos downloaded by infra/scripts/seed-demo.mjs
+.demo-cache/

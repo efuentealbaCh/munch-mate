@@ -14,11 +14,18 @@ Multi-tenant SaaS for restaurant orders: **dine-in via table QR**, **pickup** an
 
 Domain rules that always apply:
 
-- **Tenant isolation**: every tenant-scoped collection has `restaurantId`, and repositories always filter by it. Never trust a `restaurantId` sent by the client — take it from the authenticated membership or the resolved public slug.
+- **Tenant isolation**: every tenant-scoped collection has `restaurantId`, and repositories always filter by it (it is the first parameter of every tenant-scoped repository method). Never trust a `restaurantId` sent by the client — take it from the authenticated membership or the resolved public slug.
+- **Tenant routes** live under `/api/restaurants/:restaurantId/...` and use `@UseGuards(RestaurantAccessGuard)` (+ `@RestaurantRoles(...)` when only some roles may act); handlers read the tenant with `@CurrentTenant()`. Non-members get **404** `RESTAURANT_NOT_FOUND` (never 403), so other tenants cannot be probed; members without the role get 403 `FORBIDDEN_ROLE`; suspended restaurants are read-only.
+- **A restaurant always has at least one owner.** Any change to memberships goes through `MembersService` (transaction + `membershipVersion` bump, which prevents two owners demoting each other at once).
+- **Menu permissions**: reading the admin menu → any member; marking products/options "agotado" (`available`) → owner, cashier, kitchen; everything else (prices, names, photos, categories, modifier groups, order) → owner only.
+- **Modifier groups are a reusable library**: products reference them by id (`modifierGroupIds`, in display order); editing a group affects every product using it. References to categories or groups must belong to the same restaurant (rejected with 400 otherwise). Options keep their ids across edits.
+- **Two flags on products**: `available=false` = "Agotado" (shown, not orderable); `visible=false` = hidden from the public menu. Categories have `active`. The public menu (`GET /api/public/restaurants/:slug/menu`) only shows active categories, visible products and non-empty categories.
 - **Money as integers** in the currency's minor unit, always stored with `currency`. Never use floating point for amounts.
 - **Order items are price snapshots**; the server computes all totals from current product data — clients only send IDs and quantities.
 - **Order status changes go through the state machine** (invalid transition → 409) and are recorded in `statusHistory`.
-- Guest orders are accessed only with their `accessToken`, never by order number alone.
+- Guest orders are accessed only with their `accessToken`, never by order number alone. The token is derived (HMAC with `ORDER_TOKEN_SECRET`) from the browser's `clientOrderId`, only its hash is stored, and it always travels in request bodies (`/api/public/orders/lookup`), never in api URLs.
+- **Order creation is idempotent per `clientOrderId`**: a retried submission returns the same order and token. Carts are priced by `priceOrder()` (`modules/orders/order-pricing.ts`) against the current menu — sold-out items, hidden products and modifier rules are enforced there.
+- **The state machine lives in `@app/utils` (`checkTransition` / `nextStatuses`)**, shared by the api (enforcement) and the web (which buttons to show). Transitions use a conditional update on the current status, so two staff members cannot apply conflicting changes (409 `ORDER_CHANGED`).
 
 ---
 
@@ -64,6 +71,8 @@ When bumping an image version, update it in `compose.yaml` **and** in the Testco
 - **BullMQ 6** no longer exposes `worker.client`; health checks use their own ioredis connection.
 - **Git Bash on Windows** rewrites absolute paths passed to containers (`/garage` → `C:/Program Files/Git/garage`). Shell scripts export `MSYS_NO_PATHCONV=1`. Run the `infra/scripts/*.sh` (and the pnpm scripts that call them) from Git Bash, WSL or Linux.
 - ioredis `quit()` never resolves while Valkey is unreachable: shutdown code must `disconnect()` when the client is not `ready`.
+- **Docker Desktop on Windows intermittently hangs/resets connections forwarded over IPv6 (`::1`)**, and `localhost` resolves to `::1` first. Everything that talks to local containers forces IPv4: Jest `setupFiles` (`ipv4-first.js`, `dns.setDefaultResultOrder("ipv4first")`), `curl -4` in `smoke.sh`, `--host-resolver-rules` in the Playwright config. Not an issue on Linux.
+- **Ports 80/443 must be free** for `pnpm stack:up` (XAMPP/IIS/another Apache take them on IPv4 and answer instead of Caddy — the smoke test then fails with Apache error pages).
 
 ---
 
@@ -77,8 +86,8 @@ When bumping an image version, update it in `compose.yaml` **and** in the Testco
 │   └── workers/              # NestJS standalone app — BullMQ processors
 ├── packages/
 │   ├── types/                # Shared types, DTOs, job payloads, WS event names
-│   ├── schemas/              # Shared Mongoose schemas (created in phase 1)
-│   └── utils/                # Common helpers (created when first needed)
+│   ├── schemas/              # Shared Mongoose schemas (created when the workers first need one)
+│   └── utils/                # Pure helpers shared by api and web (slug rules); has its own unit tests
 ├── infra/
 │   ├── caddy/Caddyfile
 │   ├── docker/               # nest.Dockerfile (api + workers, ARG APP), web.Dockerfile
@@ -89,6 +98,7 @@ When bumping an image version, update it in `compose.yaml` **and** in the Testco
 ├── compose.yaml              # Base: all services
 ├── compose.dev.yaml          # Dev overrides: ports on 127.0.0.1, mailpit
 ├── compose.prod.yaml         # Prod overrides: restart policies, log rotation, Caddy ports
+├── compose.local.yaml        # Local release gate only: Mailpit for outgoing email (never on the VPS)
 ├── .env.example              # Every variable documented, no real values
 ├── .sops.yaml                # SOPS rules (age recipients) — pending, added with the first VPS deploy
 ├── CLAUDE.md                 # This file
@@ -117,12 +127,25 @@ Always install dependencies with `pnpm add` from the root or from the correspond
 
 ### Responsibilities
 
-- Authentication: issue and verify JWTs (access + refresh tokens)
+- Authentication: sessions in httpOnly cookies (see below)
 - Business and domain logic
 - CRUD operations on MongoDB via Mongoose (Repository Pattern)
 - Enqueue async jobs in BullMQ
 - Real-time events through the Socket.IO gateway
 - Rate limiting per IP/user (`@nestjs/throttler` with Redis storage, so limits are shared across replicas)
+
+### Authentication
+
+Web and api share the same origin (Caddy routes `/api/*`), so the session lives in cookies the browser JS never sees.
+
+- **Access token**: short-lived JWT (15 min) in cookie `mm_at` — `HttpOnly; Secure; SameSite=Lax; Path=/`.
+- **Refresh token**: opaque random value in cookie `mm_rt` — `HttpOnly; Secure; SameSite=Strict; Path=/api/auth`. Stored **hashed** in a `sessions` collection (TTL index), **rotated on every use**; reusing an already-rotated token revokes the whole session family (theft detection). Logout and password change revoke sessions server-side.
+- **Never** put tokens in `localStorage`, response bodies or URLs.
+- **CSRF**: `SameSite` cookies plus an `Origin` check on every state-changing request (`POST/PUT/PATCH/DELETE`) — reject when it does not match `APP_URL`.
+- **Socket.IO** authenticates from the same cookie in the handshake (same origin, no token in JS).
+- **Passwords**: hashed with **argon2id** (`argon2` package). It is a native module: approve it in `allowBuilds` and verify it loads in the Alpine image.
+- **Email verification**: **mandatory for owners** (cannot create or publish a restaurant until verified), **optional for customers**. Verification and invitation tokens are random, single-use, stored hashed, expire in 24 h, and are delivered through the `email` queue.
+- Login, register and password-reset endpoints have stricter rate limits than the rest of the API.
 
 ### Bootstrap
 
@@ -185,10 +208,25 @@ apps/api/src/
 
 - Use the **Repository Pattern**: services never use Mongoose directly — they go through a Repository.
 - DTOs with `class-validator` + `class-transformer` in every controller.
-- Global `HttpExceptionFilter` for consistent error responses.
+- Global `HttpExceptionFilter`: every error body is `{ statusCode, code, message, details? }` (`ApiErrorBody` in `@app/types`). Throw Nest exceptions with `apiError("STABLE_CODE", "Mensaje en español")`; the frontend branches on `code`, never on `message`.
+- Every route requires a session by default (global `AccessTokenGuard`); opt out with `@Public()`. Global guard order: throttler → origin (CSRF) → session.
+- Rate limits are shared across replicas through Valkey (`ValkeyThrottlerStorage`, in-house because `@nest-lab/throttler-storage-redis` does not declare Nest 12 support). Global default 300/min per IP; tighten sensitive routes with `@Throttle`.
 - Use `ConfigModule` with a Zod validation schema — the app must fail to start if a required variable is missing.
 - Global setup (prefix, pipes, logger, shutdown hooks) lives in `configureApp()` (`src/app.setup.ts`), shared by `main.ts` and the e2e tests.
 - `GET /api/health` must return 200 only when Mongo and Valkey are reachable (used by Docker healthchecks).
+
+---
+
+## Web — Next.js
+
+- **UI**: Tailwind CSS v4 + shadcn/ui (`components/ui/*`, added with the shadcn CLI). Theme tokens in `app/globals.css` (base stone, primary orange-700 for AA contrast with white text); change the brand by editing `--primary`, `--ring`, `--brand-soft*`. System font (no `next/font`, so builds need no font download). Light mode only for now.
+- **Text in Spanish (Chile)**, routes in Spanish (`/ingresar`, `/registro`, `/verificar-email`, `/invitacion`, …) — emails from the api link to them. Mobile-first: staff use phones.
+- **API access only through `lib/api.ts`** (same-origin `/api/...`): typed errors (`ApiError` with `code`), automatic single-flight refresh on 401 `UNAUTHENTICATED`, never refreshes on auth endpoints. Show the api's `message` to users; branch on `code`.
+- **Sessions are checked client-side** (`AuthProvider` → `/api/auth/me`): the cookies are httpOnly and `mm_rt` is scoped to `/api/auth`, so Next middleware/proxy cannot see the session. Protected areas render a skeleton, then redirect to `/ingresar?next=…`.
+- `next` redirect params go through `lib/safe-next.ts` (open-redirect protection).
+- Forms: react-hook-form + zod schemas in `lib/validation.ts` that mirror the api DTOs. Slug rules come from `@app/utils`, never re-implemented.
+- No global state library; React context for auth, small hooks (`hooks/`) for data.
+- Tests: **vitest** for pure logic in `lib/` (`pnpm --filter @app/web test`); **Playwright** (`pnpm test:web`) for user flows against the local prod stack (`https://localhost`, reads emails from Mailpit). Playwright is not part of CI yet.
 
 ---
 
@@ -207,8 +245,10 @@ workers ──(@socket.io/redis-emitter)─────────────�
 
 ### WebSocket rules
 
-- Authenticate in the handshake middleware (`socket.handshake.auth.token`) — reject before `connection`.
-- Each socket joins the room `user:{userId}`; emit to rooms, never store socket IDs in the database.
+- Same origin as the app (`/socket.io` through Caddy). `RedisIoAdapter` **rejects handshakes whose `Origin` is not `APP_URL`**: browsers send cookies on WebSocket upgrades, so this prevents cross-site WebSocket hijacking.
+- **Staff** authenticate with the same httpOnly `mm_at` cookie as the REST api (read in `handleConnection`, no token in JS) and join `restaurant:<id>` via `restaurant.subscribe` — membership is checked like `RestaurantAccessGuard`. **Customers** are anonymous and join `order:<id>` via `order.subscribe` with their tracking token.
+- Emit with `RealtimeService` (`toRestaurant(id)` / `toOrder(id)`); never store socket IDs in the database. Events: `order.created`, `order.updated` (staff), `order.status` (customer, public view), `restaurant.accepting`, `qr-sheet.ready`.
+- Known limitation: a staff socket keeps its subscription until it disconnects, even if the membership is revoked meanwhile; the web reconnects on refresh, which re-checks.
 - Event names and payload types live in `packages/types` — shared by api, workers and web.
 - Workers never import the gateway: they emit through `@socket.io/redis-emitter` on the same Valkey.
 - MongoDB Change Streams are available (replica set) — use them only when an event must react to writes made outside the api; otherwise emit explicitly from the service.
@@ -270,7 +310,7 @@ The workers app is a NestJS **standalone application** (`NestFactory.createAppli
 
 - **Idempotency**: every processor must tolerate the same job twice. Use deterministic `jobId`s and check state before side effects.
 - Every job has `attempts` + exponential `backoff`. Failed jobs stay in the `failed` set; never delete them automatically.
-- Job payload types live in `packages/types`; payloads carry IDs, not whole documents.
+- Job payload types live in `packages/types`; payloads carry IDs, not whole documents. Exception: `email` jobs carry the rendered data (name, one-time link), because only the token hash exists in MongoDB. Never log email job payloads.
 - PDFs are generated with a lightweight library (`pdfkit` or `@react-pdf/renderer`) — **no headless browser** — and uploaded to Garage; the job result stores the object key.
 - Graceful shutdown: on `SIGTERM`, let in-flight jobs finish (`worker.close()`), then disconnect.
 
@@ -328,9 +368,19 @@ const s3 = new S3Client({
 
 ### Storage rules
 
-- Buckets are private. Clients upload/download through **presigned URLs**, signed against `S3_PUBLIC_ENDPOINT` (`https://s3.<domain>`), not the internal one.
-- First-time setup (`infra/scripts/garage-init.sh`): assign the layout, create the bucket and the app key, and grant it read/write on the bucket. Run once per environment.
-- Store only object keys in MongoDB, never full URLs.
+Two buckets:
+
+| Bucket | Access | Content |
+| ------ | ------ | ------- |
+| `S3_BUCKET` (`munchmate`) | **Private**: only signed requests (presigned URLs via `s3.<domain>` when clients need them) | PDFs and anything not public (phase 3+) |
+| `S3_MEDIA_BUCKET` (`munchmate-media`) | **Public read** through Garage's website endpoint, served at `media.<domain>` (Caddy rewrites the Host to `<bucket>.web.garage.localhost`); read-only (405 on writes) | Menu photos, logos |
+
+- **Images are uploaded through the api, never directly to Garage**: multipart field `file`, max 8 MB (`MENU_LIMITS`), re-encoded by `infra/storage/image-processor.ts` (sharp) to WebP variants. Re-encoding strips EXIF/GPS metadata, applies orientation, validates the real bytes (the client's content type is ignored) and limits pixels (decompression bombs). Products: 4:3 `sm/md/lg` (160/480/960 px); logos: square `sm/md` (96/256 px, letterboxed).
+- Use `MediaService` (`storeImage` / `deleteImage` / `productImage` / `logoImage`): it stores `<prefix>/<random id>-<variant>.webp` and the document keeps only the base key. Every upload gets a new random id, so objects are **immutable** and served with `Cache-Control: public, max-age=31536000, immutable`. Deleting old variants is best effort (logged, never fails the request).
+- Key prefixes are tenant-scoped: `restaurants/<restaurantId>/products/<productId>/…`, `restaurants/<restaurantId>/logo/…`.
+- Store only object keys in MongoDB, never full URLs; URLs are built with `MEDIA_PUBLIC_URL`.
+- In dev, media is served at `http://munchmate-media.web.garage.localhost:3902` (browsers resolve `*.localhost`; Node may not — tests connect to 127.0.0.1 with the Host header, see `apps/api/test/support/garage.ts`).
+- First-time setup (`infra/scripts/garage-init.sh`, idempotent): layout, app key, private bucket, public media bucket (website enabled).
 
 ---
 
@@ -394,21 +444,22 @@ s3.{$DOMAIN} {
 
 All variables are documented in `.env.example`. Real values live in `.env` on the server (`chmod 600`) and are versioned encrypted with SOPS + age (`.env.prod.enc.env`).
 
+- The same `.env` serves `pnpm dev` (apps on the host) and Docker. Values that differ per context (`APP_URL`, `MONGODB_URI`, `VALKEY_URL`) are **built in `compose.yaml`** for containers; the `.env` entries are only read by the apps on the host.
+- `.env` is also sourced by the shell scripts (`. ./.env`): **quote any value containing spaces, `<`, `>` or `&`**.
+- Each app validates its own variables with Zod at startup (`src/config/env.validation.ts`) — that file is the source of truth.
+
 ### api
 
 ```
-NODE_ENV            development | production
+NODE_ENV            development | test | production
 MONGODB_URI
 VALKEY_URL          redis://:password@valkey:6379
-JWT_ACCESS_SECRET
-JWT_REFRESH_SECRET
-S3_ENDPOINT         http://garage:3900
-S3_PUBLIC_ENDPOINT  https://s3.<domain>
-S3_REGION
-S3_BUCKET
-S3_ACCESS_KEY_ID
-S3_SECRET_ACCESS_KEY
-APP_URL             https://<domain>
+APP_URL             https://<domain> (http://localhost:3100 in dev) — email links, CSRF origin, cookie Secure flag
+JWT_ACCESS_SECRET   ≥ 32 chars
+S3_ENDPOINT         http://garage:3900 (http://localhost:3900 in dev)
+S3_REGION / S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY
+S3_MEDIA_BUCKET     public media bucket (munchmate-media)
+MEDIA_PUBLIC_URL    https://media.<domain> (dev: http://munchmate-media.web.garage.localhost:3902)
 ```
 
 ### workers
@@ -417,9 +468,10 @@ APP_URL             https://<domain>
 NODE_ENV
 MONGODB_URI
 VALKEY_URL
-S3_ENDPOINT / S3_REGION / S3_BUCKET / S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY
-SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS / SMTP_FROM
-VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY      (web-push)
+HEALTH_PORT         internal healthcheck port (3001)
+SMTP_HOST / SMTP_PORT / SMTP_SECURE / SMTP_USER / SMTP_PASS / MAIL_FROM
+S3_ENDPOINT / S3_REGION / S3_BUCKET / S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY   (phase 3, PDFs)
+VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY      (phase 6, web-push)
 ```
 
 ### web
@@ -463,11 +515,13 @@ pnpm build && pnpm typecheck
 pnpm test                # unit
 pnpm test:int            # integration (Testcontainers — Docker must be running)
 pnpm test:e2e            # api end-to-end (Testcontainers + Supertest)
+pnpm test:web            # Playwright browser flows — needs `pnpm stack:up` running (first time: pnpm --filter @app/web exec playwright install chromium)
 
 # Production stack on the local machine (release gate) — stop the dev infra first
-pnpm stack:up            # compose.yaml + compose.prod.yaml, DOMAIN=localhost, builds images
+pnpm stack:up            # compose.yaml + compose.prod.yaml + compose.local.yaml (Mailpit), DOMAIN=localhost, builds images
 pnpm stack:init          # same as infra:init, for this stack (needed only on fresh volumes)
 pnpm smoke               # infra/scripts/smoke.sh against https://localhost
+pnpm seed:demo           # 3 demo restaurants with full menus and photos (demo@munchmate.local / "munchmate demo 2026"); idempotent
 pnpm stack:down
 
 # Deploy (from main, after CI pushed the images)
@@ -499,6 +553,13 @@ The goal: **anything that passes the release gate locally can be deployed to the
 - Processors are tested twice with the same job to prove idempotency.
 - The smoke test (`infra/scripts/smoke.sh`) runs against the production stack. **Each phase extends it** with the flows it introduces.
   - Phase 0 (implemented): every service healthy, HTTP→HTTPS redirect, web served, `/api/health` ok, `/api/*` routed to the api, signed S3 upload/download through `s3.<domain>`, anonymous S3 access denied, `system:ping` job round trip inside the workers container.
+  - Phase 1a (implemented): protected route without session → 401, unknown login → 401, cross-origin POST → 403. **Local stack only** (`DOMAIN=localhost`, creates data): register through Caddy, `Secure`+`HttpOnly` session cookie, cookie authenticates `/me`, verification email delivered to Mailpit.
+  - Phase 1b (implemented, local only): verify the email with the token read from Mailpit, create a restaurant (generated slug, owner role), invite staff and receive the invitation email, anonymous access to the restaurant → 401.
+  - Phase 2 (implemented): unknown public menu → 404, media host answers and is read-only (405). Local only: create category + product, upload a photo (re-encoded, served by `media.<domain>` as `image/webp`), public menu shows the product.
+  - Phase 3 (implemented): unknown table QR → 404, Socket.IO handshake through Caddy, foreign-origin handshake → 403. Local only: open the restaurant, create a table, order from its QR (server-priced total), the board lists and accepts it, customer tracking sees `accepted`, the workers generate the QR-sheet PDF.
+  - Non-ASCII text in smoke requests must be written as JSON escapes (`\u00e1`): Git Bash on Windows passes non-ASCII arguments to curl in the console code page.
+  - On the VPS the smoke test must never create users or send real emails.
+- Registration is rate-limited to 5/min per IP. `pnpm smoke` registers 1 user and `pnpm test:web` 4: running both plus manual tests within the same minute hits 429 — wait a minute between heavy runs.
   - Phase 1+: login and an authenticated request through Caddy; Socket.IO authenticates and receives an event; enqueuing an email job results in a message in Mailpit (local) or a completed job (VPS).
 
 ---

@@ -16,9 +16,16 @@ BASE="https://$DOMAIN"
 S3_URL="https://s3.$DOMAIN/$S3_BUCKET/smoke-$(date +%s).txt"
 
 CURL="curl -sS --max-time 15"
+LOCAL=false
 if [ "$DOMAIN" = "localhost" ]; then
-  # Local stack: Caddy's internal CA is not trusted by the host, and s3.localhost may not resolve.
-  CURL="$CURL -k --resolve s3.localhost:443:127.0.0.1"
+  LOCAL=true
+  # Local release gate (compose.local.yaml): emails go to a Mailpit container.
+  COMPOSE="$COMPOSE -f compose.local.yaml"
+  EXPECTED_SERVICES="$EXPECTED_SERVICES mailpit"
+  # Caddy's internal CA is not trusted by the host, and s3.localhost may not resolve.
+  # -4: Docker Desktop on Windows intermittently hangs connections forwarded over IPv6 (::1), and curl
+  # tries ::1 first for localhost.
+  CURL="$CURL -4 -k --resolve s3.localhost:443:127.0.0.1 --resolve media.localhost:443:127.0.0.1"
 fi
 SIGNED="--aws-sigv4 aws:amz:$S3_REGION:s3 --user $S3_ACCESS_KEY_ID:$S3_SECRET_ACCESS_KEY -H x-amz-content-sha256:UNSIGNED-PAYLOAD"
 
@@ -89,6 +96,180 @@ const { Queue, QueueEvents } = require("bullmq");
 });
 EOF
 then pass "queue round trip (system:ping)"; else fail "queue round trip (system:ping)"; fi
+
+# 7. Auth through Caddy. Safe everywhere: no data is created and no email is sent.
+body=$($CURL "$BASE/api/auth/me" || true)
+case "$body" in
+  *'"UNAUTHENTICATED"'*) pass "protected route without session → 401" ;;
+  *) fail "protected route without session: $body" ;;
+esac
+body=$($CURL -H "Origin: $BASE" -H "Content-Type: application/json" \
+  -d '{"email":"smoke-nobody@example.com","password":"wrong-password"}' "$BASE/api/auth/login" || true)
+case "$body" in
+  *'"INVALID_CREDENTIALS"'*) pass "login with unknown account → 401" ;;
+  *) fail "login with unknown account: $body" ;;
+esac
+code=$(status -H "Origin: https://evil.example" -H "Content-Type: application/json" -d '{}' "$BASE/api/auth/login")
+if [ "$code" = "403" ]; then pass "cross-origin POST rejected (403)"; else fail "cross-origin POST returned $code"; fi
+
+# Phase 3, safe everywhere: unknown table codes are rejected.
+code=$(status "$BASE/api/public/tables/smokenotreal")
+if [ "$code" = "404" ]; then pass "unknown table QR → 404"; else fail "unknown table QR returned $code"; fi
+# Socket.IO through Caddy: the long-polling handshake opens a session ("0{...") for the app's origin only.
+if $CURL -H "Origin: $BASE" "$BASE/socket.io/?EIO=4&transport=polling" | grep -q '^0{"sid"'; then
+  pass "Socket.IO handshake through Caddy"
+else
+  fail "Socket.IO handshake"
+fi
+code=$(status -H "Origin: https://evil.example" "$BASE/socket.io/?EIO=4&transport=polling")
+if [ "$code" = "403" ]; then pass "Socket.IO rejects foreign origins (403)"; else fail "foreign-origin handshake returned $code"; fi
+
+# Phase 2, safe everywhere: public menu routing and the read-only media host.
+body=$($CURL "$BASE/api/public/restaurants/smoke-no-existe/menu" || true)
+case "$body" in
+  *'"MENU_NOT_FOUND"'*) pass "unknown public menu → 404" ;;
+  *) fail "unknown public menu: $body" ;;
+esac
+code=$(status "https://media.$DOMAIN/smoke-no-existe.webp")
+if [ "$code" = "404" ]; then pass "media host answers (404 for unknown file)"; else fail "media host returned $code"; fi
+code=$(status -X POST "https://media.$DOMAIN/x")
+if [ "$code" = "405" ]; then pass "media host is read-only (405)"; else fail "media POST returned $code"; fi
+
+# 8. Full registration flow — local stack only (creates a user and sends an email to Mailpit).
+if [ "$LOCAL" = true ]; then
+  jar=$(mktemp)
+  headers=$(mktemp)
+  email="smoke-$(date +%s)@example.com"
+  code=$($CURL -o /dev/null -w '%{http_code}' -c "$jar" -D "$headers" -H "Origin: $BASE" \
+    -H "Content-Type: application/json" \
+    -d "{\"email\":\"$email\",\"password\":\"smoke test password\",\"name\":\"Smoke\"}" \
+    "$BASE/api/auth/register" || true)
+  if [ "$code" = "201" ]; then pass "register through Caddy (201)"; else fail "register returned $code"; fi
+
+  if grep -i '^set-cookie: mm_at=' "$headers" | grep -qi 'secure' && grep -i '^set-cookie: mm_at=' "$headers" | grep -qi 'httponly'; then
+    pass "session cookie is Secure + HttpOnly"
+  else
+    fail "session cookie flags: $(grep -i '^set-cookie: mm_at=' "$headers" | cut -c1-120)"
+  fi
+
+  code=$(status -b "$jar" "$BASE/api/auth/me")
+  if [ "$code" = "200" ]; then pass "session cookie authenticates /api/auth/me"; else fail "/api/auth/me with session returned $code"; fi
+
+  delivered=false
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    if curl -sS --max-time 5 "http://127.0.0.1:8025/api/v1/search?query=to:$email" | grep -q '"total":[1-9]'; then
+      delivered=true
+      break
+    fi
+    sleep 1
+  done
+  if [ "$delivered" = true ]; then pass "verification email delivered (Mailpit)"; else fail "verification email not delivered within 15s"; fi
+
+  # Follow the emailed link like a user would: read the token from Mailpit and verify.
+  message_id=$(curl -sS "http://127.0.0.1:8025/api/v1/search?query=to:$email" | sed -n 's/.*"ID":"\([^"]*\)".*/\1/p' | head -1)
+  token=$(curl -sS "http://127.0.0.1:8025/api/v1/message/$message_id" | grep -o 'token=[A-Za-z0-9_-]*' | head -1 | cut -d= -f2)
+  code=$(status -H "Origin: $BASE" -H "Content-Type: application/json" -d "{\"token\":\"$token\"}" "$BASE/api/auth/verify-email")
+  if [ "$code" = "204" ]; then pass "email verified with the emailed link"; else fail "verify-email returned $code"; fi
+
+  # Phase 1b: a verified owner creates a restaurant and invites staff.
+  body=$($CURL -b "$jar" -H "Origin: $BASE" -H "Content-Type: application/json" \
+    -d '{"name":"Smoke Pic\u00e1"}' "$BASE/api/restaurants" || true)
+  # JSON escape instead of the literal accented letter: Git Bash on Windows hands non-ASCII arguments to curl in the console code page, not UTF-8.
+  restaurant_id=$(printf '%s' "$body" | sed -n 's/.*"id":"\([0-9a-f]\{24\}\)".*/\1/p')
+  case "$body" in
+    *'"slug":"smoke-pica'*'"myRoles":["owner"]'*) pass "restaurant created with generated slug" ;;
+    *) fail "create restaurant: $body" ;;
+  esac
+
+  staff="smoke-staff-$(date +%s)@example.com"
+  code=$(status -b "$jar" -H "Origin: $BASE" -H "Content-Type: application/json" \
+    -d "{\"email\":\"$staff\",\"roles\":[\"kitchen\"]}" "$BASE/api/restaurants/$restaurant_id/invitations")
+  if [ "$code" = "201" ]; then pass "staff invited (201)"; else fail "invite returned $code"; fi
+  delivered=false
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    if curl -sS --max-time 5 "http://127.0.0.1:8025/api/v1/search?query=to:$staff" | grep -q '"total":[1-9]'; then
+      delivered=true
+      break
+    fi
+    sleep 1
+  done
+  if [ "$delivered" = true ]; then pass "invitation email delivered (Mailpit)"; else fail "invitation email not delivered within 15s"; fi
+
+  code=$(status "$BASE/api/restaurants/$restaurant_id")
+  if [ "$code" = "401" ]; then pass "restaurant requires a session (401)"; else fail "anonymous restaurant read returned $code"; fi
+
+  # Phase 2: build a one-product menu with a photo and read it back publicly.
+  slug=$(printf '%s' "$body" | sed -n 's/.*"slug":"\([a-z0-9-]*\)".*/\1/p')
+  menu="$BASE/api/restaurants/$restaurant_id/menu"
+  category_id=$($CURL -b "$jar" -H "Origin: $BASE" -H "Content-Type: application/json" \
+    -d '{"name":"Smoke"}' "$menu/categories" | sed -n 's/.*"id":"\([0-9a-f]\{24\}\)".*/\1/p')
+  product_id=$($CURL -b "$jar" -H "Origin: $BASE" -H "Content-Type: application/json" \
+    -d "{\"categoryId\":\"$category_id\",\"name\":\"Smoke Completo\",\"price\":3990}" "$menu/products" |
+    sed -n 's/.*"id":"\([0-9a-f]\{24\}\)".*/\1/p')
+  if [ -n "$product_id" ]; then pass "category and product created"; else fail "could not create category/product"; fi
+
+  # Relative path on purpose: Git Bash does not translate "/tmp/..." inside curl -F "file=@...".
+  image=".smoke-photo-$$.jpg"
+  # 240x240 JPEG, embedded so the smoke test needs no image tools.
+  printf '%s' '/9j/2wBDAA0JCgsKCA0LCgsODg0PEyAVExISEyccHhcgLikxMC4pLSwzOko+MzZGNywtQFdBRkxOUlNSMj5aYVpQYEpRUk//2wBDAQ4ODhMREyYVFSZPNS01T09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT0//wAARCADwAPADASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFgEBAQEAAAAAAAAAAAAAAAAAAAUG/8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAwDAQACEQMRAD8AmgIjTgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP/Z' |
+    base64 -d > "$image"
+  body=$($CURL -b "$jar" -H "Origin: $BASE" -X PUT -F "file=@$image;type=image/jpeg" "$menu/products/$product_id/image" || true)
+  photo_url=$(printf '%s' "$body" | sed -n 's/.*"md":"\([^"]*\)".*/\1/p')
+  case "$photo_url" in
+    "https://media.$DOMAIN/"*-md.webp) pass "photo uploaded and re-encoded" ;;
+    *) fail "photo upload: $body" ;;
+  esac
+  content_type=$($CURL -o /dev/null -w '%{content_type}' "$photo_url" || true)
+  if [ "$content_type" = "image/webp" ]; then pass "photo served publicly by media host"; else fail "photo fetch content-type '$content_type'"; fi
+
+  if $CURL "$BASE/api/public/restaurants/$slug/menu" | grep -q '"Smoke Completo"'; then
+    pass "public menu shows the product"
+  else
+    fail "public menu for $slug does not show the product"
+  fi
+  rm -f "$image"
+
+  # Phase 3: a table QR order goes to the kitchen and back to the customer; the QR sheet PDF is generated.
+  json='-H Content-Type:application/json'
+  code=$(status -b "$jar" -H "Origin: $BASE" $json -X PUT -d '{"acceptingOrders":true}' "$BASE/api/restaurants/$restaurant_id/accepting-orders")
+  if [ "$code" = "200" ]; then pass "restaurant opened for orders"; else fail "accepting-orders returned $code"; fi
+  table_token=$($CURL -b "$jar" -H "Origin: $BASE" $json -d '{"label":"Mesa 1"}' "$BASE/api/restaurants/$restaurant_id/tables" |
+    sed -n 's/.*"token":"\([a-z0-9]*\)".*/\1/p')
+  if $CURL "$BASE/api/public/tables/$table_token" | grep -q '"tableLabel":"Mesa 1"'; then pass "table QR resolves"; else fail "table QR $table_token"; fi
+
+  client_order_id=$(node -e 'console.log(crypto.randomUUID())' 2>/dev/null || cat /proc/sys/kernel/random/uuid)
+  body=$($CURL -H "Origin: $BASE" $json \
+    -d "{\"clientOrderId\":\"$client_order_id\",\"items\":[{\"productId\":\"$product_id\",\"quantity\":2,\"modifiers\":[]}]}" \
+    "$BASE/api/public/tables/$table_token/orders" || true)
+  access_token=$(printf '%s' "$body" | sed -n 's/.*"accessToken":"\([A-Za-z0-9_-]*\)".*/\1/p')
+  case "$body" in
+    *'"status":"pending"'*'"total":7980'*) pass "order placed from the table, priced by the server" ;;
+    *) fail "place order: $body" ;;
+  esac
+
+  order_id=$($CURL -b "$jar" "$BASE/api/restaurants/$restaurant_id/orders" | sed -n 's/.*"id":"\([0-9a-f]\{24\}\)".*/\1/p' | head -1)
+  code=$(status -b "$jar" -H "Origin: $BASE" $json -d '{"status":"accepted"}' "$BASE/api/restaurants/$restaurant_id/orders/$order_id/status")
+  if [ "$code" = "200" ]; then pass "kitchen board lists and accepts the order"; else fail "accept order returned $code"; fi
+  if $CURL -H "Origin: $BASE" $json -d "{\"accessToken\":\"$access_token\"}" "$BASE/api/public/orders/lookup" | grep -q '"status":"accepted"'; then
+    pass "customer tracking sees the new status"
+  else
+    fail "customer tracking"
+  fi
+
+  job_id=$($CURL -b "$jar" -H "Origin: $BASE" -X POST "$BASE/api/restaurants/$restaurant_id/tables/qr-sheet" |
+    sed -n 's/.*"jobId":"\([A-Za-z0-9_-]*\)".*/\1/p')
+  pdf_ready=false
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    content_type=$($CURL -b "$jar" -o /dev/null -w '%{http_code} %{content_type}' "$BASE/api/restaurants/$restaurant_id/tables/qr-sheet/$job_id" || true)
+    if [ "$content_type" = "200 application/pdf" ]; then
+      pdf_ready=true
+      break
+    fi
+    sleep 1
+  done
+  if [ "$pdf_ready" = true ]; then pass "QR sheet PDF generated by the workers"; else fail "QR sheet not ready: $content_type"; fi
+  rm -f "$jar" "$headers"
+fi
 
 echo
 if [ "$failures" -gt 0 ]; then

@@ -1,15 +1,23 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
+import { Providers } from "@/components/providers";
+import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Munch Mate",
+  title: { default: "Munch Mate", template: "%s · Munch Mate" },
   description: "Pedidos para restaurantes: mesa, retiro y delivery.",
+};
+
+export const viewport: Viewport = {
+  themeColor: "#c2410c",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="es">
-      <body>{children}</body>
+    <html lang="es-CL">
+      <body className="min-h-dvh">
+        <Providers>{children}</Providers>
+      </body>
     </html>
   );
 }

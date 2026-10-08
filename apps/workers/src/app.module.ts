@@ -5,7 +5,9 @@ import { ConfigModule, ConfigService } from "@nestjs/config";
 import { MongooseModule } from "@nestjs/mongoose";
 import { LoggerModule } from "nestjs-pino";
 import { envValidationSchema, type WorkersEnv } from "./config/env.validation";
+import { EmailModule } from "./email/email.module";
 import { HealthModule } from "./health/health.module";
+import { PdfModule } from "./pdf/pdf.module";
 import { SystemModule } from "./system/system.module";
 
 @Module({
@@ -48,6 +50,8 @@ import { SystemModule } from "./system/system.module";
     }),
     HealthModule,
     SystemModule,
+    EmailModule,
+    PdfModule,
   ],
 })
 export class AppModule {}

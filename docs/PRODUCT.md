@@ -18,7 +18,7 @@ El proyecto tiene dos objetivos: ser un **MVP real y desplegable** y, de paso, e
 | **Owner** | Su restaurante | Configura el restaurante, el menú, las mesas, las zonas de delivery y el staff |
 | **Staff — caja** | Su restaurante | Acepta o rechaza pedidos y marca los pagos |
 | **Staff — cocina** | Su restaurante | Ve la cola de pedidos y cambia los estados de preparación |
-| **Staff — repartidor** | Su restaurante | Ve sus entregas asignadas y las marca como entregadas |
+| **Staff — repartidor** | Su restaurante | Ve sus entregas asignadas y las marca como entregadas. Es opcional: un restaurante puede no tener repartidores en el sistema |
 | **Cliente invitado** | Un pedido | Pide sin registrarse y sigue su pedido con un link privado |
 | **Cliente registrado** | Toda la plataforma | Igual que el invitado, más historial y datos guardados. La cuenta es global, no por restaurante |
 
@@ -30,7 +30,7 @@ Un usuario de staff puede tener varios roles dentro del mismo restaurante.
 
 | Canal | Entrada | Identificación | Pago (MVP) |
 | --- | --- | --- | --- |
-| `dine_in` | QR de la mesa → `/r/{slug}/t/{tableToken}` | La mesa | En el local |
+| `dine_in` | QR de la mesa → `/m/{tableToken}` | La mesa | En el local |
 | `pickup` | `/r/{slug}` | Nombre y teléfono | En el local, al retirar |
 | `delivery` | `/r/{slug}` | Nombre, teléfono y dirección | Contra entrega |
 
@@ -96,18 +96,25 @@ pending ──► accepted ──► preparing ──► ready ──┬──�
 
 | Colección | Tenant | Campos clave |
 | --- | --- | --- |
-| `restaurants` | — | `slug` (único), `name`, `logoKey`, `currency`, `timezone`, `openingHours`, `status` |
-| `users` | — | `email` (único), `passwordHash`, `name`, `platformRole?` |
-| `memberships` | ✔ | `userId`, `restaurantId`, `roles[]` (`owner`, `cashier`, `kitchen`, `rider`) |
-| `menu_categories` | ✔ | `name`, `position`, `active` |
-| `products` | ✔ | `categoryId`, `name`, `description`, `price`, `imageKey`, `available`, `modifierGroups[]` (embebidos) |
-| `tables` | ✔ | `label`, `token` (único, va en el QR), `active` |
+| `restaurants` | — | `slug` (único), `name`, `description`, `phone`, `logoKey`, `currency`, `timezone`, `status`, `createdBy`, `membershipVersion` ✅ · pendiente: `openingHours` (fase 3) |
+| `users` | — | `email` (único), `passwordHash`, `name`, `emailVerifiedAt`, `platformRole?` ✅ |
+| `sessions` | — | `userId`, `familyId`, `tokenHash`, `expiresAt`, `rotatedAt`, `revokedAt` ✅ |
+| `one_time_tokens` | — | `type` (`verify_email` / `password_reset`), `tokenHash`, `userId`, `expiresAt`, `usedAt` ✅ |
+| `memberships` | ✔ | `userId`, `restaurantId`, `roles[]` (`owner`, `cashier`, `kitchen`, `rider`) ✅ |
+| `invitations` | ✔ | `email`, `roles[]`, `tokenHash`, `invitedBy`, `expiresAt`, `acceptedAt`, `revokedAt` ✅ |
+| `menu_categories` | ✔ | `name`, `description`, `position`, `active` ✅ |
+| `products` | ✔ | `categoryId`, `name`, `description`, `price`, `imageKey`, `available` (agotado), `visible`, `modifierGroupIds[]`, `position` ✅ |
+| `modifier_groups` | ✔ | `name`, `minSelect`, `maxSelect`, `options[]` (`name`, `priceDelta`, `available`) — biblioteca reutilizable entre productos ✅ |
+| `tables` | ✔ | `label`, `token` (único, va en el QR `/m/{token}`, regenerable), `active` ✅ |
 | `delivery_zones` | ✔ | `name`, `fee`, `minOrder`, `active` |
-| `orders` | ✔ | `number` (correlativo por restaurante), `channel`, `status`, `statusHistory[]`, `paymentStatus`, `paymentMethod`, `items[]` (snapshot), `subtotal`, `deliveryFee`, `total`, `customer` (snapshot), `customerId?`, `tableId?`, `delivery?`, `riderId?`, `accessToken` |
+| `orders` | ✔ | `number` (global), `ticketNumber` (diario), `businessDate`, `channel`, `status`, `statusHistory[]` (con quién y motivo), `paymentStatus`, `paymentMethod`, `items[]` (snapshot de precios y modificadores), `subtotal`, `total`, `currency`, `customerName`, `note`, `tableId`, `tableLabel` (snapshot), `accessTokenHash`, `clientOrderId` ✅ · pendientes: `deliveryFee`, `customerId`, `delivery`, `riderId` (fases 4–6) |
+| `counters` | ✔ | `_id` (`order:{restaurantId}` / `ticket:{restaurantId}:{businessDate}`), `seq` ✅ |
 | `customer_addresses` | — | `userId`, `label`, `address`, `reference`, `zoneHint` |
 | `push_subscriptions` | — | `userId`, `endpoint`, `keys` |
 
-"Tenant ✔" significa que el documento lleva `restaurantId` y que toda consulta lo filtra.
+"Tenant ✔" significa que el documento lleva `restaurantId` y que toda consulta lo filtra. ✅ = implementado.
+
+> **Resuelto en la Fase 3:** los QR de mesa usan `/m/{tableToken}`, independiente del slug: cambiar la dirección del restaurante ya no rompe los QR impresos. Un código se puede regenerar si se filtra.
 
 ---
 
@@ -127,7 +134,7 @@ pending ──► accepted ──► preparing ──► ready ──┬──�
 | Fase | Entregable | Lista cuando… |
 | --- | --- | --- |
 | **0. Fundaciones** | Monorepo, Dockerfiles, compose (base, dev y prod), Caddy, `/api/health`, Testcontainers, `smoke.sh`, CI | `pnpm stack:up` + `pnpm smoke` pasan y el stack está desplegado vacío en el VPS |
-| **1. Identidad y tenants** | Registro y login (JWT + refresh), restaurantes, memberships, guards por rol, invitación de staff (primer job `email`) | Un owner crea su restaurante e invita a un cocinero |
+| **1. Identidad y tenants** | Registro y login (sesión en cookies httpOnly, verificación de email para owners), restaurantes, memberships, guards por rol, invitación de staff (primer job `email`) | Un owner crea su restaurante e invita a un cocinero |
 | **2. Menú** | Categorías, productos, modificadores, subida de fotos a Garage, menú público | El menú se ve en `/r/{slug}` con fotos |
 | **3. Pedidos en mesa** | Mesas, QR (primer job `pdf`), carrito, checkout `dine_in`, tablero en vivo, seguimiento | Un pedido desde el QR aparece en cocina sin recargar |
 | **4. Retiro** | Checkout `pickup`, email de confirmación con comprobante PDF, marcado de pago | Flujo completo de retiro con email recibido |
@@ -138,9 +145,12 @@ Cada fase termina con sus tests, `smoke` actualizado y despliegue al VPS.
 
 ---
 
-## Supuestos pendientes de confirmar
+## Decisiones confirmadas
 
-- Moneda y país por defecto: **CLP / Chile** (se configura por restaurante)
-- **Una sucursal por restaurante** en el MVP
-- El repartidor es **staff del restaurante**, no hay repartidores de plataforma
-- Correlativo de pedido: **diario por restaurante** (#1, #2… se reinicia cada día) o **global por restaurante**
+- **Moneda y país**: CLP / Chile por defecto (configurable por restaurante), zona horaria `America/Santiago`.
+- **Una sucursal por restaurante** en el MVP. Una cadena registra cada local como un restaurante.
+- **Repartidores**: staff propio del restaurante con rol `rider`. **Asignar un repartidor es opcional**: si el restaurante usa delivery externo o informal, nadie se asigna y el staff cambia los estados (`out_for_delivery` → `delivered`). No hay repartidores de plataforma.
+- **Numeración de pedidos, dos números por pedido:**
+  - `number`: correlativo **global por restaurante**, nunca se reinicia. Se usa en el comprobante, en soporte y en reportes.
+  - `ticketNumber`: correlativo **diario por restaurante**, vuelve a 1 a medianoche en la zona horaria del restaurante. Es el número que se muestra en cocina y al cliente. Más adelante se puede agregar una hora de corte configurable.
+  - Ambos salen de contadores atómicos (`$inc`) en la colección `counters`, sin riesgo de duplicados con pedidos simultáneos.

@@ -12,6 +12,7 @@ services:
   garage:
     ports:
       - "127.0.0.1:3900:3900"
+      - "127.0.0.1:3902:3902" # public media (website endpoint)
 
   mailpit:
     image: axllent/mailpit:v1.31.4
