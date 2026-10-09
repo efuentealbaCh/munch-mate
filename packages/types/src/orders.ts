@@ -240,6 +240,8 @@ export interface PublicOrderView {
   status: OrderStatus;
   /** Present when status is "rejected". */
   rejectReason: string | null;
+  /** Present when status is "cancelled": the staff's reason, or "Cancelado por el cliente". */
+  cancelReason: string | null;
   items: OrderItemView[];
   subtotal: number;
   deliveryFee: number;

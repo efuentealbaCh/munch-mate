@@ -26,18 +26,18 @@ const DISPATCH: readonly RestaurantRole[] = [...FLOOR, "rider"];
  *                                                  └──► out_for_delivery ──► delivered  (delivery; asks for an ETA)
  *      │           │
  *      ├──► rejected (staff, with reason)
- *      └───────────┴──► cancelled (staff; the customer only while pending)
+ *      └───────────┴──► cancelled (staff, with reason; the customer only while pending)
  */
 const TRANSITIONS: Record<OrderChannel, Partial<Record<OrderStatus, Transition[]>>> = {
   dine_in: {
     pending: [
       { to: "accepted", roles: FLOOR },
       { to: "rejected", roles: FLOOR, requiresReason: true },
-      { to: "cancelled", roles: FLOOR, customer: true },
+      { to: "cancelled", roles: FLOOR, customer: true, requiresReason: true },
     ],
     accepted: [
       { to: "preparing", roles: FLOOR },
-      { to: "cancelled", roles: FLOOR },
+      { to: "cancelled", roles: FLOOR, requiresReason: true },
     ],
     preparing: [{ to: "ready", roles: FLOOR }],
     ready: [{ to: "served", roles: FLOOR }],
@@ -46,11 +46,11 @@ const TRANSITIONS: Record<OrderChannel, Partial<Record<OrderStatus, Transition[]
     pending: [
       { to: "accepted", roles: FLOOR, requiresReadyTime: true },
       { to: "rejected", roles: FLOOR, requiresReason: true },
-      { to: "cancelled", roles: FLOOR, customer: true },
+      { to: "cancelled", roles: FLOOR, customer: true, requiresReason: true },
     ],
     accepted: [
       { to: "preparing", roles: FLOOR },
-      { to: "cancelled", roles: FLOOR },
+      { to: "cancelled", roles: FLOOR, requiresReason: true },
     ],
     preparing: [{ to: "ready", roles: FLOOR }],
     // Handing over an unpaid order is allowed: the web warns and offers to register the payment first.
@@ -60,11 +60,11 @@ const TRANSITIONS: Record<OrderChannel, Partial<Record<OrderStatus, Transition[]
     pending: [
       { to: "accepted", roles: FLOOR, requiresReadyTime: true },
       { to: "rejected", roles: FLOOR, requiresReason: true },
-      { to: "cancelled", roles: FLOOR, customer: true },
+      { to: "cancelled", roles: FLOOR, customer: true, requiresReason: true },
     ],
     accepted: [
       { to: "preparing", roles: FLOOR },
-      { to: "cancelled", roles: FLOOR },
+      { to: "cancelled", roles: FLOOR, requiresReason: true },
     ],
     preparing: [{ to: "ready", roles: FLOOR }],
     ready: [{ to: "out_for_delivery", roles: DISPATCH }],

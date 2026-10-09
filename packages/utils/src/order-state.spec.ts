@@ -94,3 +94,12 @@ describe("checkTransition (delivery)", () => {
     expect(nextStatuses("delivery", "out_for_delivery", rider)).toEqual(["delivered"]);
   });
 });
+
+describe("cancelling", () => {
+  it("asks the staff for a reason (the customer sees it), in every channel", () => {
+    for (const channel of ["dine_in", "pickup", "delivery"] as const) {
+      expect(checkTransition(channel, "pending", "cancelled", kitchen)).toMatchObject({ ok: true, requiresReason: true });
+      expect(checkTransition(channel, "accepted", "cancelled", kitchen)).toMatchObject({ ok: true, requiresReason: true });
+    }
+  });
+});
