@@ -146,6 +146,12 @@ fi
 code=$(status "$BASE/api/public/maps/restaurants/x/receipts/y.pdf")
 if [ "$code" = "404" ]; then pass "map files cannot reach other storage keys (404)"; else fail "map path outside maps/ returned $code"; fi
 
+# Phase 6, safe everywhere: push configuration answers and the customer area requires a session.
+code=$(status "$BASE/api/public/push-config")
+if [ "$code" = "200" ]; then pass "push configuration served"; else fail "push configuration returned $code"; fi
+code=$(status "$BASE/api/me/orders")
+if [ "$code" = "401" ]; then pass "customer order history requires a session (401)"; else fail "anonymous order history returned $code"; fi
+
 # Platform admin, safe everywhere: requires a session.
 code=$(status "$BASE/api/platform/restaurants")
 if [ "$code" = "401" ]; then pass "platform admin requires a session (401)"; else fail "anonymous platform admin returned $code"; fi
