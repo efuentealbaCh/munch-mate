@@ -1,5 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
-import { PASSWORD, apiContext, registerViaApi, uniqueEmail, waitForEmailLink } from "./helpers";
+import { PASSWORD, apiContext, registerViaApi, uniqueEmail, waitForEmailLink, waitForHydration } from "./helpers";
 
 // One user for the whole file (registration is rate-limited); the tests run in order.
 test.describe.configure({ mode: "serial" });
@@ -25,6 +25,7 @@ async function login(page: Page, password: string) {
 test("protected pages send anonymous visitors to login and back; logout ends the session", async ({ page }) => {
   await page.goto("/admin");
   await expect(page).toHaveURL(/\/ingresar\?next=%2Fadmin$/);
+  await waitForHydration(page);
 
   await login(page, PASSWORD);
   await expect(page).toHaveURL(/\/admin$/);
@@ -44,14 +45,18 @@ test("protected pages send anonymous visitors to login and back; logout ends the
 
 test("forgot password: emailed link, new password, old one stops working", async ({ page }) => {
   await page.goto("/ingresar");
+  // Clicked before hydration, the link is a full page load and the email could be typed into server HTML.
+  await waitForHydration(page);
   await page.getByRole("link", { name: "¿Olvidaste tu contraseña?" }).click();
   await expect(page.getByRole("heading", { name: "Recuperar contraseña" })).toBeVisible();
+  await waitForHydration(page);
   await page.getByLabel("Correo").fill(email);
   await page.getByRole("button", { name: "Enviar enlace" }).click();
   await expect(page.getByRole("heading", { name: "Revisa tu correo" })).toBeVisible();
   await expect(page.getByText(/Si existe una cuenta con/)).toBeVisible();
 
   await page.goto(await waitForEmailLink(email, "/restablecer-contrasena"));
+  await waitForHydration(page);
   await page.getByLabel("Nueva contraseña", { exact: true }).fill(NEW_PASSWORD);
   await page.getByLabel("Repite la contraseña", { exact: true }).fill("no-coincide-000");
   await page.getByRole("button", { name: "Guardar contraseña" }).click();
