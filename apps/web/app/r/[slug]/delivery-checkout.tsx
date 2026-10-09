@@ -13,7 +13,7 @@ import { PriceInput } from "@/components/price-input";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { cartTotal } from "@/lib/cart";
+import { cartCount, cartTotal } from "@/lib/cart";
 import { cashChange, defaultZoneId, deliveryTotals, zoneOptionLabel } from "@/lib/delivery";
 import { formatPrice, parsePriceInput } from "@/lib/money";
 import { type DeliveryCheckoutValues, deliveryCheckoutSchema } from "@/lib/validation";
@@ -75,6 +75,7 @@ function DeliveryForm({
   zones,
   lines,
   currency,
+  maxItems,
   canOrder,
   closedMessage,
   submitting,
@@ -129,6 +130,7 @@ function DeliveryForm({
         currency={currency}
         total={totals.total}
         fee={{ label: zone ? `Envío a ${zone.name}` : "Envío", amount: totals.fee }}
+        maxItems={maxItems}
         problem={problem}
         onQuantity={onQuantity}
         onRemove={onRemove}
@@ -289,7 +291,7 @@ function DeliveryForm({
       <CheckoutFooter
         error={error}
         pending={submitting}
-        disabled={!canOrder || problem !== null || !zone || totals.missing > 0}
+        disabled={!canOrder || problem !== null || !zone || totals.missing > 0 || cartCount(lines) > maxItems}
         closedMessage={canOrder ? null : closedMessage}
       >
         Pedir delivery · {formatPrice(totals.total, currency)}

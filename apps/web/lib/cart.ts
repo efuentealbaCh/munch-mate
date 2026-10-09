@@ -6,6 +6,7 @@ import {
   type PublicModifierGroup,
   type PublicProduct,
 } from "@app/types";
+import { cleanText } from "./clean-text";
 
 /**
  * Customer cart (dine-in from a table QR, pickup from the public menu): modifier selection rules, line
@@ -152,6 +153,53 @@ export function cartCount(lines: readonly CartLine[]): number {
   return lines.reduce((sum, line) => sum + line.quantity, 0);
 }
 
+// ── Units per order (restaurant's maxItemsPerOrder) ─────────────────────────
+
+/** Where the cart stands against the restaurant's units-per-order cap (`maxItemsPerOrder`). */
+export interface ItemLimit {
+  max: number;
+  count: number;
+  /** Units that can still be added (0 when full, never negative). */
+  remaining: number;
+  /** The cart holds more than allowed (the owner lowered the cap after it was filled): submit is blocked. */
+  exceeded: boolean;
+}
+
+/**
+ * Compares the cart with the restaurant's cap. The api rejects bigger orders (409 TOO_MANY_ITEMS); this
+ * only lets the UI stop the customer before that.
+ * @param max The restaurant's `maxItemsPerOrder`.
+ */
+export function itemLimit(lines: readonly CartLine[], max: number): ItemLimit {
+  const count = cartCount(lines);
+  return { max, count, remaining: Math.max(0, max - count), exceeded: count > max };
+}
+
+/**
+ * Highest quantity a cart line's stepper may reach: its current quantity plus what the cap leaves free,
+ * never beyond ORDER_LIMITS.quantityMax. An exceeded cart only lets lines go down.
+ */
+export function lineQuantityMax(line: Pick<CartLine, "quantity">, limit: ItemLimit): number {
+  return Math.min(ORDER_LIMITS.quantityMax, Math.max(line.quantity, line.quantity + limit.remaining));
+}
+
+/** Text shown when the cap stops the customer; with an exceeded cart it says how many units to remove. */
+export function itemLimitMessage(limit: Pick<ItemLimit, "max" | "count">): string {
+  const base = `Este local acepta hasta ${limit.max} ${limit.max === 1 ? "producto" : "productos"} por pedido`;
+  const extra = limit.count - limit.max;
+  if (extra <= 0) return `${base}.`;
+  return `${base}. Quita ${extra} ${extra === 1 ? "producto" : "productos"} para enviarlo.`;
+}
+
+/**
+ * Reads `meta.max` of a 409 TOO_MANY_ITEMS (the api sends it as a string).
+ * @returns The cap, or null when missing or not a positive integer.
+ */
+export function maxFromMeta(meta: Record<string, string> | undefined): number | null {
+  const max = Number(meta?.max);
+  return Number.isSafeInteger(max) && max > 0 ? max : null;
+}
+
 /** Builds a cart line from the product sheet. */
 export function createLine(
   product: Pick<PublicProduct, "id" | "name" | "price" | "modifierGroups">,
@@ -160,7 +208,8 @@ export function createLine(
   note: string,
 ): CartLine {
   const modifiers = resolveModifiers(product, selection);
-  const trimmed = note.trim().slice(0, ORDER_LIMITS.noteMax);
+  // Same clean-up as the api (OrderItemDto.note), so the length limit counts the text it will store.
+  const trimmed = cleanText(note).slice(0, ORDER_LIMITS.noteMax);
   return {
     key: lineKey(product.id, modifiers, trimmed),
     productId: product.id,

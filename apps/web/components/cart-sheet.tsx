@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import { QuantityStepper } from "@/components/quantity-stepper";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { type CartLine, lineTotal } from "@/lib/cart";
+import { type CartLine, itemLimit, itemLimitMessage, lineQuantityMax, lineTotal } from "@/lib/cart";
 import { formatPrice } from "@/lib/money";
 import { cn } from "@/lib/utils";
 
@@ -59,13 +59,15 @@ export function CartSheet({
 
 /**
  * Lines with quantity steppers, the refused-line warning and the estimated total. With `fee` (delivery) the
- * summary shows subtotal, shipping and total; `total` must then include the fee.
+ * summary shows subtotal, shipping and total; `total` must then include the fee. Steppers stop at the
+ * restaurant's units-per-order cap, with a notice once it is reached (or exceeded, which blocks the submit).
  */
 export function CartLines({
   lines,
   currency,
   total,
   fee,
+  maxItems,
   problem,
   onQuantity,
   onRemove,
@@ -76,11 +78,14 @@ export function CartLines({
   total: number;
   /** Delivery fee of the chosen zone (label e.g. "Envío a Ñuñoa"); omitted for table and pickup orders. */
   fee?: { label: string; amount: number };
+  /** The restaurant's `maxItemsPerOrder`. */
+  maxItems: number;
   problem: LineProblem | null;
   onQuantity(key: string, quantity: number): void;
   onRemove(key: string): void;
   onRemoveProduct(productId: string): void;
 }) {
+  const limit = itemLimit(lines, maxItems);
   return (
     <>
       <ul className="flex flex-col divide-y px-4" aria-label="Productos del pedido">
@@ -119,6 +124,7 @@ export function CartLines({
                 <QuantityStepper
                   size="sm"
                   value={line.quantity}
+                  max={lineQuantityMax(line, limit)}
                   onChange={(quantity) => onQuantity(line.key, quantity)}
                   label={`Cantidad de ${line.name}`}
                 />
@@ -131,6 +137,8 @@ export function CartLines({
           );
         })}
       </ul>
+
+      {limit.remaining === 0 ? <ItemLimitNotice count={limit.count} max={limit.max} className="mx-4 mt-1" /> : null}
 
       {fee ? (
         <dl className="flex flex-col gap-1 border-t px-4 pt-3 text-sm">
@@ -155,6 +163,28 @@ export function CartLines({
         </span>
       </div>
     </>
+  );
+}
+
+/**
+ * "Este local acepta hasta N productos por pedido": informative when the cart is full, an alert (and the
+ * submit stays disabled) when it holds more than allowed.
+ */
+export function ItemLimitNotice({ count, max, className }: { count: number; max: number; className?: string }) {
+  const exceeded = count > max;
+  return (
+    <p
+      role={exceeded ? "alert" : "status"}
+      data-testid="item-limit"
+      className={cn(
+        "flex items-start gap-1.5 rounded-lg px-3 py-2 text-sm",
+        exceeded ? "bg-destructive/5 font-medium text-destructive ring-1 ring-destructive/30" : "bg-muted text-muted-foreground",
+        className,
+      )}
+    >
+      <CircleAlertIcon className="mt-0.5 size-4 shrink-0" aria-hidden />
+      {itemLimitMessage({ count, max })}
+    </p>
   );
 }
 

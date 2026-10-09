@@ -17,7 +17,16 @@ import { useRefreshAt } from "@/hooks/use-refresh-at";
 import { useStoredCart } from "@/hooks/use-stored-cart";
 import { ApiError } from "@/lib/api";
 import { localStore } from "@/lib/browser-storage";
-import { type CartLine, cartCount, cartTotal, LINE_ERRORS, toOrderItems } from "@/lib/cart";
+import {
+  type CartLine,
+  cartCount,
+  cartTotal,
+  itemLimit,
+  itemLimitMessage,
+  LINE_ERRORS,
+  maxFromMeta,
+  toOrderItems,
+} from "@/lib/cart";
 import { publicOrdersApi } from "@/lib/endpoints";
 import { hasCode } from "@/lib/errors";
 import { closedByScheduleText, closedStateFromError } from "@/lib/opening-hours";
@@ -38,6 +47,8 @@ export function TableOrdering({ tableToken, table, initialMenu }: TableOrderingP
   const [accepting, setAccepting] = useState(table.acceptingOrders);
   const [openState, setOpenState] = useState<OpenState>(table.openState);
   const [tableGone, setTableGone] = useState(false);
+  // Units per order (owner setting): refreshed with the table and the menu, and from a 409 TOO_MANY_ITEMS.
+  const [maxItems, setMaxItems] = useState(table.maxItemsPerOrder);
   const { lines, dispatch, beginAttempt, completeOrder } = useStoredCart(tableToken);
   const [selected, setSelected] = useState<PublicProduct | null>(null);
   const [cartOpen, setCartOpen] = useState(false);
@@ -59,6 +70,7 @@ export function TableOrdering({ tableToken, table, initialMenu }: TableOrderingP
       const fresh = await publicOrdersApi.table(tableToken);
       setAccepting(fresh.acceptingOrders);
       setOpenState(fresh.openState);
+      setMaxItems(fresh.maxItemsPerOrder);
       setTableGone(false);
     } catch (failure) {
       if (hasCode(failure, "TABLE_NOT_FOUND")) setTableGone(true);
@@ -71,13 +83,21 @@ export function TableOrdering({ tableToken, table, initialMenu }: TableOrderingP
 
   const refreshMenu = useCallback(async () => {
     try {
-      setMenu(await publicOrdersApi.menu(menu.restaurant.slug));
+      const fresh = await publicOrdersApi.menu(menu.restaurant.slug);
+      setMenu(fresh);
+      setMaxItems(fresh.restaurant.maxItemsPerOrder);
     } catch {
       // The stale menu stays; the api keeps validating every order anyway.
     }
   }, [menu.restaurant.slug]);
 
   function addLine(line: CartLine) {
+    // The product sheet already caps the quantity; this covers a cap lowered while the sheet was open.
+    const limit = itemLimit(lines, maxItems);
+    if (line.quantity > limit.remaining) {
+      toast.error(itemLimitMessage(limit));
+      return;
+    }
     dispatch({ type: "add", line });
     setSelected(null);
     setProblem(null);
@@ -85,7 +105,7 @@ export function TableOrdering({ tableToken, table, initialMenu }: TableOrderingP
   }
 
   async function submit(values: CheckoutValues) {
-    if (submitting || lines.length === 0) return;
+    if (submitting || lines.length === 0 || cartCount(lines) > maxItems) return;
     const body = {
       items: toOrderItems(lines),
       ...(values.customerName ? { customerName: values.customerName } : {}),
@@ -120,6 +140,12 @@ export function TableOrdering({ tableToken, table, initialMenu }: TableOrderingP
         void refreshTable();
       }
       if (hasCode(failure, "TABLE_NOT_FOUND")) setTableGone(true);
+      // The owner lowered the cap after the menu loaded: apply it so the cart shows what to remove.
+      if (hasCode(failure, "TOO_MANY_ITEMS")) {
+        const max = maxFromMeta(failure.meta);
+        if (max !== null) setMaxItems(max);
+        else void refreshTable();
+      }
       setError(failure);
     }
   }
@@ -186,6 +212,7 @@ export function TableOrdering({ tableToken, table, initialMenu }: TableOrderingP
         product={selected}
         currency={currency}
         canOrder={canOrder}
+        limit={itemLimit(lines, maxItems)}
         onClose={() => setSelected(null)}
         onAdd={addLine}
       />
@@ -198,6 +225,7 @@ export function TableOrdering({ tableToken, table, initialMenu }: TableOrderingP
         lines={lines}
         currency={currency}
         tableLabel={table.tableLabel}
+        maxItems={maxItems}
         canOrder={canOrder}
         {...(closedBySchedule ? { closedMessage: `${closedByScheduleText(openState, now ? new Date(now) : null)}.` } : {})}
         submitting={submitting}

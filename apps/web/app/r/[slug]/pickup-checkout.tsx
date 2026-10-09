@@ -13,7 +13,7 @@ import { SubmitButton } from "@/components/submit-button";
 import { Input } from "@/components/ui/input";
 import { SheetFooter } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
-import { type CartLine, cartTotal } from "@/lib/cart";
+import { type CartLine, cartCount, cartTotal } from "@/lib/cart";
 import { hasCode } from "@/lib/errors";
 import { formatPrice } from "@/lib/money";
 import { type PickupCheckoutValues, pickupCheckoutSchema } from "@/lib/validation";
@@ -22,6 +22,8 @@ import { type PickupCheckoutValues, pickupCheckoutSchema } from "@/lib/validatio
 export interface CheckoutFormProps {
   lines: CartLine[];
   currency: string;
+  /** The restaurant's `maxItemsPerOrder`: a cart above it cannot be sent. */
+  maxItems: number;
   canOrder: boolean;
   /** Why ordering is not possible right now (shown under the disabled button). */
   closedMessage: string;
@@ -38,6 +40,7 @@ export interface CheckoutFormProps {
 export function PickupCheckout({
   lines,
   currency,
+  maxItems,
   canOrder,
   closedMessage,
   submitting,
@@ -71,6 +74,7 @@ export function PickupCheckout({
         lines={lines}
         currency={currency}
         total={total}
+        maxItems={maxItems}
         problem={problem}
         onQuantity={onQuantity}
         onRemove={onRemove}
@@ -98,7 +102,7 @@ export function PickupCheckout({
         <NoteField id="pickup-note" register={form.register("note")} error={errors.note?.message} />
       </div>
 
-      <CheckoutFooter error={error} pending={submitting} disabled={!canOrder || problem !== null} closedMessage={canOrder ? null : closedMessage}>
+      <CheckoutFooter error={error} pending={submitting} disabled={!canOrder || problem !== null || cartCount(lines) > maxItems} closedMessage={canOrder ? null : closedMessage}>
         Pedir para retirar · {formatPrice(total, currency)}
       </CheckoutFooter>
     </form>

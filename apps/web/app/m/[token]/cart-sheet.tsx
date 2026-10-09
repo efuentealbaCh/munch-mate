@@ -10,7 +10,7 @@ import { SubmitButton } from "@/components/submit-button";
 import { Input } from "@/components/ui/input";
 import { SheetFooter } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
-import { type CartLine, cartTotal } from "@/lib/cart";
+import { type CartLine, cartCount, cartTotal } from "@/lib/cart";
 import { formatPrice } from "@/lib/money";
 import { type CheckoutValues, checkoutSchema } from "@/lib/validation";
 
@@ -20,6 +20,8 @@ interface TableCartSheetProps {
   lines: CartLine[];
   currency: string;
   tableLabel: string;
+  /** The restaurant's `maxItemsPerOrder`: a cart above it cannot be sent. */
+  maxItems: number;
   canOrder: boolean;
   /** Shown under the button while ordering is not possible (defaults to the closed-restaurant text). */
   closedMessage?: string;
@@ -53,6 +55,7 @@ export function TableCartSheet(props: TableCartSheetProps) {
 function TableCheckout({
   lines,
   currency,
+  maxItems,
   canOrder,
   closedMessage = "El local no está recibiendo pedidos ahora.",
   submitting,
@@ -82,6 +85,7 @@ function TableCheckout({
         lines={lines}
         currency={currency}
         total={total}
+        maxItems={maxItems}
         problem={problem}
         onQuantity={onQuantity}
         onRemove={onRemove}
@@ -107,7 +111,7 @@ function TableCheckout({
 
       <SheetFooter className="sticky bottom-0 mt-2 border-t bg-popover">
         <FormError error={error} />
-        <SubmitButton size="lg" pending={submitting} disabled={!canOrder || problem !== null}>
+        <SubmitButton size="lg" pending={submitting} disabled={!canOrder || problem !== null || cartCount(lines) > maxItems}>
           Enviar pedido · {formatPrice(total, currency)}
         </SubmitButton>
         {!canOrder ? (

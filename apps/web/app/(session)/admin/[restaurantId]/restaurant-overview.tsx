@@ -8,11 +8,13 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { RoleBadges } from "@/components/role-badges";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Separator } from "@/components/ui/separator";
 import { usePublicHost } from "@/hooks/use-slug-availability";
 import { useAuth } from "@/lib/auth-context";
 import { teamApi } from "@/lib/endpoints";
 import { errorMessage } from "@/lib/errors";
 import { DeliverySettings } from "./delivery-settings";
+import { ItemsLimitSettings, ItemsLimitView } from "./items-limit-settings";
 import { OpeningHoursSettings } from "./opening-hours-settings";
 import { PickupSettings } from "./pickup-settings";
 import { useRestaurant } from "./restaurant-context";
@@ -70,6 +72,7 @@ export function RestaurantOverview() {
                 <dd data-testid="delivery-status">{restaurant.deliveryEnabled ? "Activado" : "Desactivado (lo cambia el dueño)"}</dd>
               </div>
             )}
+            {isOwner ? null : <ItemsLimitView />}
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <dt className="text-muted-foreground">Moneda</dt>
@@ -81,6 +84,12 @@ export function RestaurantOverview() {
               </div>
             </div>
           </dl>
+          {isOwner ? (
+            <>
+              <Separator className="my-5" />
+              <ItemsLimitSettings />
+            </>
+          ) : null}
         </CardContent>
       </Card>
 

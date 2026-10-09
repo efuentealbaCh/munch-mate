@@ -16,7 +16,17 @@ import { useRefreshAt } from "@/hooks/use-refresh-at";
 import { useStoredCart } from "@/hooks/use-stored-cart";
 import { ApiError } from "@/lib/api";
 import { localStore } from "@/lib/browser-storage";
-import { type CartLine, cartCount, cartTotal, LINE_ERRORS, pickupCartScope, toOrderItems } from "@/lib/cart";
+import {
+  type CartLine,
+  cartCount,
+  cartTotal,
+  itemLimit,
+  itemLimitMessage,
+  LINE_ERRORS,
+  maxFromMeta,
+  pickupCartScope,
+  toOrderItems,
+} from "@/lib/cart";
 import { loadDeliveryContact, type OnlineChannel, onlineChannels, resolveChannel, saveDeliveryContact } from "@/lib/delivery";
 import { publicOrdersApi } from "@/lib/endpoints";
 import { hasCode } from "@/lib/errors";
@@ -69,6 +79,8 @@ export function OnlineOrdering({ initialMenu }: { initialMenu: PublicMenu }) {
   const [myOrdersCount, setMyOrdersCount] = useState(0);
   const { restaurant, categories } = menu;
   const currency = restaurant.currency;
+  // Units per order (owner setting): refreshed with the menu (every time the cart opens).
+  const maxItems = restaurant.maxItemsPerOrder;
   const channels = onlineChannels(restaurant);
   const channel = resolveChannel(chosenChannel, channels) ?? "pickup";
   const now = useNow(30_000);
@@ -124,6 +136,12 @@ export function OnlineOrdering({ initialMenu }: { initialMenu: PublicMenu }) {
   useRefreshAt(closedBySchedule ? restaurant.openState.nextOpeningAt : null, () => void refreshMenu());
 
   function addLine(line: CartLine) {
+    // The product sheet already caps the quantity; this covers a cap lowered while the sheet was open.
+    const limit = itemLimit(lines, maxItems);
+    if (line.quantity > limit.remaining) {
+      toast.error(itemLimitMessage(limit));
+      return;
+    }
     dispatch({ type: "add", line });
     setSelected(null);
     setProblem(null);
@@ -132,7 +150,7 @@ export function OnlineOrdering({ initialMenu }: { initialMenu: PublicMenu }) {
 
   /** Common part of both submissions: idempotent id, errors, "mis pedidos" and the tracking page. */
   async function place<B extends Parameters<typeof beginAttempt>[0]>(body: B, create: (clientOrderId: string) => Promise<CreatedOrder>) {
-    if (submitting || lines.length === 0) return false;
+    if (submitting || lines.length === 0 || cartCount(lines) > maxItems) return false;
     const clientOrderId = beginAttempt(body);
     setSubmitting(true);
     setError(null);
@@ -166,6 +184,12 @@ export function OnlineOrdering({ initialMenu }: { initialMenu: PublicMenu }) {
       if (hasCode(failure, "DELIVERY_DISABLED")) setMenu((m) => ({ ...m, restaurant: { ...m.restaurant, deliveryEnabled: false } }));
       // The zone was deactivated or its minimum changed: show the current list.
       if (hasCode(failure, "ZONE_NOT_AVAILABLE", "BELOW_MINIMUM_ORDER")) void refreshZones();
+      // The owner lowered the cap after the menu loaded: apply it so the cart shows what to remove.
+      if (hasCode(failure, "TOO_MANY_ITEMS")) {
+        const max = maxFromMeta(failure.meta);
+        if (max !== null) setMenu((m) => ({ ...m, restaurant: { ...m.restaurant, maxItemsPerOrder: max } }));
+        else void refreshMenu();
+      }
       setError(failure);
       return false;
     }
@@ -255,7 +279,14 @@ export function OnlineOrdering({ initialMenu }: { initialMenu: PublicMenu }) {
 
       <CartBar count={count} total={cartTotal(lines)} currency={currency} onOpen={() => setCartOpen(true)} />
 
-      <OrderProductSheet product={selected} currency={currency} canOrder={canOrder} onClose={() => setSelected(null)} onAdd={addLine} />
+      <OrderProductSheet
+        product={selected}
+        currency={currency}
+        canOrder={canOrder}
+        limit={itemLimit(lines, maxItems)}
+        onClose={() => setSelected(null)}
+        onAdd={addLine}
+      />
       <CheckoutSheet
         open={cartOpen}
         onOpenChange={(open) => {
@@ -275,6 +306,7 @@ export function OnlineOrdering({ initialMenu }: { initialMenu: PublicMenu }) {
         zones={{ zones, error: zonesError, retry: () => void refreshZones() }}
         lines={lines}
         currency={currency}
+        maxItems={maxItems}
         canOrder={canOrder}
         closedMessage={closedMessage}
         submitting={submitting}

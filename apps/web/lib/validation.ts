@@ -8,6 +8,7 @@ import {
 } from "@app/types";
 import { normalizePhone, PHONE_EXAMPLE, slugProblem } from "@app/utils";
 import { z } from "zod";
+import { cleanLine, cleanText } from "./clean-text";
 import { modifierRulesProblem } from "./menu";
 import { formatPrice, parsePriceInput } from "./money";
 import { SLUG_PROBLEM_MESSAGES } from "./slug-field";
@@ -15,7 +16,9 @@ import { BULK_TABLES_MAX, TABLE_LABEL_MAX } from "./tables";
 
 /**
  * Form schemas. Bounds mirror the api DTOs (apps/api/src/modules/{auth,restaurants,menu}/dto) so most mistakes
- * are caught before the request; the api remains the real validation.
+ * are caught before the request; the api remains the real validation. Free text goes through the same
+ * clean-up as the api (cleanLine / cleanText) before it is measured, so a field of blanks or invisible
+ * characters is empty here too and the maximums count the text the api will store.
  */
 
 export const PASSWORD_MIN = 8;
@@ -35,7 +38,7 @@ const newPassword = z
 
 const restaurantName = z
   .string()
-  .trim()
+  .overwrite(cleanLine)
   .min(2, "El nombre debe tener al menos 2 caracteres")
   .max(100, "El nombre no puede superar los 100 caracteres");
 
@@ -60,7 +63,7 @@ export const loginSchema = z.object({
 });
 
 export const registerSchema = z.object({
-  name: z.string().trim().min(1, "Ingresa tu nombre").max(100, "El nombre no puede superar los 100 caracteres"),
+  name: z.string().overwrite(cleanLine).min(1, "Ingresa tu nombre").max(100, "El nombre no puede superar los 100 caracteres"),
   email,
   password: newPassword,
 });
@@ -80,29 +83,38 @@ export const PHONE_ERROR = `Revisa el teléfono, ej. ${PHONE_EXAMPLE}`;
 /** Checked with the same normalizePhone the api uses (customers and restaurants), so both accept the same formats. */
 const phone = z
   .string()
-  .trim()
+  .overwrite(cleanLine)
   .max(30, PHONE_ERROR)
   .refine((value) => normalizePhone(value) !== null, PHONE_ERROR);
 
 export const restaurantProfileSchema = z.object({
-  description: z.string().trim().max(300, "La descripción no puede superar los 300 caracteres"),
+  description: z.string().overwrite(cleanText).max(300, "La descripción no puede superar los 300 caracteres"),
   // Empty clears it.
   phone: z
     .string()
-    .trim()
+    .overwrite(cleanLine)
     .max(30, PHONE_ERROR)
     .refine((value) => value === "" || normalizePhone(value) !== null, PHONE_ERROR),
 });
 
+/** Owner setting `maxItemsPerOrder` (UpdateRestaurantDto): units (sum of quantities) allowed in one order. */
+export const itemsLimitSchema = z.object({
+  maxItemsPerOrder: z
+    .number({ error: "Ingresa un número" })
+    .int("Usa un número entero")
+    .min(ORDER_LIMITS.itemsPerOrderMin, `El mínimo es ${ORDER_LIMITS.itemsPerOrderMin} producto por pedido`)
+    .max(ORDER_LIMITS.itemsPerOrderMax, `El máximo es ${ORDER_LIMITS.itemsPerOrderMax} productos por pedido`),
+});
+
 const menuName = z
   .string()
-  .trim()
+  .overwrite(cleanLine)
   .min(1, "Ingresa un nombre")
   .max(MENU_LIMITS.nameMax, `El nombre no puede superar los ${MENU_LIMITS.nameMax} caracteres`);
 
 const menuDescription = z
   .string()
-  .trim()
+  .overwrite(cleanText)
   .max(MENU_LIMITS.descriptionMax, `La descripción no puede superar los ${MENU_LIMITS.descriptionMax} caracteres`);
 
 /**
@@ -170,9 +182,9 @@ export const modifierGroupSchema = z
 export const checkoutSchema = z.object({
   customerName: z
     .string()
-    .trim()
+    .overwrite(cleanLine)
     .max(ORDER_LIMITS.customerNameMax, `El nombre puede tener hasta ${ORDER_LIMITS.customerNameMax} caracteres`),
-  note: z.string().trim().max(ORDER_LIMITS.noteMax, `El comentario puede tener hasta ${ORDER_LIMITS.noteMax} caracteres`),
+  note: z.string().overwrite(cleanText).max(ORDER_LIMITS.noteMax, `El comentario puede tener hasta ${ORDER_LIMITS.noteMax} caracteres`),
 });
 
 /**
@@ -183,17 +195,17 @@ export const checkoutSchema = z.object({
 export const pickupCheckoutSchema = z.object({
   customerName: z
     .string()
-    .trim()
+    .overwrite(cleanLine)
     .min(2, "Ingresa tu nombre para que te entreguen el pedido")
     .max(ORDER_LIMITS.customerNameMax, `El nombre puede tener hasta ${ORDER_LIMITS.customerNameMax} caracteres`),
-  customerPhone: z.string().trim().min(1, "Ingresa tu teléfono").pipe(phone),
+  customerPhone: z.string().overwrite(cleanLine).min(1, "Ingresa tu teléfono").pipe(phone),
   // Blank (or only spaces) means "no email".
   customerEmail: z
     .string()
     .trim()
     .max(ORDER_LIMITS.customerEmailMax, "El correo es demasiado largo")
     .refine((value) => value === "" || z.email().safeParse(value).success, "Ingresa un correo válido o déjalo en blanco"),
-  note: z.string().trim().max(ORDER_LIMITS.noteMax, `El comentario puede tener hasta ${ORDER_LIMITS.noteMax} caracteres`),
+  note: z.string().overwrite(cleanText).max(ORDER_LIMITS.noteMax, `El comentario puede tener hasta ${ORDER_LIMITS.noteMax} caracteres`),
 });
 
 /** Same bound as ExpectedPaymentDto.cashAmount. */
@@ -218,13 +230,13 @@ export function deliveryCheckoutSchema({ subtotal, zones, currency }: DeliveryCh
       zoneId: z.string().min(1, "Elige tu comuna o zona"),
       address: z
         .string()
-        .trim()
+        .overwrite(cleanLine)
         .min(3, "Indica la calle y el número")
         .max(ORDER_LIMITS.addressMax, `La dirección puede tener hasta ${ORDER_LIMITS.addressMax} caracteres`),
-      unit: z.string().trim().max(ORDER_LIMITS.addressUnitMax, `Usa hasta ${ORDER_LIMITS.addressUnitMax} caracteres`),
+      unit: z.string().overwrite(cleanLine).max(ORDER_LIMITS.addressUnitMax, `Usa hasta ${ORDER_LIMITS.addressUnitMax} caracteres`),
       reference: z
         .string()
-        .trim()
+        .overwrite(cleanText)
         .max(ORDER_LIMITS.addressReferenceMax, `La referencia puede tener hasta ${ORDER_LIMITS.addressReferenceMax} caracteres`),
       // Boolean(): a `value !== ""` arrow would be inferred as a type guard and drop "" from the form values.
       paymentMethod: z.union([z.enum(PAYMENT_METHODS), z.literal("")]).refine((value) => Boolean(value), "Elige cómo vas a pagar"),
@@ -260,7 +272,7 @@ export function deliveryCheckoutSchema({ subtotal, zones, currency }: DeliveryCh
 export const deliveryZoneSchema = z.object({
   name: z
     .string()
-    .trim()
+    .overwrite(cleanLine)
     .min(1, "Ingresa la comuna o sector, ej. Providencia")
     .max(DELIVERY_ZONE_LIMITS.nameMax, `El nombre puede tener hasta ${DELIVERY_ZONE_LIMITS.nameMax} caracteres`),
   fee: priceText("Ingresa el costo de envío (0 si es gratis)", DELIVERY_ZONE_LIMITS.feeMax),
@@ -273,14 +285,14 @@ export const deliveryZoneSchema = z.object({
 export const statusReasonSchema = z.object({
   reason: z
     .string()
-    .trim()
+    .overwrite(cleanText)
     .min(1, "Indica el motivo: el cliente lo verá")
     .max(ORDER_LIMITS.rejectReasonMax, `El motivo puede tener hasta ${ORDER_LIMITS.rejectReasonMax} caracteres`),
 });
 
 const tableLabel = z
   .string()
-  .trim()
+  .overwrite(cleanLine)
   .min(1, "Ingresa un nombre, ej. Mesa 4")
   .max(TABLE_LABEL_MAX, `El nombre puede tener hasta ${TABLE_LABEL_MAX} caracteres`);
 
@@ -296,7 +308,7 @@ const tableNumber = z
 /** "Agregar varias": prefix + range (the labels themselves are checked by bulkLabels). */
 export const bulkTablesSchema = z
   .object({
-    prefix: z.string().trim().max(TABLE_LABEL_MAX - 5, "El prefijo es demasiado largo"),
+    prefix: z.string().overwrite(cleanLine).max(TABLE_LABEL_MAX - 5, "El prefijo es demasiado largo"),
     from: tableNumber,
     to: tableNumber,
   })
@@ -315,6 +327,7 @@ export type ResetPasswordValues = z.infer<typeof resetPasswordSchema>;
 export type RestaurantValues = z.infer<typeof restaurantSchema>;
 export type InviteValues = z.infer<typeof inviteSchema>;
 export type RestaurantProfileValues = z.infer<typeof restaurantProfileSchema>;
+export type ItemsLimitValues = z.infer<typeof itemsLimitSchema>;
 export type CategoryValues = z.infer<typeof categorySchema>;
 export type ProductValues = z.infer<typeof productSchema>;
 export type ModifierGroupValues = z.infer<typeof modifierGroupSchema>;

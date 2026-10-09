@@ -64,7 +64,10 @@ export const restaurantsApi = {
   get: (id: string, signal?: AbortSignal) => api.request<RestaurantView>(restaurantPath(id), { signal }),
   create: (body: { name: string; slug: string }) =>
     api.request<RestaurantView>("/restaurants", { method: "POST", body }),
-  /** pickupEnabled / deliveryEnabled: let customers order for pickup / delivery from the public menu (owner). */
+  /**
+   * pickupEnabled / deliveryEnabled: let customers order for pickup / delivery from the public menu (owner).
+   * maxItemsPerOrder: cap on units per order (owner).
+   */
   update: (
     id: string,
     body: {
@@ -74,6 +77,8 @@ export const restaurantsApi = {
       phone?: string;
       pickupEnabled?: boolean;
       deliveryEnabled?: boolean;
+      /** Units (sum of quantities) allowed in one order, ORDER_LIMITS.itemsPerOrderMin…Max. */
+      maxItemsPerOrder?: number;
     },
   ) =>
     api.request<RestaurantView>(restaurantPath(id), { method: "PATCH", body }),

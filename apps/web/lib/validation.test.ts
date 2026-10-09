@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  checkoutSchema,
   deliveryCheckoutSchema,
   deliveryZoneSchema,
+  itemsLimitSchema,
   modifierGroupSchema,
   pickupCheckoutSchema,
   productSchema,
   restaurantProfileSchema,
   statusReasonSchema,
+  tableSchema,
 } from "./validation";
 
 const option = (name: string, priceDelta = "0") => ({ name, priceDelta, available: true });
@@ -188,5 +191,52 @@ describe("statusReasonSchema (reject and cancel)", () => {
     expect(statusReasonSchema.safeParse({ reason: "   " }).error?.issues[0]?.message).toBe("Indica el motivo: el cliente lo verá");
     expect(statusReasonSchema.safeParse({ reason: "x".repeat(200) }).success).toBe(true);
     expect(statusReasonSchema.safeParse({ reason: "x".repeat(201) }).success).toBe(false);
+  });
+});
+
+describe("free text is cleaned like the api before it is measured", () => {
+  const ZWSP = String.fromCharCode(0x200b);
+  const BOM = String.fromCharCode(0xfeff);
+  const NL = String.fromCharCode(10);
+  const TAB = String.fromCharCode(9);
+
+  it("treats a required field of blanks and invisible characters as empty", () => {
+    const product = { categoryId: "c1", name: `${ZWSP} ${BOM}`, description: "", price: "1000", visible: true, modifierGroupIds: [] };
+    expect(productSchema.safeParse(product).error?.issues[0]?.message).toBe("Ingresa un nombre");
+    expect(statusReasonSchema.safeParse({ reason: `${NL}${ZWSP}${TAB} ${NL}` }).error?.issues[0]?.message).toBe(
+      "Indica el motivo: el cliente lo verá",
+    );
+    expect(tableSchema.safeParse({ label: ` ${BOM} ` }).error?.issues[0]?.message).toBe("Ingresa un nombre, ej. Mesa 4");
+    const pickup = { customerName: `A${ZWSP}${ZWSP}`, customerPhone: "912345678", customerEmail: "", note: "" };
+    expect(pickupCheckoutSchema.safeParse(pickup).success).toBe(false);
+  });
+
+  it("collapses inner spaces in single-line fields and returns the cleaned value", () => {
+    expect(tableSchema.parse({ label: `  Mesa ${ZWSP}   4 ` }).label).toBe("Mesa 4");
+    expect(checkoutSchema.parse({ customerName: ` Ana ${NL}  Pérez `, note: "" }).customerName).toBe("Ana Pérez");
+  });
+
+  it("keeps line breaks in comments but at most one blank line, and counts the cleaned text", () => {
+    const note = checkoutSchema.parse({ customerName: "", note: `sin cebolla${NL.repeat(4)}por favor  ` }).note;
+    expect(note).toBe(`sin cebolla${NL}${NL}por favor`);
+    // 200 characters plus padding and invisibles: within the limit once cleaned, as the api measures it.
+    const padded = `   ${"x".repeat(100)}${ZWSP.repeat(50)}${"y".repeat(100)}   `;
+    expect(checkoutSchema.safeParse({ customerName: "", note: padded }).success).toBe(true);
+    expect(checkoutSchema.safeParse({ customerName: "", note: "x".repeat(201) }).success).toBe(false);
+  });
+});
+
+describe("itemsLimitSchema", () => {
+  it("accepts whole numbers from 1 to 500", () => {
+    for (const value of [1, 50, 500]) expect(itemsLimitSchema.safeParse({ maxItemsPerOrder: value }).success, String(value)).toBe(true);
+  });
+
+  it("rejects out of range, decimals and empty input", () => {
+    const message = (value: number) => itemsLimitSchema.safeParse({ maxItemsPerOrder: value }).error?.issues[0]?.message;
+    expect(message(0)).toBe("El mínimo es 1 producto por pedido");
+    expect(message(501)).toBe("El máximo es 500 productos por pedido");
+    expect(message(2.5)).toBe("Usa un número entero");
+    // An empty number input arrives as NaN (valueAsNumber).
+    expect(message(Number.NaN)).toBe("Ingresa un número");
   });
 });

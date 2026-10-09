@@ -10,10 +10,14 @@ import {
   createLine,
   deserializeCart,
   isOptionDisabled,
+  itemLimit,
+  itemLimitMessage,
   type KeyValueStorage,
+  lineQuantityMax,
   lineTotal,
   loadCart,
   loadCheckoutAttempt,
+  maxFromMeta,
   missingGroups,
   newClientOrderId,
   pickClientOrderId,
@@ -272,5 +276,51 @@ describe("idempotent submission", () => {
     const withoutRandomUUID = { getRandomValues: crypto.getRandomValues.bind(crypto) } as Pick<Crypto, "getRandomValues">;
     const fallback = newClientOrderId(withoutRandomUUID);
     expect(fallback).toMatch(v4);
+  });
+});
+
+describe("units per order (maxItemsPerOrder)", () => {
+  const big = createLine(product, { "g-size": ["o-big"] }, 4, "");
+  const normal = createLine(product, { "g-size": ["o-normal"] }, 3, "");
+
+  it("counts units, not lines, and never reports negative room", () => {
+    expect(itemLimit([big, normal], 10)).toEqual({ max: 10, count: 7, remaining: 3, exceeded: false });
+    expect(itemLimit([big, normal], 7)).toEqual({ max: 7, count: 7, remaining: 0, exceeded: false });
+    expect(itemLimit([big, normal], 5)).toEqual({ max: 5, count: 7, remaining: 0, exceeded: true });
+    expect(itemLimit([], 1)).toEqual({ max: 1, count: 0, remaining: 1, exceeded: false });
+  });
+
+  it("lets a line grow only by the units left, within the per-line maximum", () => {
+    expect(lineQuantityMax(big, itemLimit([big, normal], 10))).toBe(7);
+    expect(lineQuantityMax(big, itemLimit([big, normal], 7))).toBe(4);
+    // Over the cap: the line can only go down.
+    expect(lineQuantityMax(big, itemLimit([big, normal], 5))).toBe(4);
+    expect(lineQuantityMax(big, itemLimit([big], 500))).toBe(20);
+  });
+
+  it("explains the cap, and how many units to remove when it is exceeded", () => {
+    expect(itemLimitMessage({ max: 50, count: 50 })).toBe("Este local acepta hasta 50 productos por pedido.");
+    expect(itemLimitMessage({ max: 1, count: 0 })).toBe("Este local acepta hasta 1 producto por pedido.");
+    expect(itemLimitMessage({ max: 5, count: 7 })).toBe("Este local acepta hasta 5 productos por pedido. Quita 2 productos para enviarlo.");
+    expect(itemLimitMessage({ max: 5, count: 6 })).toBe("Este local acepta hasta 5 productos por pedido. Quita 1 producto para enviarlo.");
+  });
+
+  it("reads meta.max of a TOO_MANY_ITEMS answer", () => {
+    expect(maxFromMeta({ max: "12" })).toBe(12);
+    expect(maxFromMeta(undefined)).toBeNull();
+    expect(maxFromMeta({ max: "abc" })).toBeNull();
+    expect(maxFromMeta({ max: "0" })).toBeNull();
+    expect(maxFromMeta({ max: "2.5" })).toBeNull();
+  });
+});
+
+describe("createLine note clean-up", () => {
+  const NL = String.fromCharCode(10);
+
+  it("cleans the note like the api, so identical notes merge into one line", () => {
+    const a = createLine(product, { "g-size": ["o-normal"] }, 1, `  sin   cebolla ${NL.repeat(4)} bien cocido `);
+    const b = createLine(product, { "g-size": ["o-normal"] }, 1, `sin cebolla${NL}${NL}bien cocido`);
+    expect(a.note).toBe(`sin cebolla${NL}${NL}bien cocido`);
+    expect(a.key).toBe(b.key);
   });
 });
