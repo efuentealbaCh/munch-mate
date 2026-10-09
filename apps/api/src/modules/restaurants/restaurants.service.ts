@@ -1,5 +1,5 @@
 import { OPENING_HOURS_LIMITS, type RestaurantView, type SlugAvailability, type WeeklyHours } from "@app/types";
-import { normalizePhone, openingHoursProblem, slugify, slugProblem, withSuffix } from "@app/utils";
+import { normalizePhone, openingHoursProblem, roundCoord, slugify, slugProblem, withSuffix } from "@app/utils";
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { InjectConnection } from "@nestjs/mongoose";
 import type { Connection } from "mongoose";
@@ -89,6 +89,9 @@ export class RestaurantsService {
     if (changes.pickupEnabled !== undefined) update.pickupEnabled = changes.pickupEnabled;
     if (changes.deliveryEnabled !== undefined) update.deliveryEnabled = changes.deliveryEnabled;
     if (changes.maxItemsPerOrder !== undefined) update.maxItemsPerOrder = changes.maxItemsPerOrder;
+    if (changes.location !== undefined) {
+      update.location = changes.location && { lat: roundCoord(changes.location.lat), lng: roundCoord(changes.location.lng) };
+    }
     if (changes.slug !== undefined) update.slug = normalizeRequestedSlug(changes.slug);
 
     try {

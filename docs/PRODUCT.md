@@ -164,6 +164,13 @@ Cada fase termina con sus tests, `smoke` actualizado y despliegue al VPS.
 - **Horario de atención:** hasta 2 tramos por día (un tramo puede pasar la medianoche, ej. 19:00–01:00). Se puede pedir solo con el interruptor encendido **y** dentro del horario; el interruptor sirve para cerrar antes. Sin horario configurado, decide solo el interruptor. El menú muestra cuándo abre.
 - **Resumen del día:** ventas por canal y por medio de pago, pagado vs. pendiente, ticket promedio y productos más vendidos, para cualquier fecha. Lo ven el dueño y caja. Los pedidos rechazados o cancelados se cuentan, pero no suman.
 - **Platform admin:** ve todos los restaurantes (búsqueda por nombre o dirección, filtro por estado) y los suspende o reactiva. Suspender saca el local del menú público, cierra los pedidos y deja el panel en solo lectura. El primer admin se crea con `pnpm platform:admin <email>`.
+- **Mapas y seguimiento (fase 7):**
+  - Mapa propio, sin proveedor externo ni costo por uso: datos de OpenStreetMap (recorte de Chile de Protomaps) guardados en Garage y dibujados con MapLibre.
+  - El dueño puede dibujar cada zona de reparto en el mapa; las zonas sin dibujo siguen funcionando por nombre. Si dos zonas dibujadas se superponen, gana la primera de la lista.
+  - El cliente marca dónde entregar con "Usar mi ubicación" y ajusta el pin; la zona se elige sola y el servidor valida que el pin caiga dentro.
+  - El restaurante tiene su ubicación en el mapa (la fija el dueño).
+  - Seguimiento del repartidor: solo con repartidor asignado y mientras el pedido está "En reparto". El teléfono del repartidor envía su posición cada pocos segundos; el cliente lo ve moverse. Solo se guarda la última posición y se borra al entregar: no hay historial de ubicaciones.
+  - Limitación conocida: desde el navegador, el GPS se pausa con la pantalla bloqueada (sobre todo en iPhone); la página pide mantener la pantalla encendida mientras se reparte.
 - **Delivery (fase 5):**
   - El dueño activa el delivery y define sus zonas (comunas o sectores) con costo de envío y pedido mínimo. Una zona se marca como **zona del local**: el checkout la trae elegida y el cliente puede cambiarla. Sin mapas ni geocodificación.
   - El cliente escribe calle y número, y opcionalmente depto y una referencia.

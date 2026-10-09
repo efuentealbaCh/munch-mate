@@ -9,6 +9,7 @@ import {
   deliveryTotals,
   expectedPaymentLabel,
   loadDeliveryContact,
+  mapsDirectionsUrl,
   mapsSearchUrl,
   methodsExpectedFirst,
   onlineChannels,
@@ -93,6 +94,15 @@ describe("address and payment wording", () => {
     expect(url.origin + url.pathname).toBe("https://www.google.com/maps/search/");
     expect(url.searchParams.get("api")).toBe("1");
     expect(url.searchParams.get("query")).toBe("Av. Italia 1234, Ñuñoa");
+  });
+
+  it("points the map links at the customer's pin when there is one", () => {
+    const pinned = { address: "Av. Italia 1234", zoneName: "Ñuñoa", location: { lat: -33.45, lng: -70.6 } };
+    expect(new URL(mapsSearchUrl(pinned)).searchParams.get("query")).toBe("-33.45,-70.6");
+    const directions = new URL(mapsDirectionsUrl(pinned));
+    expect(directions.origin + directions.pathname).toBe("https://www.google.com/maps/dir/");
+    expect(directions.searchParams.get("destination")).toBe("-33.45,-70.6");
+    expect(new URL(mapsDirectionsUrl({ ...pinned, location: null })).searchParams.get("destination")).toBe("Av. Italia 1234, Ñuñoa");
   });
 
   it("describes the expected payment for staff and customer", () => {

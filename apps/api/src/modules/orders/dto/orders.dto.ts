@@ -1,5 +1,6 @@
 import {
   DELIVERY_ETA_MINUTES,
+  GEO_LIMITS,
   DELIVERY_ZONE_LIMITS,
   ORDER_LIMITS,
   ORDER_STATUSES,
@@ -8,6 +9,7 @@ import {
   type PaymentMethod,
   PICKUP_READY_MINUTES,
 } from "@app/types";
+import { applyDecorators } from "@nestjs/common";
 import { Transform, Type } from "class-transformer";
 import {
   ArrayMaxSize,
@@ -18,6 +20,7 @@ import {
   IsIn,
   IsInt,
   IsMongoId,
+  IsNumber,
   IsOptional,
   IsString,
   IsUUID,
@@ -30,6 +33,7 @@ import {
   ValidateNested,
 } from "class-validator";
 import { cleanLine, cleanText } from "../../../common/validation/clean-text";
+import { GeoPointDto } from "../../../common/validation/geo-point.dto";
 
 
 export class TableDto {
@@ -166,6 +170,12 @@ export class DeliveryAddressDto {
   @IsString()
   @MaxLength(ORDER_LIMITS.addressReferenceMax)
   reference?: string;
+
+  /** The customer's pin; required when the zone has an area drawn. */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => GeoPointDto)
+  location?: GeoPointDto;
 }
 
 export class ExpectedPaymentDto {
@@ -197,6 +207,16 @@ export class AssignRiderDto {
   riderId!: string | null;
 }
 
+/** Area of a zone: its vertices (3–200, validated by the service with geoAreaProblem). */
+const AREA = [
+  IsOptional(),
+  ValidateIf((_: unknown, value: unknown) => value !== null),
+  IsArray(),
+  ArrayMaxSize(GEO_LIMITS.zoneVerticesMax),
+  ValidateNested({ each: true }),
+  Type(() => GeoPointDto),
+];
+
 export class DeliveryZoneDto {
   @Transform(cleanLine)
   @IsString()
@@ -220,6 +240,9 @@ export class DeliveryZoneDto {
   @IsOptional()
   @IsBoolean()
   isHome?: boolean;
+
+  @applyDecorators(...AREA)
+  area?: GeoPointDto[] | null;
 }
 
 export class UpdateDeliveryZoneDto {
@@ -248,6 +271,10 @@ export class UpdateDeliveryZoneDto {
   @IsOptional()
   @IsBoolean()
   isHome?: boolean;
+
+  /** null removes the area (the zone goes back to being chosen by name). */
+  @applyDecorators(...AREA)
+  area?: GeoPointDto[] | null;
 }
 
 export class DailySummaryQueryDto {

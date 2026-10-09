@@ -1,4 +1,4 @@
-import { Prop, Schema, SchemaFactory } from "@nestjs/mongoose";
+import { Prop, raw, Schema, SchemaFactory } from "@nestjs/mongoose";
 import { type HydratedDocument, Types } from "mongoose";
 
 /** A commune or sector the restaurant delivers to. Amounts in the restaurant currency's minor unit. */
@@ -26,8 +26,17 @@ export class DeliveryZone {
 
   @Prop({ required: true, default: 0 })
   position!: number;
+
+  /**
+   * Area drawn on the map as a GeoJSON Polygon ([lng, lat] pairs, first point repeated at the end).
+   * Absent = the zone is chosen by name only. MongoDB rejects self-crossing shapes on write.
+   */
+  @Prop(raw({ type: { type: String, enum: ["Polygon"] }, coordinates: { type: [[[Number]]] } }))
+  area?: { type: "Polygon"; coordinates: number[][][] };
 }
 
 export type DeliveryZoneDocument = HydratedDocument<DeliveryZone>;
 export const DeliveryZoneSchema = SchemaFactory.createForClass(DeliveryZone);
 DeliveryZoneSchema.index({ restaurantId: 1, position: 1 });
+// Locating a customer's pin: sparse, because zones without an area have no geometry.
+DeliveryZoneSchema.index({ area: "2dsphere" }, { sparse: true });

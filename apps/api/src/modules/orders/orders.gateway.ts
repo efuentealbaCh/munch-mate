@@ -14,6 +14,7 @@ import type { AuthUser } from "../auth/auth.types";
 import { orderRoom, RealtimeService, restaurantRoom, riderRoom } from "../realtime/realtime.service";
 import { MembershipsRepository } from "../restaurants/memberships.repository";
 import { OrdersService } from "./orders.service";
+import { RiderTrackingService } from "./rider-tracking.service";
 
 interface SocketData {
   user: AuthUser | null;
@@ -44,6 +45,7 @@ export class OrdersGateway implements OnGatewayInit, OnGatewayConnection {
     private readonly accessTokens: AccessTokenService,
     private readonly memberships: MembershipsRepository,
     private readonly orders: OrdersService,
+    private readonly tracking: RiderTrackingService,
   ) {}
 
   afterInit(server: Server): void {
@@ -72,6 +74,17 @@ export class OrdersGateway implements OnGatewayInit, OnGatewayConnection {
     const riderOnly = membership.roles.every((role) => role === "rider");
     await socket.join(riderOnly ? riderRoom(membership.restaurantId, user.id) : restaurantRoom(membership.restaurantId));
     return { ok: true };
+  }
+
+  /**
+   * The rider's phone reports where it is. Authorization happens on every report (assigned rider, delivery
+   * on its way), so a revoked rider or a finished delivery stops being followed immediately.
+   */
+  @SubscribeMessage("rider.location")
+  async riderLocation(@ConnectedSocket() socket: AppSocket, @MessageBody() report: unknown): Promise<SubscribeResult> {
+    const user = socket.data.user;
+    if (!user) return { ok: false, code: "UNAUTHENTICATED" };
+    return this.tracking.report(user.id, (report ?? {}) as Record<string, unknown>);
   }
 
   @SubscribeMessage("order.subscribe")

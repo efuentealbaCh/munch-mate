@@ -1,4 +1,4 @@
-import { ORDER_LIMITS, type RestaurantStatus, type WeeklyHours } from "@app/types";
+import { type GeoPoint, ORDER_LIMITS, type RestaurantStatus, type WeeklyHours } from "@app/types";
 import { Injectable } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { type ClientSession, type Model, Types } from "mongoose";
@@ -16,6 +16,7 @@ export interface RestaurantRecord {
   deliveryEnabled: boolean;
   openingHours: WeeklyHours | null;
   maxItemsPerOrder: number;
+  location: GeoPoint | null;
   currency: string;
   timezone: string;
   status: RestaurantStatus;
@@ -31,6 +32,7 @@ export interface RestaurantChanges {
   deliveryEnabled?: boolean;
   openingHours?: WeeklyHours | null;
   maxItemsPerOrder?: number;
+  location?: GeoPoint | null;
 }
 
 /** Thrown when the unique index on `slug` rejects a write. */
@@ -102,9 +104,15 @@ export class RestaurantsRepository {
   }
 
   async update(id: string, changes: RestaurantChanges): Promise<RestaurantRecord | null> {
+    // A null location is removed instead of stored.
+    const { location, ...rest } = changes;
+    const update =
+      location === null
+        ? { $set: rest, $unset: { location: 1 } }
+        : { $set: location === undefined ? rest : { ...rest, location } };
     try {
       const doc = await this.restaurants
-        .findByIdAndUpdate(id, { $set: changes }, { returnDocument: "after", runValidators: true })
+        .findByIdAndUpdate(id, update, { returnDocument: "after", runValidators: true })
         .lean();
       return doc ? toRecord(doc) : null;
     } catch (error) {
@@ -189,6 +197,10 @@ function toRecord(doc: Restaurant & { _id: Types.ObjectId }): RestaurantRecord {
         ? doc.openingHours.map((day) => day.map((r) => ({ open: r.open, close: r.close })))
         : null,
     maxItemsPerOrder: doc.maxItemsPerOrder ?? ORDER_LIMITS.itemsPerOrderDefault,
+    location:
+      typeof doc.location?.lat === "number" && typeof doc.location.lng === "number"
+        ? { lat: doc.location.lat, lng: doc.location.lng }
+        : null,
     currency: doc.currency,
     timezone: doc.timezone,
     status: doc.status,

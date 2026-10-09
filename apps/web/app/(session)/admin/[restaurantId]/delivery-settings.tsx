@@ -1,14 +1,15 @@
 "use client";
 
-import { DELIVERY_ZONE_LIMITS, type DeliveryZoneView } from "@app/types";
+import { DELIVERY_ZONE_LIMITS, type DeliveryZoneView, type GeoPoint } from "@app/types";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { HomeIcon, MapPinIcon, PencilIcon, PlusIcon, Trash2Icon } from "lucide-react";
+import { HomeIcon, MapIcon, MapPinIcon, PencilIcon, PlusIcon, SquareDashedIcon, Trash2Icon } from "lucide-react";
 import { useCallback, useId, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { FormError } from "@/components/form-error";
 import { FormField } from "@/components/form-field";
+import { MapUnavailableNotice } from "@/components/map-unavailable-notice";
 import { PriceInput } from "@/components/price-input";
 import { SubmitButton } from "@/components/submit-button";
 import { Badge } from "@/components/ui/badge";
@@ -19,12 +20,14 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { useApiQuery } from "@/hooks/use-api-query";
+import { type MapConfigState, useMapConfig } from "@/hooks/use-map-config";
 import { deliveryZonesApi, restaurantsApi } from "@/lib/endpoints";
 import { errorMessage, hasCode } from "@/lib/errors";
 import { formatPrice, formatPriceInput, parsePriceInput } from "@/lib/money";
 import { nameTakenFromError, nameTakenMessage } from "@/lib/unique-names";
 import { type DeliveryZoneValues, deliveryZoneSchema } from "@/lib/validation";
 import { useRestaurant } from "./restaurant-context";
+import { ZoneAreaDialog } from "./zone-area-dialog";
 
 /**
  * Owner card "Delivery": the switch that lets customers order for delivery, and the zones (commune or
@@ -39,6 +42,7 @@ export function DeliverySettings() {
   const load = useCallback(() => deliveryZonesApi.list(restaurant.id), [restaurant.id]);
   const zonesQuery = useApiQuery<DeliveryZoneView[]>(load);
   const zones = zonesQuery.data;
+  const map = useMapConfig();
 
   async function toggle(deliveryEnabled: boolean) {
     const previous = restaurant;
@@ -89,9 +93,14 @@ export function DeliverySettings() {
           El local está cerrado: abre en <strong>Pedidos</strong> («Recibiendo pedidos») para que puedan pedir.
         </p>
       ) : null}
+      {map.status === "ready" && !map.available ? (
+        <MapUnavailableNotice>Mientras tanto, los clientes eligen su zona por nombre.</MapUnavailableNotice>
+      ) : null}
       <ZoneList
         restaurantId={restaurant.id}
         currency={restaurant.currency}
+        map={map}
+        center={restaurant.location}
         zones={zones}
         error={zonesQuery.error}
         loading={zonesQuery.loading}
@@ -112,6 +121,8 @@ function withSaved(list: DeliveryZoneView[], saved: DeliveryZoneView): DeliveryZ
 function ZoneList({
   restaurantId,
   currency,
+  map,
+  center,
   zones,
   error,
   loading,
@@ -121,6 +132,10 @@ function ZoneList({
 }: {
   restaurantId: string;
   currency: string;
+  /** The base map: zones can be drawn only when it is available. */
+  map: MapConfigState & { available: boolean };
+  /** The restaurant's location (where the editor starts when nothing is drawn yet). */
+  center: GeoPoint | null;
   zones: DeliveryZoneView[] | undefined;
   error: unknown;
   loading: boolean;
@@ -132,6 +147,25 @@ function ZoneList({
   const [deleting, setDeleting] = useState<DeliveryZoneView | null>(null);
   const [deletePending, setDeletePending] = useState(false);
   const [homePending, setHomePending] = useState<string | null>(null);
+  const [drawing, setDrawing] = useState<DeliveryZoneView | null>(null);
+  const [clearingArea, setClearingArea] = useState<DeliveryZoneView | null>(null);
+  const [clearPending, setClearPending] = useState(false);
+
+  /** "Quitar área": the zone goes back to being chosen by name. */
+  async function removeArea(zone: DeliveryZoneView) {
+    setClearPending(true);
+    try {
+      const saved = await deliveryZonesApi.update(restaurantId, zone.id, { area: null });
+      onChange((list) => withSaved(list, saved));
+      toast.success(`Quitaste el área de «${zone.name}»`);
+    } catch (failure) {
+      toast.error(errorMessage(failure));
+      if (hasCode(failure, "ZONE_NOT_FOUND")) onStale();
+    } finally {
+      setClearPending(false);
+      setClearingArea(null);
+    }
+  }
 
   async function remove(zone: DeliveryZoneView) {
     setDeletePending(true);
@@ -211,11 +245,33 @@ function ZoneList({
                     </Badge>
                   ) : null}
                   {zone.active ? null : <Badge variant="outline">Inactiva</Badge>}
+                  {zone.area ? (
+                    <Badge variant="outline" data-testid="zone-area-badge">
+                      <MapIcon aria-hidden />
+                      En el mapa
+                    </Badge>
+                  ) : null}
                 </span>
                 <span className="text-sm text-muted-foreground">
                   Envío {zone.fee > 0 ? formatPrice(zone.fee, currency) : "gratis"} · Mínimo{" "}
                   {zone.minOrder > 0 ? formatPrice(zone.minOrder, currency) : "sin mínimo"}
                 </span>
+                {map.available || zone.area ? (
+                  <span className="mt-1 flex flex-wrap items-center gap-1">
+                    {map.available ? (
+                      <Button size="sm" variant="outline" onClick={() => setDrawing(zone)}>
+                        {zone.area ? <PencilIcon aria-hidden data-icon="inline-start" /> : <SquareDashedIcon aria-hidden data-icon="inline-start" />}
+                        {zone.area ? "Editar área" : "Dibujar en el mapa"}
+                        <span className="sr-only"> de {zone.name}</span>
+                      </Button>
+                    ) : null}
+                    {zone.area ? (
+                      <Button size="sm" variant="ghost" onClick={() => setClearingArea(zone)}>
+                        Quitar área<span className="sr-only"> de {zone.name}</span>
+                      </Button>
+                    ) : null}
+                  </span>
+                ) : null}
               </span>
               <span className="flex items-center gap-1">
                 {zone.isHome ? null : (
@@ -243,6 +299,28 @@ function ZoneList({
         onOpenChange={(open) => !open && setEditing(null)}
         onSaved={(saved) => onChange((list) => withSaved(list, saved))}
         onStale={onStale}
+      />
+      {map.available && map.config ? (
+        <ZoneAreaDialog
+          restaurantId={restaurantId}
+          zone={drawing}
+          zones={zones ?? []}
+          config={map.config}
+          center={center}
+          onOpenChange={(open) => !open && setDrawing(null)}
+          onSaved={(saved) => onChange((list) => withSaved(list, saved))}
+          onStale={onStale}
+        />
+      ) : null}
+      <ConfirmDialog
+        open={clearingArea !== null}
+        onOpenChange={(open) => !open && setClearingArea(null)}
+        title={clearingArea ? `¿Quitar el área de «${clearingArea.name}»?` : "¿Quitar el área?"}
+        description="La zona se seguirá eligiendo por nombre, sin revisar dónde marca el cliente. Puedes volver a dibujarla cuando quieras."
+        confirmLabel="Quitar área"
+        destructive
+        pending={clearPending}
+        onConfirm={() => clearingArea && void removeArea(clearingArea)}
       />
       <ConfirmDialog
         open={deleting !== null}

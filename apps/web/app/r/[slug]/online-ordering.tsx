@@ -1,6 +1,6 @@
 "use client";
 
-import type { CreatedOrder, PaymentMethod, PublicDeliveryZone, PublicMenu, PublicProduct } from "@app/types";
+import type { CreatedOrder, GeoPoint, PaymentMethod, PublicDeliveryZone, PublicMenu, PublicProduct } from "@app/types";
 import { formatPhone, normalizePhone } from "@app/utils";
 import { BikeIcon, ClockIcon, ReceiptTextIcon, ShoppingBagIcon } from "lucide-react";
 import Link from "next/link";
@@ -71,6 +71,8 @@ export function OnlineOrdering({ initialMenu }: { initialMenu: PublicMenu }) {
   const [cartOpen, setCartOpen] = useState(false);
   const [checkout, setCheckout] = useState<DeliveryCheckoutValues>(EMPTY_CHECKOUT);
   const [chosenChannel, setChosenChannel] = useState<OnlineChannel | null>(null);
+  // Delivery pin on the map (phase 7). Kept for the visit only: not remembered on the device.
+  const [pin, setPin] = useState<GeoPoint | null>(null);
   const [zones, setZones] = useState<PublicDeliveryZone[] | null>(null);
   const [zonesError, setZonesError] = useState<unknown>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -182,8 +184,8 @@ export function OnlineOrdering({ initialMenu }: { initialMenu: PublicMenu }) {
       if (hasCode(failure, "NOT_ACCEPTING_ORDERS")) setMenu((m) => ({ ...m, restaurant: { ...m.restaurant, acceptingOrders: false } }));
       if (hasCode(failure, "PICKUP_DISABLED")) setMenu((m) => ({ ...m, restaurant: { ...m.restaurant, pickupEnabled: false } }));
       if (hasCode(failure, "DELIVERY_DISABLED")) setMenu((m) => ({ ...m, restaurant: { ...m.restaurant, deliveryEnabled: false } }));
-      // The zone was deactivated or its minimum changed: show the current list.
-      if (hasCode(failure, "ZONE_NOT_AVAILABLE", "BELOW_MINIMUM_ORDER")) void refreshZones();
+      // The zone was deactivated, its minimum changed or its area was redrawn: show the current list.
+      if (hasCode(failure, "ZONE_NOT_AVAILABLE", "BELOW_MINIMUM_ORDER", "LOCATION_REQUIRED", "OUTSIDE_ZONE")) void refreshZones();
       // The owner lowered the cap after the menu loaded: apply it so the cart shows what to remove.
       if (hasCode(failure, "TOO_MANY_ITEMS")) {
         const max = maxFromMeta(failure.meta);
@@ -221,6 +223,8 @@ export function OnlineOrdering({ initialMenu }: { initialMenu: PublicMenu }) {
         address: values.address,
         ...(values.unit ? { unit: values.unit } : {}),
         ...(values.reference ? { reference: values.reference } : {}),
+        // The pin helps the rider even for zones chosen by name; zones drawn on the map require it.
+        ...(pin ? { location: pin } : {}),
       },
       payment: { method, ...(cashAmount !== null ? { cashAmount } : {}) },
     };
@@ -304,6 +308,17 @@ export function OnlineOrdering({ initialMenu }: { initialMenu: PublicMenu }) {
           setError(null);
         }}
         zones={{ zones, error: zonesError, retry: () => void refreshZones() }}
+        pin={{
+          slug,
+          center: restaurant.location,
+          value: pin,
+          onChange: setPin,
+          canPickup: channels.includes("pickup"),
+          onChoosePickup: () => {
+            setChosenChannel("pickup");
+            setError(null);
+          },
+        }}
         lines={lines}
         currency={currency}
         maxItems={maxItems}

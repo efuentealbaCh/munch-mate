@@ -1,3 +1,4 @@
+export * from "./geo";
 export * from "./money";
 export * from "./names";
 export * from "./opening-hours";

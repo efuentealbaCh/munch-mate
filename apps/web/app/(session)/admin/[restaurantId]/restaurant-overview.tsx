@@ -15,6 +15,7 @@ import { teamApi } from "@/lib/endpoints";
 import { errorMessage } from "@/lib/errors";
 import { DeliverySettings } from "./delivery-settings";
 import { ItemsLimitSettings, ItemsLimitView } from "./items-limit-settings";
+import { LocationSettings } from "./location-settings";
 import { OpeningHoursSettings } from "./opening-hours-settings";
 import { PickupSettings } from "./pickup-settings";
 import { useRestaurant } from "./restaurant-context";
@@ -128,6 +129,17 @@ export function RestaurantOverview() {
             </CardHeader>
             <CardContent>
               <DeliverySettings />
+            </CardContent>
+          </Card>
+          <Card className={CARD_SPACING}>
+            <CardHeader>
+              <CardTitle>
+                <h2>Ubicación del local</h2>
+              </CardTitle>
+              <CardDescription>Dónde parten los mapas de delivery y de seguimiento.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <LocationSettings />
             </CardContent>
           </Card>
           <Card className={CARD_SPACING}>

@@ -1,4 +1,12 @@
-import type { CreatedOrder, DailySummary, OrderView, PublicOrderView, RiderView, TableContext } from "@app/types";
+import type {
+  CreatedOrder,
+  DailySummary,
+  OrderView,
+  PublicOrderView,
+  RiderPosition,
+  RiderView,
+  TableContext,
+} from "@app/types";
 import {
   Body,
   Controller,
@@ -63,6 +71,15 @@ export class OrdersController {
     @Body() dto: ChangeStatusDto,
   ): Promise<OrderView> {
     return this.orders.changeStatus(tenant, user.id, orderId, dto.status, dto.reason, dto.readyInMinutes);
+  }
+
+  /** Last position of the rider (null when not on its way or no report yet). */
+  @Get(":orderId/rider-location")
+  async riderLocation(
+    @CurrentTenant() tenant: TenantContext,
+    @Param("orderId") orderId: string,
+  ): Promise<{ position: RiderPosition | null }> {
+    return { position: await this.orders.riderPosition(tenant, orderId) };
   }
 
   /** 202 `{ status: "pending" }` while the workers generate it; the PDF once ready. */
@@ -220,6 +237,15 @@ export class PublicOrdersController {
   @HttpCode(HttpStatus.OK)
   cancel(@Body() dto: AccessTokenDto): Promise<PublicOrderView> {
     return this.orders.cancelByCustomer(dto.accessToken);
+  }
+
+  /** The rider's last position, to draw the map before the next live update arrives. */
+  @Public()
+  @Throttle({ default: { limit: 120, ttl: 60_000 } })
+  @Post("orders/rider-location")
+  @HttpCode(HttpStatus.OK)
+  async riderLocation(@Body() dto: AccessTokenDto): Promise<{ position: RiderPosition | null }> {
+    return { position: await this.orders.riderPositionForCustomer(dto.accessToken) };
   }
 
   /** POST so the tracking token stays in the body (and out of access logs); the web saves the blob. */

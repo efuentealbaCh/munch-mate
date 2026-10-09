@@ -11,10 +11,11 @@ import {
   type PaymentMethod,
   type PublicOrderView,
   READY_MINUTES_BY_CHANNEL,
+  type RiderPosition,
   type RestaurantRole,
   type RiderView,
 } from "@app/types";
-import { checkTransition, formatMoney, normalizePhone } from "@app/utils";
+import { checkTransition, formatMoney, normalizePhone, roundCoord } from "@app/utils";
 import {
   BadRequestException,
   ConflictException,
@@ -45,7 +46,9 @@ import { UsersRepository } from "../users/users.repository";
 import { DeliveryZonesRepository } from "./delivery-zones.repository";
 import { OrderValidationError, type PricingMenu, priceOrder } from "./order-pricing";
 import { businessDate, deriveAccessToken, isCalendarDate } from "./order-tokens";
+import { MapsService } from "../maps/maps.service";
 import { summarizeDay } from "./daily-summary";
+import { RiderTrackingService } from "./rider-tracking.service";
 import { hasReceipt, receiptKey, toExpectedPaymentView, toOrderView, toPublicOrderView } from "./order.views";
 import { CountersRepository } from "./counters.repository";
 import { DUPLICATE_KEY, type NewOrder, type OrderRecord, OrdersRepository } from "./orders.repository";
@@ -118,6 +121,8 @@ export class OrdersService {
     private readonly storage: StorageService,
     @InjectConnection() private readonly connection: Connection,
     config: ConfigService<ApiEnv, true>,
+    private readonly tracking: RiderTrackingService,
+    private readonly maps: MapsService,
   ) {
     this.tokenSecret = config.get("ORDER_TOKEN_SECRET", { infer: true });
     this.appUrl = config.get("APP_URL", { infer: true });
@@ -186,6 +191,22 @@ export class OrdersService {
           apiError("ZONE_NOT_AVAILABLE", "El local ya no reparte en esa zona; elige otra o pide para retirar"),
         );
       }
+      const pin = input.delivery.location
+        ? { lat: roundCoord(input.delivery.location.lat), lng: roundCoord(input.delivery.location.lng) }
+        : null;
+      // A zone drawn on the map is checked against the pin: the address text alone cannot prove where it is.
+      // Without the base map (not uploaded) customers may have no way to place one, so the pin is then
+      // optional and the zone is taken by name, as before phase 7; a pin that is sent is still checked.
+      if (zone.area && (pin || (await this.maps.isAvailable()))) {
+        if (!pin) {
+          throw new BadRequestException(apiError("LOCATION_REQUIRED", "Marca en el mapa dónde entregamos tu pedido"));
+        }
+        if (!(await this.deliveryZones.contains(restaurant.id, zone.id, pin))) {
+          throw new ConflictException(
+            apiError("OUTSIDE_ZONE", `Tu ubicación queda fuera de ${zone.name}; revisa el pin o elige otra zona`),
+          );
+        }
+      }
       await this.checkPhoneLimit(restaurant.id, contact.customerPhone);
       const cash = input.payment.method === "cash" ? (input.payment.cashAmount ?? null) : null;
 
@@ -200,6 +221,7 @@ export class OrdersService {
             address: input.delivery.address.trim(),
             unit: input.delivery.unit?.trim() ?? "",
             reference: input.delivery.reference?.trim() ?? "",
+            location: pin,
           },
           expectedPayment: { method: input.payment.method, cashAmount: cash },
         },
@@ -428,6 +450,8 @@ export class OrdersService {
       throw new ConflictException(apiError("ORDER_CHANGED", "Alguien actualizó este pedido; revisa su estado"));
     }
     if (to === "accepted" && hasReceipt(updated)) await this.requestReceipt(updated);
+    // Delivered (or otherwise left the road): the rider's position is not shared any more.
+    if (order.status === "out_for_delivery") await this.tracking.clear(order.id);
     await this.broadcast(updated);
     return toOrderView(updated);
   }
@@ -560,6 +584,20 @@ export class OrdersService {
     const order = await this.orders.findByAccessTokenHash(hashToken(accessToken));
     if (!order) throw orderNotFound();
     return this.publicView(order, await this.restaurant(order.restaurantId));
+  }
+
+  /** The rider's last position for the customer, only while the delivery is on its way. */
+  async riderPositionForCustomer(accessToken: string): Promise<RiderPosition | null> {
+    const order = await this.orders.findByAccessTokenHash(hashToken(accessToken));
+    if (!order) throw orderNotFound();
+    return order.status === "out_for_delivery" ? this.tracking.lastPosition(order.id) : null;
+  }
+
+  /** The rider's last position for the staff board. */
+  async riderPosition(tenant: TenantContext, orderId: string): Promise<RiderPosition | null> {
+    const order = await this.orders.findOne(tenant.restaurantId, orderId);
+    if (!order) throw orderNotFound();
+    return order.status === "out_for_delivery" ? this.tracking.lastPosition(order.id) : null;
   }
 
   /** @returns The order record behind a tracking token (Socket.IO subscriptions), or null. */

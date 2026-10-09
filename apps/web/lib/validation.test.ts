@@ -123,8 +123,8 @@ describe("pickupCheckoutSchema", () => {
 
 describe("deliveryCheckoutSchema", () => {
   const zones = [
-    { id: "z1", name: "Ñuñoa", fee: 1990, minOrder: 8000, isHome: true },
-    { id: "z2", name: "Centro", fee: 0, minOrder: 0, isHome: false },
+    { id: "z1", name: "Ñuñoa", fee: 1990, minOrder: 8000, isHome: true, area: null },
+    { id: "z2", name: "Centro", fee: 0, minOrder: 0, isHome: false, area: null },
   ];
   const schema = (subtotal: number) => deliveryCheckoutSchema({ subtotal, zones, currency: "CLP" });
   const valid = {

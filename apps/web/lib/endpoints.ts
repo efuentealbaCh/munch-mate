@@ -8,8 +8,10 @@ import type {
   DailySummary,
   DeliveryZoneInput,
   DeliveryZoneView,
+  GeoPoint,
   InvitationPreview,
   InvitationView,
+  MapConfig,
   MemberView,
   MenuCategoryView,
   ModifierGroupView,
@@ -24,6 +26,7 @@ import type {
   RestaurantRole,
   RestaurantStatus,
   RestaurantView,
+  RiderPosition,
   RiderView,
   SlugAvailability,
   TableContext,
@@ -79,6 +82,8 @@ export const restaurantsApi = {
       deliveryEnabled?: boolean;
       /** Units (sum of quantities) allowed in one order, ORDER_LIMITS.itemsPerOrderMin…Max. */
       maxItemsPerOrder?: number;
+      /** The restaurant on the map (centers the maps); null removes it. */
+      location?: GeoPoint | null;
     },
   ) =>
     api.request<RestaurantView>(restaurantPath(id), { method: "PATCH", body }),
@@ -256,6 +261,11 @@ export const ordersApi = {
    */
   receipt: (restaurantId: string, orderId: string) =>
     readReceipt(api.requestResponse(`${restaurantPath(restaurantId)}/orders/${segment(orderId)}/receipt`)),
+  /** Last position of the rider of a delivery on its way (null: not on its way, or no report yet). */
+  riderLocation: (restaurantId: string, orderId: string, signal?: AbortSignal) =>
+    api.request<{ position: RiderPosition | null }>(`${restaurantPath(restaurantId)}/orders/${segment(orderId)}/rider-location`, {
+      signal,
+    }),
 };
 
 async function readReceipt(pending: Promise<Response>): Promise<DownloadedFile | null> {
@@ -376,6 +386,23 @@ export const publicOrdersApi = {
     api.request<CreatedOrder>(`/public/restaurants/${segment(slug)}/delivery-orders`, { method: "POST", body }),
   /** Active zones, the restaurant's own first. @throws ApiError (404) when delivery is off. */
   deliveryZones: (slug: string) => api.request<PublicDeliveryZone[]>(`/public/restaurants/${segment(slug)}/delivery-zones`),
+  /**
+   * The zone whose area contains the pin (first in display order when areas overlap).
+   * @throws ApiError OUT_OF_DELIVERY_AREA (404) when no drawn zone contains it.
+   */
+  locateZone: (slug: string, point: GeoPoint, signal?: AbortSignal) =>
+    api.request<PublicDeliveryZone>(`/public/restaurants/${segment(slug)}/delivery-zones/locate`, {
+      method: "POST",
+      body: { lat: point.lat, lng: point.lng },
+      signal,
+    }),
+  /** Last position of the rider (token in the body). null = not on its way yet, or no report yet. */
+  riderLocation: (accessToken: string, signal?: AbortSignal) =>
+    api.request<{ position: RiderPosition | null }>("/public/orders/rider-location", {
+      method: "POST",
+      body: { accessToken },
+      signal,
+    }),
   lookup: (accessToken: string) =>
     api.request<PublicOrderView>("/public/orders/lookup", { method: "POST", body: { accessToken } }),
   /** @throws ApiError ORDER_NOT_CANCELLABLE once the restaurant took the order. */
@@ -387,4 +414,10 @@ export const publicOrdersApi = {
   /** Receipt PDF (POST: the token stays out of the URL). @returns null while it is being generated (202). */
   receipt: (accessToken: string) =>
     readReceipt(api.requestResponse("/public/orders/receipt", { method: "POST", body: { accessToken } })),
+};
+
+/** Self-hosted base map (phase 7). */
+export const mapsApi = {
+  /** `available: false` until the map data is uploaded (`pnpm maps:init`): the pages work without a map. */
+  config: () => api.request<MapConfig>("/public/map-config"),
 };

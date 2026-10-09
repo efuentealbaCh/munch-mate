@@ -243,7 +243,7 @@ describe("delivery orders", () => {
       customerName: "Ana",
       customerPhone: "+56912345678",
       deliveryFee: 1990,
-      delivery: { zoneId: "z1", zoneName: "Ñuñoa", address: "Av. Italia 1234", unit: "", reference: "" },
+      delivery: { zoneId: "z1", zoneName: "Ñuñoa", address: "Av. Italia 1234", unit: "", reference: "", location: null },
       expectedPayment: { method: "cash", cashAmount: 20000, change: 3010 },
       ...overrides,
     });

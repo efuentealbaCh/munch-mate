@@ -1,3 +1,4 @@
+import type { GeoArea, GeoPoint, RiderPosition } from "./geo";
 import type { OpenState } from "./restaurants";
 
 /** Channels a customer can order through: dine_in (phase 3), pickup (phase 4), delivery (phase 5). */
@@ -123,6 +124,8 @@ export interface DeliveryAddressInput {
   unit?: string;
   /** How to find it ("portón verde", "frente a la plaza"). */
   reference?: string;
+  /** The pin the customer placed. Required when the chosen zone has an area drawn on the map. */
+  location?: GeoPoint;
 }
 
 /** How the customer plans to pay on delivery; `cashAmount` lets the rider bring change. */
@@ -182,6 +185,7 @@ export interface OrderDeliveryView {
   address: string;
   unit: string;
   reference: string;
+  location: GeoPoint | null;
 }
 
 export interface ExpectedPaymentView {
@@ -305,6 +309,8 @@ export interface DeliveryZoneView {
   fee: number;
   minOrder: number;
   active: boolean;
+  /** Area drawn on the map; null = selected by name only (no pin check). */
+  area: GeoArea | null;
   /** The restaurant's own commune: preselected at checkout. At most one zone has it. */
   isHome: boolean;
   position: number;
@@ -314,12 +320,14 @@ export interface DeliveryZoneInput {
   name: string;
   fee: number;
   minOrder: number;
+  /** 3–200 vertices; null removes it. */
+  area?: GeoArea | null;
   active?: boolean;
   isHome?: boolean;
 }
 
 /** `GET /api/public/restaurants/:slug/delivery-zones`: active zones, home first. */
-export type PublicDeliveryZone = Pick<DeliveryZoneView, "id" | "name" | "fee" | "minOrder" | "isHome">;
+export type PublicDeliveryZone = Pick<DeliveryZoneView, "id" | "name" | "fee" | "minOrder" | "isHome" | "area">;
 
 /** A member with the rider role, for the assignment picker. */
 export interface RiderView {
@@ -360,6 +368,8 @@ export interface ServerToClientEvents {
   "order.status": (order: PublicOrderView) => void;
   "restaurant.accepting": (payload: { restaurantId: string; acceptingOrders: boolean }) => void;
   "qr-sheet.ready": (payload: { restaurantId: string; jobId: string }) => void;
+  /** The rider's phone moved (customer's order room, and the staff of the restaurant). */
+  "order.rider-location": (payload: RiderPosition & { orderId: string }) => void;
   /** The PDF receipt was generated (staff room and the customer's order room). */
   "order.receipt-ready": (payload: { orderId: string }) => void;
 }
@@ -368,6 +378,11 @@ export interface ServerToClientEvents {
 export interface ClientToServerEvents {
   "restaurant.subscribe": (restaurantId: string, ack: (result: SubscribeResult) => void) => void;
   "order.subscribe": (accessToken: string, ack: (result: SubscribeResult) => void) => void;
+  /** The rider's phone reports its position while a delivery assigned to them is on its way. */
+  "rider.location": (
+    report: { orderId: string; lat: number; lng: number; accuracy?: number },
+    ack: (result: SubscribeResult) => void,
+  ) => void;
 }
 
 export type SubscribeResult = { ok: true } | { ok: false; code: string };
