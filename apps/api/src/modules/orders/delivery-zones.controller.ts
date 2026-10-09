@@ -8,6 +8,7 @@ import {
   RestaurantRoles,
   type TenantContext,
 } from "../restaurants/restaurant-access.guard";
+import { GeoPointDto } from "../../common/validation/geo-point.dto";
 import { DeliveryZoneDto, UpdateDeliveryZoneDto } from "./dto/orders.dto";
 import { DeliveryZonesService } from "./delivery-zones.service";
 
@@ -55,5 +56,14 @@ export class PublicDeliveryZonesController {
   @Get()
   list(@Param("slug") slug: string): Promise<PublicDeliveryZone[]> {
     return this.zones.listPublic(slug);
+  }
+
+  /** The zone that contains the customer's pin (404 OUT_OF_DELIVERY_AREA when none does). */
+  @Public()
+  @Throttle({ default: { limit: 120, ttl: 60_000 } })
+  @Post("locate")
+  @HttpCode(HttpStatus.OK)
+  locate(@Param("slug") slug: string, @Body() point: GeoPointDto): Promise<PublicDeliveryZone> {
+    return this.zones.locatePublic(slug, point);
   }
 }

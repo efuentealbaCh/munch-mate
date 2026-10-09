@@ -1,5 +1,6 @@
 import { ORDER_LIMITS, RESTAURANT_ROLES, type RestaurantRole, type WeeklyHours } from "@app/types";
-import { Transform } from "class-transformer";
+import { Transform, Type } from "class-transformer";
+import { GeoPointDto } from "../../../common/validation/geo-point.dto";
 import {
   ArrayMaxSize,
   ArrayMinSize,
@@ -16,6 +17,7 @@ import {
   MaxLength,
   Min,
   ValidateIf,
+  ValidateNested,
 } from "class-validator";
 import { cleanLine, cleanText } from "../../../common/validation/clean-text";
 
@@ -80,6 +82,13 @@ export class UpdateRestaurantDto {
   @Min(ORDER_LIMITS.itemsPerOrderMin, { message: `El mínimo es ${ORDER_LIMITS.itemsPerOrderMin} producto por pedido` })
   @Max(ORDER_LIMITS.itemsPerOrderMax, { message: `El máximo es ${ORDER_LIMITS.itemsPerOrderMax} productos por pedido` })
   maxItemsPerOrder?: number;
+
+  /** The restaurant on the map; null removes it. */
+  @IsOptional()
+  @ValidateIf((_: unknown, value: unknown) => value !== null)
+  @ValidateNested()
+  @Type(() => GeoPointDto)
+  location?: GeoPointDto | null;
 }
 
 export class SlugQueryDto {

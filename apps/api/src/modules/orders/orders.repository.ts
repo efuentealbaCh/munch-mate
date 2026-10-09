@@ -1,4 +1,4 @@
-import { FINAL_ORDER_STATUSES, type OrderChannel, type OrderStatus, type PaymentMethod } from "@app/types";
+import { FINAL_ORDER_STATUSES, type GeoPoint, type OrderChannel, type OrderStatus, type PaymentMethod } from "@app/types";
 import { Injectable } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { type ClientSession, type Model, Types } from "mongoose";
@@ -11,6 +11,7 @@ export interface DeliveryRecord {
   address: string;
   unit: string;
   reference: string;
+  location: GeoPoint | null;
 }
 
 export interface ExpectedPaymentRecord {
@@ -97,7 +98,13 @@ export class OrdersRepository {
           ...input,
           restaurantId: oid(restaurantId),
           tableId: input.tableId ? oid(input.tableId) : null,
-          delivery: input.delivery ? { ...input.delivery, zoneId: oid(input.delivery.zoneId) } : null,
+          delivery: input.delivery
+            ? {
+                ...input.delivery,
+                zoneId: oid(input.delivery.zoneId),
+                location: input.delivery.location ?? undefined,
+              }
+            : null,
           items: input.items.map((item) => ({
             ...item,
             productId: oid(item.productId),
@@ -174,6 +181,13 @@ export class OrdersRepository {
         { returnDocument: "after" },
       )
       .lean();
+    return doc ? toRecord(doc) : null;
+  }
+
+  /** Any restaurant's order by id: only for checks that verify the caller's rights themselves (rider reports). */
+  async findById(orderId: string): Promise<OrderRecord | null> {
+    if (!Types.ObjectId.isValid(orderId)) return null;
+    const doc = await this.orders.findById(orderId).lean();
     return doc ? toRecord(doc) : null;
   }
 
@@ -304,6 +318,10 @@ function toRecord(doc: OrderDoc): OrderRecord {
           address: doc.delivery.address,
           unit: doc.delivery.unit ?? "",
           reference: doc.delivery.reference ?? "",
+          location:
+            typeof doc.delivery.location?.lat === "number" && typeof doc.delivery.location.lng === "number"
+              ? { lat: doc.delivery.location.lat, lng: doc.delivery.location.lng }
+              : null,
         }
       : null,
     expectedPayment: doc.expectedPayment

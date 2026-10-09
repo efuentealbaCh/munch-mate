@@ -7,7 +7,7 @@ import {
   type PaymentMethod,
   type PaymentStatus,
 } from "@app/types";
-import { Prop, Schema, SchemaFactory } from "@nestjs/mongoose";
+import { Prop, raw, Schema, SchemaFactory } from "@nestjs/mongoose";
 import { type HydratedDocument, Types } from "mongoose";
 
 @Schema({ _id: false })
@@ -70,6 +70,10 @@ export class DeliverySnapshot {
 
   @Prop({ default: "" })
   reference!: string;
+
+  /** The customer's pin, when they placed one. */
+  @Prop(raw({ lat: { type: Number }, lng: { type: Number } }))
+  location?: { lat: number; lng: number };
 }
 
 /** How the customer said they would pay on delivery. The actual payment is `paymentStatus`/`paymentMethod`. */

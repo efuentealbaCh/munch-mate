@@ -1,5 +1,5 @@
 import type { RestaurantStatus, WeeklyHours } from "@app/types";
-import { Prop, Schema, SchemaFactory } from "@nestjs/mongoose";
+import { Prop, raw, Schema, SchemaFactory } from "@nestjs/mongoose";
 import { type HydratedDocument, Types } from "mongoose";
 
 /** A tenant. Single location in the MVP: one address, one schedule, one menu. */
@@ -45,6 +45,10 @@ export class Restaurant {
   /** Units (sum of quantities) allowed in one order; stops absurd carts (ORDER_LIMITS.itemsPerOrder*). */
   @Prop({ default: 50, min: 1, max: 500 })
   maxItemsPerOrder!: number;
+
+  /** Where the restaurant is ({ lat, lng }, set by the owner on the map); centers maps. */
+  @Prop(raw({ lat: { type: Number }, lng: { type: Number } }))
+  location?: { lat: number; lng: number };
 
   /** ISO 4217. Amounts are stored as integers in the currency's minor unit (CLP has none). */
   @Prop({ required: true, default: "CLP" })
