@@ -53,6 +53,8 @@ export interface RestaurantView {
   /** null = no schedule (the manual switch alone decides). */
   openingHours: WeeklyHours | null;
   openState: OpenState;
+  /** Owner setting: units (sum of quantities) allowed in one order. */
+  maxItemsPerOrder: number;
   /** Customers may order for pickup from the public menu `/r/{slug}`. Owner setting, off by default. */
   pickupEnabled: boolean;
   /** Customers may order for delivery to the restaurant's zones. Owner setting, off by default. */

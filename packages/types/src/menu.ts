@@ -111,6 +111,8 @@ export interface PublicMenu {
     /** Opening hours (null = not published) and whether they allow ordering now. */
     openingHours: WeeklyHours | null;
     openState: OpenState;
+    /** Units (sum of quantities) a cart may hold; the api rejects bigger orders (409 TOO_MANY_ITEMS). */
+    maxItemsPerOrder: number;
     /** Whether customers may order for pickup from this menu (owner setting). */
     pickupEnabled: boolean;
     /** Whether customers may order for delivery (owner setting; zones at `/delivery-zones`). */

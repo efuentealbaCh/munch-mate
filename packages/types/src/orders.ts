@@ -58,6 +58,10 @@ export const ORDER_LIMITS = {
   customerEmailMax: 254,
   noteMax: 200,
   rejectReasonMax: 200,
+  /** Units per order: the restaurant's own cap (`maxItemsPerOrder`) defaults to this and stays within the range. */
+  itemsPerOrderDefault: 50,
+  itemsPerOrderMin: 1,
+  itemsPerOrderMax: 500,
   /** Pickup/delivery orders still in progress allowed per phone and restaurant (stops floods of fake orders). */
   activePickupOrdersPerPhone: 3,
   addressMax: 120,
@@ -286,6 +290,8 @@ export interface TableContext {
   restaurant: { name: string; slug: string };
   acceptingOrders: boolean;
   openState: OpenState;
+  /** Units (sum of quantities) allowed in one order. */
+  maxItemsPerOrder: number;
 }
 
 // ── Delivery zones ──────────────────────────────────────────────────────────
