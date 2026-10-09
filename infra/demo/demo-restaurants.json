@@ -440,19 +440,85 @@
           "name": "Santiago Centro",
           "fee": 1500,
           "minOrder": 5000,
-          "isHome": true
+          "isHome": true,
+          "area": [
+            {
+              "lat": -33.4245,
+              "lng": -70.6795
+            },
+            {
+              "lat": -33.4225,
+              "lng": -70.633
+            },
+            {
+              "lat": -33.456,
+              "lng": -70.632
+            },
+            {
+              "lat": -33.47,
+              "lng": -70.646
+            },
+            {
+              "lat": -33.469,
+              "lng": -70.679
+            }
+          ]
         },
         {
           "name": "Providencia",
           "fee": 2500,
-          "minOrder": 8000
+          "minOrder": 8000,
+          "area": [
+            {
+              "lat": -33.412,
+              "lng": -70.633
+            },
+            {
+              "lat": -33.408,
+              "lng": -70.596
+            },
+            {
+              "lat": -33.431,
+              "lng": -70.585
+            },
+            {
+              "lat": -33.444,
+              "lng": -70.602
+            },
+            {
+              "lat": -33.44,
+              "lng": -70.633
+            }
+          ]
         },
         {
           "name": "Estación Central",
           "fee": 2500,
-          "minOrder": 8000
+          "minOrder": 8000,
+          "area": [
+            {
+              "lat": -33.438,
+              "lng": -70.725
+            },
+            {
+              "lat": -33.44,
+              "lng": -70.68
+            },
+            {
+              "lat": -33.472,
+              "lng": -70.68
+            },
+            {
+              "lat": -33.476,
+              "lng": -70.725
+            }
+          ]
         }
-      ]
+      ],
+      "location": {
+        "lat": -33.441,
+        "lng": -70.651
+      }
     },
     {
       "name": "Pizzería Forno Rosso",
@@ -708,24 +774,112 @@
           "name": "Ñuñoa",
           "fee": 1990,
           "minOrder": 10000,
-          "isHome": true
+          "isHome": true,
+          "area": [
+            {
+              "lat": -33.444,
+              "lng": -70.629
+            },
+            {
+              "lat": -33.44,
+              "lng": -70.584
+            },
+            {
+              "lat": -33.456,
+              "lng": -70.568
+            },
+            {
+              "lat": -33.475,
+              "lng": -70.576
+            },
+            {
+              "lat": -33.476,
+              "lng": -70.628
+            }
+          ]
         },
         {
           "name": "Providencia",
           "fee": 2490,
-          "minOrder": 12000
+          "minOrder": 12000,
+          "area": [
+            {
+              "lat": -33.412,
+              "lng": -70.633
+            },
+            {
+              "lat": -33.408,
+              "lng": -70.596
+            },
+            {
+              "lat": -33.431,
+              "lng": -70.585
+            },
+            {
+              "lat": -33.444,
+              "lng": -70.602
+            },
+            {
+              "lat": -33.44,
+              "lng": -70.633
+            }
+          ]
         },
         {
           "name": "La Reina",
           "fee": 2990,
-          "minOrder": 12000
+          "minOrder": 12000,
+          "area": [
+            {
+              "lat": -33.432,
+              "lng": -70.584
+            },
+            {
+              "lat": -33.423,
+              "lng": -70.53
+            },
+            {
+              "lat": -33.46,
+              "lng": -70.525
+            },
+            {
+              "lat": -33.47,
+              "lng": -70.568
+            },
+            {
+              "lat": -33.456,
+              "lng": -70.569
+            }
+          ]
         },
         {
           "name": "Macul",
           "fee": 2490,
-          "minOrder": 10000
+          "minOrder": 10000,
+          "area": [
+            {
+              "lat": -33.476,
+              "lng": -70.628
+            },
+            {
+              "lat": -33.476,
+              "lng": -70.576
+            },
+            {
+              "lat": -33.513,
+              "lng": -70.58
+            },
+            {
+              "lat": -33.513,
+              "lng": -70.625
+            }
+          ]
         }
-      ]
+      ],
+      "location": {
+        "lat": -33.4566,
+        "lng": -70.5978
+      }
     },
     {
       "name": "Café Brote",
@@ -960,7 +1114,11 @@
       ],
       "acceptingOrders": true,
       "pickupEnabled": true,
-      "deliveryEnabled": false
+      "deliveryEnabled": false,
+      "location": {
+        "lat": -33.4256,
+        "lng": -70.6114
+      }
     }
   ]
 }
