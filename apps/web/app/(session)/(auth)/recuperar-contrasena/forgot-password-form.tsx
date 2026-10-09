@@ -12,12 +12,16 @@ import { SubmitButton } from "@/components/submit-button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Input } from "@/components/ui/input";
 import { authApi } from "@/lib/endpoints";
+import { typedDefaults } from "@/lib/form-defaults";
 import { type ForgotPasswordValues, forgotPasswordSchema } from "@/lib/validation";
 
 export function ForgotPasswordForm() {
   const [sentTo, setSentTo] = useState<string | null>(null);
   const [error, setError] = useState<unknown>(null);
-  const form = useForm<ForgotPasswordValues>({ resolver: zodResolver(forgotPasswordSchema), defaultValues: { email: "" } });
+  const form = useForm<ForgotPasswordValues>({
+    resolver: zodResolver(forgotPasswordSchema),
+    defaultValues: typedDefaults("forgot-password", { email: "" }),
+  });
   const { errors, isSubmitting } = form.formState;
 
   async function onSubmit({ email }: ForgotPasswordValues) {
@@ -62,7 +66,7 @@ export function ForgotPasswordForm() {
       description="Escribe el correo de tu cuenta y te enviaremos un enlace para crear una nueva contraseña."
       footer={footer}
     >
-      <form noValidate onSubmit={form.handleSubmit(onSubmit)} className="flex flex-col gap-5">
+      <form data-form="forgot-password" noValidate onSubmit={form.handleSubmit(onSubmit)} className="flex flex-col gap-5">
         <FormField id="email" label="Correo" error={errors.email?.message}>
           {(control) => (
             <Input {...control} type="email" autoComplete="email" inputMode="email" {...form.register("email")} />
