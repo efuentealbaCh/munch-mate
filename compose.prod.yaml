@@ -1,0 +1,29 @@
+# Production override: used on the VPS and by `pnpm stack:up` (DOMAIN=localhost) on the dev machine.
+# Only Caddy publishes ports: Docker-published ports bypass UFW, so anything else would be exposed to the internet.
+x-prod: &prod
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  mongo:
+    <<: *prod
+  valkey:
+    <<: *prod
+  garage:
+    <<: *prod
+  api:
+    <<: *prod
+  workers:
+    <<: *prod
+  web:
+    <<: *prod
+  caddy:
+    <<: *prod
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp" # HTTP/3

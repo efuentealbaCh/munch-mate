@@ -1,0 +1,20 @@
+# Local release-gate override, used only by `pnpm stack:*` on the dev machine (never on the VPS):
+#   docker compose -f compose.yaml -f compose.prod.yaml -f compose.local.yaml
+# Routes outgoing email to a Mailpit container, so the smoke test can verify delivery
+# without sending real emails.
+services:
+  workers:
+    environment:
+      SMTP_HOST: mailpit
+      SMTP_PORT: 1025
+      SMTP_SECURE: "false"
+      SMTP_USER: ""
+      SMTP_PASS: ""
+    depends_on:
+      mailpit:
+        condition: service_healthy
+
+  mailpit:
+    image: axllent/mailpit:v1.31.4
+    ports:
+      - "127.0.0.1:8025:8025" # Web UI + API, used by smoke.sh

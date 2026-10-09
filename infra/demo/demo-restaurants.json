@@ -1,0 +1,966 @@
+{
+  "$comment": "Demo data for infra/scripts/seed-demo.mjs. Every photo is CC0 (public domain) from Wikimedia Commons; source pages are listed for transparency.",
+  "owner": {
+    "name": "Demo Munch Mate"
+  },
+  "photos": {
+    "completo-italiano": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/f/f4/Swedish_Special_Hot_Dog_-_Ikea_Croydon_2025-06-13.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Swedish_Special_Hot_Dog_-_Ikea_Croydon_2025-06-13.jpg",
+      "license": "CC0"
+    },
+    "completo-dinamico": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/c/c9/Plant-based_hot_dog_with_fried_onion%2C_French_fries%2C_and_apple_sparkling_-_IKEA_Southampton_2025-12-29.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Plant-based_hot_dog_with_fried_onion,_French_fries,_and_apple_sparkling_-_IKEA_Southampton_2025-12-29.jpg",
+      "license": "CC0"
+    },
+    "as-italiano": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/d/d2/Hot_dog_vendor_-_September_2024_-_Sarah_Stierch_02.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Hot_dog_vendor_-_September_2024_-_Sarah_Stierch_02.jpg",
+      "license": "CC0"
+    },
+    "churrasco-italiano": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/5/59/Starbucks_mushroom_beef_baguette_sandwich.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Starbucks_mushroom_beef_baguette_sandwich.jpg",
+      "license": "CC0"
+    },
+    "barros-luco": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/b/b5/Beef_tongue_toastie_-_Schnitzel_%26_Co._2025-10-29.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Beef_tongue_toastie_-_Schnitzel_%26_Co._2025-10-29.jpg",
+      "license": "CC0"
+    },
+    "chacarero": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/f/ff/Steak_Sandwich_with_the_lot.PORTRAIT.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Steak_Sandwich_with_the_lot.PORTRAIT.jpg",
+      "license": "CC0"
+    },
+    "papas-fritas": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/1/18/Fries_on_a_tray.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Fries_on_a_tray.jpg",
+      "license": "CC0"
+    },
+    "papas-rusticas": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/1/1d/Bat_Yaar_French_Fries.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Bat_Yaar_French_Fries.jpg",
+      "license": "CC0"
+    },
+    "bebida-lata": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/f/f1/Drinks-supermarket-cans-beverage_%2824299872576%29.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Drinks-supermarket-cans-beverage_(24299872576).jpg",
+      "license": "CC0"
+    },
+    "jugo-natural": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/e/e7/Pineapple_Juice_fruits-465832.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Pineapple_Juice_fruits-465832.jpg",
+      "license": "CC0"
+    },
+    "logo-sangucheria": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/5/5c/Dunkin%27_Donuts_Park_-_foot_long_hot_dog.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Dunkin%27_Donuts_Park_-_foot_long_hot_dog.jpg",
+      "license": "CC0"
+    },
+    "pizza-margarita": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/1/13/Margarita_Pizza.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Margarita_Pizza.jpg",
+      "license": "CC0"
+    },
+    "pizza-pepperoni": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/f/f2/Pizza_Pepperoni_Pasta_%C3%A9_Pizza_%28Lyon%29_mars_2023.JPG",
+      "source": "https://commons.wikimedia.org/wiki/File:Pizza_Pepperoni_Pasta_%C3%A9_Pizza_(Lyon)_mars_2023.JPG",
+      "license": "CC0"
+    },
+    "pizza-napolitana": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/e/e0/Ortolana_pizza_-_Nanninella.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Ortolana_pizza_-_Nanninella.jpg",
+      "license": "CC0"
+    },
+    "pizza-cuatro-quesos": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/2/2c/Four_Cheese_-_Pizza_500_2023-11-10.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Four_Cheese_-_Pizza_500_2023-11-10.jpg",
+      "license": "CC0"
+    },
+    "pizza-pollo-bbq": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/0/0e/Butter_chicken_pizza_at_Pizza_With_a_Twist.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Butter_chicken_pizza_at_Pizza_With_a_Twist.jpg",
+      "license": "CC0"
+    },
+    "pizza-vegetariana": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/8/81/Pizza_29.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Pizza_29.jpg",
+      "license": "CC0"
+    },
+    "pan-de-ajo": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/e/ec/Filippi%27s_Pizza_Grotto_-_July_2024_-_Sarah_Stierch_05.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Filippi%27s_Pizza_Grotto_-_July_2024_-_Sarah_Stierch_05.jpg",
+      "license": "CC0"
+    },
+    "ensalada-cesar": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/d/d3/Mary%27s_Pizza_Shack_-_July_2025_-_Sarah_Stierch_01.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Mary%27s_Pizza_Shack_-_July_2025_-_Sarah_Stierch_01.jpg",
+      "license": "CC0"
+    },
+    "logo-pizzeria": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/3/36/Brick-oven-thumbnail.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Brick-oven-thumbnail.jpg",
+      "license": "CC0"
+    },
+    "espresso": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/a/a4/Valley_-_September_2024_Sarah_Stierch_04.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Valley_-_September_2024_Sarah_Stierch_04.jpg",
+      "license": "CC0"
+    },
+    "cappuccino": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/2/27/Cappuccino_-_Wai_Kika_Moo_Kau_2024-01-13.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Cappuccino_-_Wai_Kika_Moo_Kau_2024-01-13.jpg",
+      "license": "CC0"
+    },
+    "latte": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/d/d8/Caffe_Latte_at_Pulse_Cafe.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Caffe_Latte_at_Pulse_Cafe.jpg",
+      "license": "CC0"
+    },
+    "mocha": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/6/67/Tiramisu_mocha_-_Trading_Post_Coffee_Roasters_2025-12-14.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Tiramisu_mocha_-_Trading_Post_Coffee_Roasters_2025-12-14.jpg",
+      "license": "CC0"
+    },
+    "te": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/2/2d/A_cup_of_Assam_Tea_with_lemon.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:A_cup_of_Assam_Tea_with_lemon.jpg",
+      "license": "CC0"
+    },
+    "chai-latte": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/9/96/Chai_Latte_-_The_Flour_Pot_Bakery_2026-05-20.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Chai_Latte_-_The_Flour_Pot_Bakery_2026-05-20.jpg",
+      "license": "CC0"
+    },
+    "torta-chocolate": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/9/9e/Chocolate_cake_in_Tokyo.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Chocolate_cake_in_Tokyo.jpg",
+      "license": "CC0"
+    },
+    "cheesecake-frutos-rojos": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/2/25/Neapolitan_Cheesecake_-_Caff%C3%A8_Nero_2025-06-09.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Neapolitan_Cheesecake_-_Caff%C3%A8_Nero_2025-06-09.jpg",
+      "license": "CC0"
+    },
+    "croissant": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/5/5c/Croissant-newspaper-and-tea.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Croissant-newspaper-and-tea.jpg",
+      "license": "CC0"
+    },
+    "kuchen-manzana": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/a/a6/Apple_cake_with_vanilla_ice_cream_2.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Apple_cake_with_vanilla_ice_cream_2.jpg",
+      "license": "CC0"
+    },
+    "sandwich-ave-palta": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/5/55/Signature_Sandwich_-_The_Canopy_2025-08-03.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Signature_Sandwich_-_The_Canopy_2025-08-03.jpg",
+      "license": "CC0"
+    },
+    "sandwich-jamon-queso": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/7/72/Ham_%26_cheese_toasted_sandwich_-_Potatoast_2026-05-02.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Ham_%26_cheese_toasted_sandwich_-_Potatoast_2026-05-02.jpg",
+      "license": "CC0"
+    },
+    "logo-cafe": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/d/d0/Coffee_beans_spilling_out_of_a_cup.jpg",
+      "source": "https://commons.wikimedia.org/wiki/File:Coffee_beans_spilling_out_of_a_cup.jpg",
+      "license": "CC0"
+    }
+  },
+  "restaurants": [
+    {
+      "name": "Sanguchería La Esquina",
+      "description": "Completos y sánguches como los de antes: pan del día, palta molida y mayo casera.",
+      "phone": "+56 9 5555 0101",
+      "logo": "logo-sangucheria",
+      "modifierGroups": [
+        {
+          "key": "tamano-completo",
+          "name": "Tamaño",
+          "minSelect": 1,
+          "maxSelect": 1,
+          "options": [
+            {
+              "name": "Normal",
+              "priceDelta": 0
+            },
+            {
+              "name": "XL (25 cm)",
+              "priceDelta": 1500
+            }
+          ]
+        },
+        {
+          "key": "agregados",
+          "name": "Agregados",
+          "minSelect": 0,
+          "maxSelect": 3,
+          "options": [
+            {
+              "name": "Palta extra",
+              "priceDelta": 800
+            },
+            {
+              "name": "Queso derretido",
+              "priceDelta": 700
+            },
+            {
+              "name": "Tocino",
+              "priceDelta": 1000
+            },
+            {
+              "name": "Tomate extra",
+              "priceDelta": 400
+            },
+            {
+              "name": "Huevo frito",
+              "priceDelta": 900
+            }
+          ]
+        },
+        {
+          "key": "pan",
+          "name": "Tipo de pan",
+          "minSelect": 1,
+          "maxSelect": 1,
+          "options": [
+            {
+              "name": "Marraqueta",
+              "priceDelta": 0
+            },
+            {
+              "name": "Frica",
+              "priceDelta": 0
+            },
+            {
+              "name": "Pan amasado",
+              "priceDelta": 300
+            }
+          ]
+        },
+        {
+          "key": "tamano-papas",
+          "name": "Tamaño",
+          "minSelect": 1,
+          "maxSelect": 1,
+          "options": [
+            {
+              "name": "Individual",
+              "priceDelta": 0
+            },
+            {
+              "name": "Para compartir",
+              "priceDelta": 2500
+            }
+          ]
+        },
+        {
+          "key": "sabor-bebida",
+          "name": "Sabor",
+          "minSelect": 1,
+          "maxSelect": 1,
+          "options": [
+            {
+              "name": "Cola",
+              "priceDelta": 0
+            },
+            {
+              "name": "Cola sin azúcar",
+              "priceDelta": 0
+            },
+            {
+              "name": "Naranja",
+              "priceDelta": 0
+            },
+            {
+              "name": "Limón",
+              "priceDelta": 0
+            }
+          ]
+        },
+        {
+          "key": "sabor-jugo",
+          "name": "Fruta",
+          "minSelect": 1,
+          "maxSelect": 1,
+          "options": [
+            {
+              "name": "Frambuesa",
+              "priceDelta": 0
+            },
+            {
+              "name": "Mango",
+              "priceDelta": 0
+            },
+            {
+              "name": "Piña",
+              "priceDelta": 0
+            }
+          ]
+        }
+      ],
+      "categories": [
+        {
+          "name": "Completos",
+          "description": "En pan de completo recién horneado.",
+          "products": [
+            {
+              "name": "Completo italiano",
+              "description": "Tomate, palta y mayo casera.",
+              "price": 3490,
+              "photo": "completo-italiano",
+              "groups": [
+                "tamano-completo",
+                "agregados"
+              ]
+            },
+            {
+              "name": "Completo dinámico",
+              "description": "Tomate, palta, mayo, americana y salsa verde.",
+              "price": 3990,
+              "photo": "completo-dinamico",
+              "groups": [
+                "tamano-completo",
+                "agregados"
+              ]
+            },
+            {
+              "name": "As italiano",
+              "description": "Carne de vacuno laminada con tomate, palta y mayo.",
+              "price": 5490,
+              "photo": "as-italiano",
+              "groups": [
+                "tamano-completo",
+                "agregados"
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Sánguches",
+          "description": "Carne de vacuno a la plancha.",
+          "products": [
+            {
+              "name": "Churrasco italiano",
+              "description": "Churrasco, tomate, palta y mayo.",
+              "price": 6990,
+              "photo": "churrasco-italiano",
+              "groups": [
+                "pan",
+                "agregados"
+              ]
+            },
+            {
+              "name": "Barros Luco",
+              "description": "Churrasco con queso derretido.",
+              "price": 6790,
+              "photo": "barros-luco",
+              "groups": [
+                "pan",
+                "agregados"
+              ],
+              "available": false
+            },
+            {
+              "name": "Chacarero",
+              "description": "Churrasco, porotos verdes, tomate y ají verde.",
+              "price": 7290,
+              "photo": "chacarero",
+              "groups": [
+                "pan",
+                "agregados"
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Para acompañar",
+          "products": [
+            {
+              "name": "Papas fritas",
+              "description": "Cortadas a mano todos los días.",
+              "price": 2990,
+              "photo": "papas-fritas",
+              "groups": [
+                "tamano-papas"
+              ]
+            },
+            {
+              "name": "Papas rústicas",
+              "description": "Con cáscara, merkén y sal de mar.",
+              "price": 3490,
+              "photo": "papas-rusticas",
+              "groups": [
+                "tamano-papas"
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Bebidas",
+          "products": [
+            {
+              "name": "Bebida en lata",
+              "description": "350 ml.",
+              "price": 1500,
+              "photo": "bebida-lata",
+              "groups": [
+                "sabor-bebida"
+              ]
+            },
+            {
+              "name": "Jugo natural",
+              "description": "500 ml, sin azúcar añadida.",
+              "price": 2790,
+              "photo": "jugo-natural",
+              "groups": [
+                "sabor-jugo"
+              ]
+            }
+          ]
+        }
+      ],
+      "tables": [
+        "Mesa 1",
+        "Mesa 2",
+        "Mesa 3",
+        "Mesa 4",
+        "Mesa 5",
+        "Mesa 6",
+        "Barra"
+      ],
+      "acceptingOrders": true,
+      "pickupEnabled": true,
+      "deliveryEnabled": true,
+      "deliveryZones": [
+        {
+          "name": "Santiago Centro",
+          "fee": 1500,
+          "minOrder": 5000,
+          "isHome": true
+        },
+        {
+          "name": "Providencia",
+          "fee": 2500,
+          "minOrder": 8000
+        },
+        {
+          "name": "Estación Central",
+          "fee": 2500,
+          "minOrder": 8000
+        }
+      ]
+    },
+    {
+      "name": "Pizzería Forno Rosso",
+      "description": "Pizza napolitana al horno de leña, masa madre de 48 horas.",
+      "phone": "+56 9 5555 0202",
+      "logo": "logo-pizzeria",
+      "modifierGroups": [
+        {
+          "key": "tamano-pizza",
+          "name": "Tamaño",
+          "minSelect": 1,
+          "maxSelect": 1,
+          "options": [
+            {
+              "name": "Mediana (4 porciones)",
+              "priceDelta": 0
+            },
+            {
+              "name": "Familiar (8 porciones)",
+              "priceDelta": 4000
+            },
+            {
+              "name": "XL (12 porciones)",
+              "priceDelta": 7500
+            }
+          ]
+        },
+        {
+          "key": "masa",
+          "name": "Masa",
+          "minSelect": 1,
+          "maxSelect": 1,
+          "options": [
+            {
+              "name": "Tradicional",
+              "priceDelta": 0
+            },
+            {
+              "name": "Delgada",
+              "priceDelta": 0
+            },
+            {
+              "name": "Borde relleno con queso",
+              "priceDelta": 1990
+            }
+          ]
+        },
+        {
+          "key": "ingredientes-extra",
+          "name": "Ingredientes extra",
+          "minSelect": 0,
+          "maxSelect": 5,
+          "options": [
+            {
+              "name": "Champiñones",
+              "priceDelta": 1000
+            },
+            {
+              "name": "Aceitunas",
+              "priceDelta": 800
+            },
+            {
+              "name": "Pepperoni",
+              "priceDelta": 1500
+            },
+            {
+              "name": "Doble queso",
+              "priceDelta": 1500
+            },
+            {
+              "name": "Albahaca fresca",
+              "priceDelta": 500
+            },
+            {
+              "name": "Jamón serrano",
+              "priceDelta": 2200
+            }
+          ]
+        },
+        {
+          "key": "aderezo",
+          "name": "Aderezo",
+          "minSelect": 0,
+          "maxSelect": 1,
+          "options": [
+            {
+              "name": "Aceite de oliva y limón",
+              "priceDelta": 0
+            },
+            {
+              "name": "Aderezo césar",
+              "priceDelta": 0
+            }
+          ]
+        },
+        {
+          "key": "sabor-bebida-pizza",
+          "name": "Sabor",
+          "minSelect": 1,
+          "maxSelect": 1,
+          "options": [
+            {
+              "name": "Cola",
+              "priceDelta": 0
+            },
+            {
+              "name": "Cola sin azúcar",
+              "priceDelta": 0
+            },
+            {
+              "name": "Naranja",
+              "priceDelta": 0
+            }
+          ]
+        }
+      ],
+      "categories": [
+        {
+          "name": "Pizzas clásicas",
+          "description": "Salsa de tomate San Marzano y mozzarella fior di latte.",
+          "products": [
+            {
+              "name": "Margarita",
+              "description": "Tomate, mozzarella y albahaca fresca.",
+              "price": 8990,
+              "photo": "pizza-margarita",
+              "groups": [
+                "tamano-pizza",
+                "masa",
+                "ingredientes-extra"
+              ]
+            },
+            {
+              "name": "Pepperoni",
+              "description": "Mozzarella y doble pepperoni.",
+              "price": 10490,
+              "photo": "pizza-pepperoni",
+              "groups": [
+                "tamano-pizza",
+                "masa",
+                "ingredientes-extra"
+              ]
+            },
+            {
+              "name": "Napolitana",
+              "description": "Tomate en rodajas, jamón, aceitunas y orégano.",
+              "price": 9990,
+              "photo": "pizza-napolitana",
+              "groups": [
+                "tamano-pizza",
+                "masa",
+                "ingredientes-extra"
+              ]
+            },
+            {
+              "name": "Cuatro quesos",
+              "description": "Mozzarella, gorgonzola, parmesano y queso de cabra.",
+              "price": 11490,
+              "photo": "pizza-cuatro-quesos",
+              "groups": [
+                "tamano-pizza",
+                "masa",
+                "ingredientes-extra"
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Pizzas de la casa",
+          "products": [
+            {
+              "name": "Pollo BBQ",
+              "description": "Pollo asado, cebolla morada y salsa barbacoa ahumada.",
+              "price": 12490,
+              "photo": "pizza-pollo-bbq",
+              "groups": [
+                "tamano-pizza",
+                "masa",
+                "ingredientes-extra"
+              ]
+            },
+            {
+              "name": "Vegetariana",
+              "description": "Pimentón asado, rúcula, tomate cherry y queso feta.",
+              "price": 11290,
+              "photo": "pizza-vegetariana",
+              "groups": [
+                "tamano-pizza",
+                "masa",
+                "ingredientes-extra"
+              ],
+              "available": false
+            }
+          ]
+        },
+        {
+          "name": "Para empezar",
+          "products": [
+            {
+              "name": "Pan de ajo",
+              "description": "Masa de pizza horneada con mantequilla de ajo y perejil.",
+              "price": 3990,
+              "photo": "pan-de-ajo"
+            },
+            {
+              "name": "Ensalada césar",
+              "description": "Lechuga romana, crutones, parmesano y pollo.",
+              "price": 6490,
+              "photo": "ensalada-cesar",
+              "groups": [
+                "aderezo"
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Bebidas",
+          "description": "Las fotos de bebidas quedaron fuera a propósito: así se ve un producto sin imagen.",
+          "products": [
+            {
+              "name": "Bebida 1,5 L",
+              "description": "Ideal para compartir.",
+              "price": 2990,
+              "groups": [
+                "sabor-bebida-pizza"
+              ]
+            },
+            {
+              "name": "Cerveza artesanal",
+              "description": "Rubia o roja, 500 ml.",
+              "price": 3990
+            }
+          ]
+        }
+      ],
+      "tables": [
+        "Mesa 1",
+        "Mesa 2",
+        "Mesa 3",
+        "Mesa 4",
+        "Mesa 5",
+        "Mesa 6",
+        "Mesa 7",
+        "Mesa 8",
+        "Terraza 1",
+        "Terraza 2"
+      ],
+      "acceptingOrders": true,
+      "pickupEnabled": true,
+      "deliveryEnabled": true,
+      "deliveryZones": [
+        {
+          "name": "Ñuñoa",
+          "fee": 1990,
+          "minOrder": 10000,
+          "isHome": true
+        },
+        {
+          "name": "Providencia",
+          "fee": 2490,
+          "minOrder": 12000
+        },
+        {
+          "name": "La Reina",
+          "fee": 2990,
+          "minOrder": 12000
+        },
+        {
+          "name": "Macul",
+          "fee": 2490,
+          "minOrder": 10000
+        }
+      ]
+    },
+    {
+      "name": "Café Brote",
+      "description": "Café de especialidad tostado en Santiago y pastelería hecha en casa.",
+      "phone": "+56 9 5555 0303",
+      "logo": "logo-cafe",
+      "modifierGroups": [
+        {
+          "key": "tamano-cafe",
+          "name": "Tamaño",
+          "minSelect": 1,
+          "maxSelect": 1,
+          "options": [
+            {
+              "name": "Chico (8 oz)",
+              "priceDelta": 0
+            },
+            {
+              "name": "Mediano (12 oz)",
+              "priceDelta": 600
+            },
+            {
+              "name": "Grande (16 oz)",
+              "priceDelta": 1000
+            }
+          ]
+        },
+        {
+          "key": "leche",
+          "name": "Leche",
+          "minSelect": 1,
+          "maxSelect": 1,
+          "options": [
+            {
+              "name": "Entera",
+              "priceDelta": 0
+            },
+            {
+              "name": "Descremada",
+              "priceDelta": 0
+            },
+            {
+              "name": "Sin lactosa",
+              "priceDelta": 300
+            },
+            {
+              "name": "Avena",
+              "priceDelta": 600
+            },
+            {
+              "name": "Almendra",
+              "priceDelta": 700
+            }
+          ]
+        },
+        {
+          "key": "extras-cafe",
+          "name": "Extras",
+          "minSelect": 0,
+          "maxSelect": 2,
+          "options": [
+            {
+              "name": "Shot extra de espresso",
+              "priceDelta": 700
+            },
+            {
+              "name": "Jarabe de vainilla",
+              "priceDelta": 500
+            },
+            {
+              "name": "Jarabe de caramelo",
+              "priceDelta": 500
+            },
+            {
+              "name": "Crema batida",
+              "priceDelta": 400
+            }
+          ]
+        },
+        {
+          "key": "pan-cafe",
+          "name": "Pan",
+          "minSelect": 1,
+          "maxSelect": 1,
+          "options": [
+            {
+              "name": "Marraqueta",
+              "priceDelta": 0
+            },
+            {
+              "name": "Pan integral",
+              "priceDelta": 0
+            },
+            {
+              "name": "Croissant",
+              "priceDelta": 900
+            }
+          ]
+        }
+      ],
+      "categories": [
+        {
+          "name": "Café",
+          "description": "Espresso de origen Colombia y Brasil.",
+          "products": [
+            {
+              "name": "Espresso",
+              "description": "Doble, intenso y con buena crema.",
+              "price": 1990,
+              "photo": "espresso",
+              "groups": [
+                "extras-cafe"
+              ]
+            },
+            {
+              "name": "Cappuccino",
+              "description": "Espresso, leche vaporizada y espuma con cacao.",
+              "price": 2990,
+              "photo": "cappuccino",
+              "groups": [
+                "tamano-cafe",
+                "leche",
+                "extras-cafe"
+              ]
+            },
+            {
+              "name": "Latte",
+              "description": "Más leche, más suave.",
+              "price": 3190,
+              "photo": "latte",
+              "groups": [
+                "tamano-cafe",
+                "leche",
+                "extras-cafe"
+              ]
+            },
+            {
+              "name": "Mocha",
+              "description": "Espresso, chocolate amargo, leche y crema.",
+              "price": 3490,
+              "photo": "mocha",
+              "groups": [
+                "tamano-cafe",
+                "leche",
+                "extras-cafe"
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Tés e infusiones",
+          "products": [
+            {
+              "name": "Té de la casa",
+              "description": "Té negro con limón, en tetera.",
+              "price": 1990,
+              "photo": "te"
+            },
+            {
+              "name": "Chai latte",
+              "description": "Especias, té negro y leche vaporizada.",
+              "price": 3290,
+              "photo": "chai-latte",
+              "groups": [
+                "tamano-cafe",
+                "leche"
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Pastelería",
+          "description": "Hecha cada mañana.",
+          "products": [
+            {
+              "name": "Torta de chocolate",
+              "description": "Bizcocho húmedo con ganache de chocolate amargo.",
+              "price": 3490,
+              "photo": "torta-chocolate"
+            },
+            {
+              "name": "Cheesecake de frutos rojos",
+              "description": "Base de galleta y coulis de frambuesa.",
+              "price": 3690,
+              "photo": "cheesecake-frutos-rojos"
+            },
+            {
+              "name": "Croissant de mantequilla",
+              "description": "Laminado a mano.",
+              "price": 1990,
+              "photo": "croissant"
+            },
+            {
+              "name": "Kuchen de manzana",
+              "description": "Con crumble y canela.",
+              "price": 2990,
+              "photo": "kuchen-manzana",
+              "available": false
+            }
+          ]
+        },
+        {
+          "name": "Sándwiches",
+          "products": [
+            {
+              "name": "Ave palta",
+              "description": "Pollo desmenuzado, palta y mayo casera.",
+              "price": 5490,
+              "photo": "sandwich-ave-palta",
+              "groups": [
+                "pan-cafe"
+              ]
+            },
+            {
+              "name": "Jamón queso",
+              "description": "Jamón de pierna y queso mantecoso, a la plancha.",
+              "price": 4490,
+              "photo": "sandwich-jamon-queso",
+              "groups": [
+                "pan-cafe"
+              ]
+            }
+          ]
+        }
+      ],
+      "tables": [
+        "Mesa 1",
+        "Mesa 2",
+        "Mesa 3",
+        "Mesa 4",
+        "Ventana"
+      ],
+      "acceptingOrders": true,
+      "pickupEnabled": true,
+      "deliveryEnabled": false
+    }
+  ]
+}
