@@ -222,7 +222,7 @@ test("delivery: zones, cash with change, ETA, rider assignment, the rider takes 
     const delivery = riderPage.getByTestId("delivery-card").filter({ hasText: "Rita" });
     await expect(delivery.getByTestId("delivery-address")).toContainText("Av. Italia 1234, Depto 402");
     await expect(delivery.getByTestId("rider-change")).toHaveText("Llevar vuelto: $9.010");
-    await expect(delivery.getByRole("link", { name: /\+56 9 8765 4321/ })).toHaveAttribute("href", "tel:+56987654321");
+    await expect(delivery.getByRole("link", { name: /\+569 87654321/ })).toHaveAttribute("href", "tel:+56987654321");
     await screenshot(riderPage, "delivery-rider");
 
     // Out for delivery: the customer sees the rider's first name.

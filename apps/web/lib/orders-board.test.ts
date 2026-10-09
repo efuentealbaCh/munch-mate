@@ -3,6 +3,7 @@ import { nextStatuses } from "@app/utils";
 import { describe, expect, it } from "vitest";
 import {
   ACTION_LABELS,
+  actionStep,
   availableChannelFilters,
   boardColumns,
   boardTitle,
@@ -23,6 +24,7 @@ import {
   needsPaymentWarning,
   newerOrder,
   pendingCount,
+  REASON_DIALOG_TEXTS,
   restaurantHomeHref,
   RIDER_ACTION_LABELS,
   RIDER_ACTOR,
@@ -364,5 +366,39 @@ describe("newerOrder by updatedAt", () => {
 
     expect(newerOrder(assigned, old).rider).toEqual({ id: "r1", name: "Pedro" });
     expect(newerOrder(old, assigned).rider).toEqual({ id: "r1", name: "Pedro" });
+  });
+});
+
+describe("actionStep (what happens when the staff tap an action)", () => {
+  const owner = ["owner"] as const;
+
+  it("asks for a reason to reject and to cancel, in every channel, before and after accepting", () => {
+    for (const channel of ["dine_in", "pickup", "delivery"] as const) {
+      expect(actionStep(order("o1", "pending", { channel }), "rejected", owner), channel).toBe("reason");
+      expect(actionStep(order("o1", "pending", { channel }), "cancelled", owner), channel).toBe("reason");
+      expect(actionStep(order("o1", "accepted", { channel }), "cancelled", owner), channel).toBe("reason");
+    }
+  });
+
+  it("asks for the ready time when accepting pickup and delivery, not dine-in", () => {
+    expect(actionStep(order("o1", "pending", { channel: "pickup" }), "accepted", owner)).toBe("ready_time");
+    expect(actionStep(order("o1", "pending", { channel: "delivery" }), "accepted", owner)).toBe("ready_time");
+    expect(actionStep(order("o1", "pending"), "accepted", owner)).toBe("direct");
+  });
+
+  it("warns before handing over an unpaid order; other steps go straight to the api", () => {
+    expect(actionStep(order("o1", "ready", { channel: "pickup" }), "picked_up", owner)).toBe("payment_warning");
+    expect(actionStep(order("o1", "ready", { channel: "pickup", paymentStatus: "paid" }), "picked_up", owner)).toBe("direct");
+    expect(actionStep(order("o1", "accepted"), "preparing", owner)).toBe("direct");
+  });
+
+  it("leaves transitions the actor may not make to the api (it answers with its own error)", () => {
+    expect(actionStep(order("o1", "pending"), "cancelled", ["rider"])).toBe("direct");
+  });
+
+  it("has its own texts for rejecting and cancelling", () => {
+    expect(REASON_DIALOG_TEXTS.rejected.submit).toBe("Rechazar pedido");
+    expect(REASON_DIALOG_TEXTS.cancelled.submit).toBe("Cancelar pedido");
+    expect(REASON_DIALOG_TEXTS.cancelled.quickReasons.length).toBeGreaterThan(0);
   });
 });

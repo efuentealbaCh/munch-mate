@@ -40,7 +40,8 @@ import { ApiError } from "@/lib/api";
 import { saveBlob } from "@/lib/download";
 import { tablesApi } from "@/lib/endpoints";
 import { errorMessage, hasCode } from "@/lib/errors";
-import { TABLE_LABEL_MAX, tableUrl } from "@/lib/tables";
+import { namedTables, TABLE_LABEL_MAX, tableUrl } from "@/lib/tables";
+import { nameTakenFromError, nameTakenMessage } from "@/lib/unique-names";
 import { cn } from "@/lib/utils";
 import { type TableValues, tableSchema } from "@/lib/validation";
 import { useRestaurant } from "../restaurant-context";
@@ -176,7 +177,7 @@ function Tables({ restaurantId }: { restaurantId: string }) {
         </Button>
       </div>
 
-      <AddTableForm restaurantId={restaurantId} onCreated={append} onBulk={() => setBulkOpen(true)} />
+      <AddTableForm restaurantId={restaurantId} tables={data} onCreated={append} onBulk={() => setBulkOpen(true)} />
 
       {data.length === 0 ? (
         <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed bg-card px-6 py-10 text-center text-sm text-muted-foreground">
@@ -200,7 +201,7 @@ function Tables({ restaurantId }: { restaurantId: string }) {
         </ul>
       )}
 
-      <RenameTableDialog restaurantId={restaurantId} table={renaming} onOpenChange={(open) => !open && setRenaming(null)} onSaved={replace} />
+      <RenameTableDialog restaurantId={restaurantId} table={renaming} tables={data} onOpenChange={(open) => !open && setRenaming(null)} onSaved={replace} />
       <BulkTablesDialog
         restaurantId={restaurantId}
         open={bulkOpen}
@@ -238,10 +239,13 @@ function Tables({ restaurantId }: { restaurantId: string }) {
 
 function AddTableForm({
   restaurantId,
+  tables,
   onCreated,
   onBulk,
 }: {
   restaurantId: string;
+  /** Tables already listed, to catch a repeated name before sending it. */
+  tables: readonly TableView[];
   onCreated(table: TableView): void;
   onBulk(): void;
 }) {
@@ -252,15 +256,23 @@ function AddTableForm({
   const labelError = form.formState.errors.label?.message;
 
   async function submit(values: TableValues) {
-    setSaving(true);
     setError(null);
+    const taken = nameTakenMessage("table", values.label, namedTables(tables));
+    if (taken) {
+      form.setError("label", { message: taken }, { shouldFocus: true });
+      return;
+    }
+    setSaving(true);
     try {
       const table = await tablesApi.create(restaurantId, values.label);
       onCreated(table);
       form.reset({ label: "" });
       toast.success(`Mesa «${table.label}» creada`);
     } catch (failure) {
-      setError(failure);
+      // Created from another tab meanwhile: the api's message, on the field.
+      const takenByApi = nameTakenFromError("table", failure);
+      if (takenByApi) form.setError("label", { message: takenByApi }, { shouldFocus: true });
+      else setError(failure);
     } finally {
       setSaving(false);
     }

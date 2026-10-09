@@ -1,6 +1,7 @@
 "use client";
 
 import { type OrderStatus, type OrderView, PAYMENT_METHOD_LABELS } from "@app/types";
+import { formatPhone } from "@app/utils";
 import {
   AlarmClockIcon,
   BikeIcon,
@@ -17,7 +18,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
-import { formatClockTime, formatPhone, telHref } from "@/lib/format";
+import { formatClockTime, telHref } from "@/lib/format";
 import { formatPrice, formatPriceDelta } from "@/lib/money";
 import { addressLine, expectedPaymentLabel, mapsSearchUrl } from "@/lib/delivery";
 import { estimateLabel, showsReadyEstimate } from "@/lib/order-tracking";

@@ -8,6 +8,7 @@ import { type UseFormRegisterReturn, useForm } from "react-hook-form";
 import { CartLines, type LineProblem } from "@/components/cart-sheet";
 import { FormError } from "@/components/form-error";
 import { FormField } from "@/components/form-field";
+import { PhoneInput } from "@/components/phone-input";
 import { SubmitButton } from "@/components/submit-button";
 import { Input } from "@/components/ui/input";
 import { SheetFooter } from "@/components/ui/sheet";
@@ -132,16 +133,7 @@ export function ContactFields({
         description="Para avisarte si hay algún problema con tu pedido."
       >
         {(control) => (
-          <Input
-            {...control}
-            type="tel"
-            inputMode="tel"
-            autoComplete="tel"
-            placeholder="+56 9 1234 5678"
-            maxLength={30}
-            aria-required
-            {...register.customerPhone}
-          />
+          <PhoneInput {...control} prefill maxLength={30} aria-required {...register.customerPhone} />
         )}
       </FormField>
       <FormField

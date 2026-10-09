@@ -1,6 +1,7 @@
 "use client";
 
 import { ORDER_CHANNEL_LABELS, ORDER_STATUS_LABELS, type PublicOrderView } from "@app/types";
+import { formatPhone } from "@app/utils";
 import {
   BikeIcon,
   CheckIcon,
@@ -240,6 +241,11 @@ function TrackedOrder({ token }: { token: string }) {
               Motivo: {order.rejectReason}
             </p>
           ) : null}
+          {order.status === "cancelled" && order.cancelReason ? (
+            <p className="mt-1 rounded-lg bg-destructive/5 px-3 py-2 text-sm font-medium text-destructive" data-testid="cancel-reason">
+              Motivo: {order.cancelReason}
+            </p>
+          ) : null}
         </div>
         <LiveIndicator status={live} />
       </section>
@@ -255,7 +261,7 @@ function TrackedOrder({ token }: { token: string }) {
           data-testid="restaurant-phone"
         >
           <PhoneIcon className="size-4" aria-hidden />
-          ¿Algún problema? Llama al local: {order.restaurant.phone}
+          ¿Algún problema? Llama al local: {formatPhone(order.restaurant.phone)}
         </a>
       ) : null}
 

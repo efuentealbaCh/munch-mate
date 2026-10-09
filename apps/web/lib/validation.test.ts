@@ -6,6 +6,7 @@ import {
   pickupCheckoutSchema,
   productSchema,
   restaurantProfileSchema,
+  statusReasonSchema,
 } from "./validation";
 
 const option = (name: string, priceDelta = "0") => ({ name, priceDelta, available: true });
@@ -70,7 +71,15 @@ describe("restaurantProfileSchema", () => {
   it("accepts Chilean phones and an empty phone (clears it)", () => {
     expect(restaurantProfileSchema.safeParse({ description: "", phone: "+56 9 1234 5678" }).success).toBe(true);
     expect(restaurantProfileSchema.safeParse({ description: "", phone: "" }).success).toBe(true);
+    expect(restaurantProfileSchema.safeParse({ description: "", phone: "+569 12345678" }).success).toBe(true);
+    expect(restaurantProfileSchema.safeParse({ description: "", phone: "   " }).success).toBe(true);
     expect(restaurantProfileSchema.safeParse({ description: "", phone: "llámame" }).success).toBe(false);
+  });
+
+  it("uses the api's rules (normalizePhone): too short or with text is rejected with an example", () => {
+    const result = restaurantProfileSchema.safeParse({ description: "", phone: "123456" });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.message).toBe("Revisa el teléfono, ej. +569 12345678");
   });
 });
 
@@ -94,12 +103,12 @@ describe("pickupCheckoutSchema", () => {
   });
 
   it("checks the phone with the same rules as the api (normalizePhone)", () => {
-    for (const phone of ["+56 9 1234 5678", "912345678", "(+56) 9 1234-5678", "22345678", "+54 9 11 2345 6789"]) {
+    for (const phone of ["+56 9 1234 5678", "+569 12345678", "912345678", "(+56) 9 1234-5678", "22345678", "+54 9 11 2345 6789"]) {
       expect(firstError({ customerPhone: phone }), phone).toBeNull();
     }
     expect(firstError({ customerPhone: "" })).toBe("Ingresa tu teléfono");
     for (const phone of ["1234", "llámame", "+56 9 1234 5678 ext 2", "1".repeat(16)]) {
-      expect(firstError({ customerPhone: phone }), phone).toBe("Revisa el teléfono, ej. +56 9 1234 5678");
+      expect(firstError({ customerPhone: phone }), phone).toBe("Revisa el teléfono, ej. +569 12345678");
     }
   });
 
@@ -170,5 +179,14 @@ describe("deliveryZoneSchema", () => {
     expect(messages(deliveryZoneSchema.safeParse({ name: "X", fee: "2.000.000", minOrder: "0", active: true, isHome: false }))).toEqual([
       "fee: El máximo es 1.000.000",
     ]);
+  });
+});
+
+describe("statusReasonSchema (reject and cancel)", () => {
+  it("requires 1 to 200 characters, trimmed", () => {
+    expect(statusReasonSchema.parse({ reason: "  Cocina saturada " }).reason).toBe("Cocina saturada");
+    expect(statusReasonSchema.safeParse({ reason: "   " }).error?.issues[0]?.message).toBe("Indica el motivo: el cliente lo verá");
+    expect(statusReasonSchema.safeParse({ reason: "x".repeat(200) }).success).toBe(true);
+    expect(statusReasonSchema.safeParse({ reason: "x".repeat(201) }).success).toBe(false);
   });
 });

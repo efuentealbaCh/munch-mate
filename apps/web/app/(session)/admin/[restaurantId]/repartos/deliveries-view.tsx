@@ -1,7 +1,7 @@
 "use client";
 
 import { ORDER_STATUS_LABELS, type OrderStatus, type OrderView, PAYMENT_METHOD_LABELS, type PaymentMethod } from "@app/types";
-import { nextStatuses } from "@app/utils";
+import { formatPhone, nextStatuses } from "@app/utils";
 import { AlarmClockIcon, BikeIcon, MapPinIcon, MessageSquareTextIcon, PhoneIcon, WalletIcon, WifiOffIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -17,7 +17,7 @@ import { useAuth } from "@/lib/auth-context";
 import { addressLine, expectedPaymentLabel, mapsSearchUrl } from "@/lib/delivery";
 import { deliveriesApi } from "@/lib/endpoints";
 import { errorMessage, hasCode } from "@/lib/errors";
-import { formatClockTime, formatPhone, telHref } from "@/lib/format";
+import { formatClockTime, telHref } from "@/lib/format";
 import { formatPrice } from "@/lib/money";
 import { showsReadyEstimate } from "@/lib/order-tracking";
 import {

@@ -6,6 +6,7 @@ import {
   type OrderView,
   type RestaurantRole,
 } from "@app/types";
+import { checkTransition } from "@app/utils";
 
 /** Staff order board: columns, merging live events with REST data, and the day summary. */
 
@@ -76,6 +77,54 @@ export const ACTION_LABELS: Partial<Record<OrderStatus, string>> = {
 
 /** Quick reasons offered when rejecting (the customer sees the reason). */
 export const QUICK_REJECT_REASONS = ["Se acabó un ingrediente", "Cocina saturada", "Cerramos"] as const;
+
+/** Quick reasons offered when cancelling an order already in the board (the customer sees the reason). */
+export const QUICK_CANCEL_REASONS = ["El cliente lo pidió", "Se acabó un ingrediente", "No pudimos contactar al cliente"] as const;
+
+/** Statuses whose transition asks the staff for a reason the customer will read. */
+export type ReasonStatus = Extract<OrderStatus, "rejected" | "cancelled">;
+
+/** Texts of the reason dialog, per status. */
+export const REASON_DIALOG_TEXTS: Record<
+  ReasonStatus,
+  { title: string; description: string; submit: string; done: string; quickReasons: readonly string[] }
+> = {
+  rejected: {
+    title: "Rechazar pedido",
+    description: "El cliente verá el motivo en su teléfono.",
+    submit: "Rechazar pedido",
+    done: "rechazado",
+    quickReasons: QUICK_REJECT_REASONS,
+  },
+  cancelled: {
+    title: "Cancelar pedido",
+    description: "El cliente verá el motivo en su teléfono. No se puede deshacer.",
+    submit: "Cancelar pedido",
+    done: "cancelado",
+    quickReasons: QUICK_CANCEL_REASONS,
+  },
+};
+
+/** What the board does when the staff tap an action button. */
+export type ActionStep = "reason" | "ready_time" | "payment_warning" | "direct";
+
+/**
+ * Decides the step before changing an order's status, from the shared state machine (`checkTransition`)
+ * rather than from the status by hand: reason dialog (reject, cancel), ready-time dialog (accepting pickup
+ * or delivery), unpaid hand-over warning, or straight to the api. A transition the actor may not make goes
+ * "direct" so the api answers with its own error.
+ */
+export function actionStep(
+  order: Pick<OrderView, "channel" | "status" | "paymentStatus">,
+  to: OrderStatus,
+  roles: readonly RestaurantRole[],
+): ActionStep {
+  const check = checkTransition(order.channel, order.status, to, { kind: "staff", roles });
+  if (check.ok && check.requiresReason) return "reason";
+  if (check.ok && check.requiresReadyTime) return "ready_time";
+  if (needsPaymentWarning(order, to)) return "payment_warning";
+  return "direct";
+}
 
 export function isFinalStatus(status: OrderStatus): boolean {
   return FINAL_ORDER_STATUSES.includes(status);

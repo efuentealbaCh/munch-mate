@@ -1,3 +1,5 @@
+import { normalizePhone } from "@app/utils";
+
 const dateTime = new Intl.DateTimeFormat("es-CL", { dateStyle: "medium", timeStyle: "short" });
 const dateOnly = new Intl.DateTimeFormat("es-CL", { dateStyle: "medium" });
 
@@ -24,16 +26,11 @@ export function formatClockTime(iso: string): string {
   return Number.isNaN(date.getTime()) ? iso : clockTime.format(date);
 }
 
-/** "+56 9 1234 5678" → "tel:+56912345678" (digits and the leading + only). */
-export function telHref(phone: string): string {
-  return `tel:${phone.replace(/[^\d+]/g, "")}`;
-}
-
 /**
- * Readable version of a phone stored normalized by the api (`+56912345678` → "+56 9 1234 5678").
- * Only Chilean mobiles get spaces; anything else is shown as stored.
+ * `tel:` link for a phone, with the number normalized like the api stores it ("+569 12345678" →
+ * "tel:+56912345678"). Phones are shown with `formatPhone` from `@app/utils` (one rule for the whole app).
+ * Anything normalizePhone does not understand keeps only its digits and a leading +.
  */
-export function formatPhone(phone: string): string {
-  const mobile = /^\+569(\d{4})(\d{4})$/.exec(phone);
-  return mobile ? `+56 9 ${mobile[1]} ${mobile[2]}` : phone;
+export function telHref(phone: string): string {
+  return `tel:${normalizePhone(phone) ?? phone.replace(/[^\d+]/g, "")}`;
 }

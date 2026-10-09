@@ -1,7 +1,7 @@
 "use client";
 
 import type { CreatedOrder, PaymentMethod, PublicDeliveryZone, PublicMenu, PublicProduct } from "@app/types";
-import { normalizePhone } from "@app/utils";
+import { formatPhone, normalizePhone } from "@app/utils";
 import { BikeIcon, ClockIcon, ReceiptTextIcon, ShoppingBagIcon } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -86,7 +86,8 @@ export function OnlineOrdering({ initialMenu }: { initialMenu: PublicMenu }) {
     setMyOrdersCount(loadMyOrders(localStore()).length);
     // Convenience only: what this phone used last time for a delivery.
     const saved = loadDeliveryContact(localStore());
-    if (saved) setCheckout((current) => ({ ...current, ...saved }));
+    // Older entries kept the phone as typed: shown in the current format ("+569 12345678").
+    if (saved) setCheckout((current) => ({ ...current, ...saved, customerPhone: formatPhone(saved.customerPhone) }));
   }, []);
 
   // The menu carries the open/closed state and the channel switches too: one request refreshes all.
@@ -203,7 +204,7 @@ export function OnlineOrdering({ initialMenu }: { initialMenu: PublicMenu }) {
       if (!ok) return;
       saveDeliveryContact(localStore(), {
         customerName: values.customerName,
-        customerPhone: values.customerPhone,
+        customerPhone: formatPhone(values.customerPhone),
         customerEmail: values.customerEmail,
         zoneId: values.zoneId,
         address: values.address,

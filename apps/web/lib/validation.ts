@@ -6,7 +6,7 @@ import {
   type PublicDeliveryZone,
   RESTAURANT_ROLES,
 } from "@app/types";
-import { normalizePhone, slugProblem } from "@app/utils";
+import { normalizePhone, PHONE_EXAMPLE, slugProblem } from "@app/utils";
 import { z } from "zod";
 import { modifierRulesProblem } from "./menu";
 import { formatPrice, parsePriceInput } from "./money";
@@ -75,12 +75,23 @@ export const restaurantSchema = z.object({ name: restaurantName, slug });
 
 export const inviteSchema = z.object({ email, roles });
 
-/** Same pattern as the api (UpdateRestaurantDto.phone); empty clears it. */
-export const PHONE_PATTERN = /^$|^\+?[0-9 ()-]{6,20}$/;
+export const PHONE_ERROR = `Revisa el teléfono, ej. ${PHONE_EXAMPLE}`;
+
+/** Checked with the same normalizePhone the api uses (customers and restaurants), so both accept the same formats. */
+const phone = z
+  .string()
+  .trim()
+  .max(30, PHONE_ERROR)
+  .refine((value) => normalizePhone(value) !== null, PHONE_ERROR);
 
 export const restaurantProfileSchema = z.object({
   description: z.string().trim().max(300, "La descripción no puede superar los 300 caracteres"),
-  phone: z.string().trim().regex(PHONE_PATTERN, "Ingresa un teléfono válido, ej. +56 9 1234 5678"),
+  // Empty clears it.
+  phone: z
+    .string()
+    .trim()
+    .max(30, PHONE_ERROR)
+    .refine((value) => value === "" || normalizePhone(value) !== null, PHONE_ERROR),
 });
 
 const menuName = z
@@ -175,12 +186,7 @@ export const pickupCheckoutSchema = z.object({
     .trim()
     .min(2, "Ingresa tu nombre para que te entreguen el pedido")
     .max(ORDER_LIMITS.customerNameMax, `El nombre puede tener hasta ${ORDER_LIMITS.customerNameMax} caracteres`),
-  customerPhone: z
-    .string()
-    .trim()
-    .min(1, "Ingresa tu teléfono")
-    .max(30, "Revisa el teléfono, ej. +56 9 1234 5678")
-    .refine((value) => normalizePhone(value) !== null, "Revisa el teléfono, ej. +56 9 1234 5678"),
+  customerPhone: z.string().trim().min(1, "Ingresa tu teléfono").pipe(phone),
   // Blank (or only spaces) means "no email".
   customerEmail: z
     .string()
@@ -263,8 +269,8 @@ export const deliveryZoneSchema = z.object({
   isHome: z.boolean(),
 });
 
-/** Rejecting needs a reason: the customer sees it (ChangeStatusDto.reason). */
-export const rejectSchema = z.object({
+/** Rejecting and cancelling (staff) need a reason: the customer sees it (ChangeStatusDto.reason). */
+export const statusReasonSchema = z.object({
   reason: z
     .string()
     .trim()
@@ -316,6 +322,6 @@ export type CheckoutValues = z.infer<typeof checkoutSchema>;
 export type PickupCheckoutValues = z.infer<typeof pickupCheckoutSchema>;
 export type DeliveryCheckoutValues = z.infer<ReturnType<typeof deliveryCheckoutSchema>>;
 export type DeliveryZoneValues = z.infer<typeof deliveryZoneSchema>;
-export type RejectValues = z.infer<typeof rejectSchema>;
+export type StatusReasonValues = z.infer<typeof statusReasonSchema>;
 export type TableValues = z.infer<typeof tableSchema>;
 export type BulkTablesValues = z.infer<typeof bulkTablesSchema>;

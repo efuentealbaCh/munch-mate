@@ -22,6 +22,7 @@ import { useApiQuery } from "@/hooks/use-api-query";
 import { deliveryZonesApi, restaurantsApi } from "@/lib/endpoints";
 import { errorMessage, hasCode } from "@/lib/errors";
 import { formatPrice, formatPriceInput, parsePriceInput } from "@/lib/money";
+import { nameTakenFromError, nameTakenMessage } from "@/lib/unique-names";
 import { type DeliveryZoneValues, deliveryZoneSchema } from "@/lib/validation";
 import { useRestaurant } from "./restaurant-context";
 
@@ -237,6 +238,7 @@ function ZoneList({
       <ZoneDialog
         restaurantId={restaurantId}
         zone={editing === "new" ? null : editing}
+        zones={zones ?? []}
         open={editing !== null}
         onOpenChange={(open) => !open && setEditing(null)}
         onSaved={(saved) => onChange((list) => withSaved(list, saved))}
@@ -264,6 +266,8 @@ function ZoneDialog({
   restaurantId: string;
   /** null = new zone. */
   zone: DeliveryZoneView | null;
+  /** Zones already listed, to catch a repeated name before sending it. */
+  zones: readonly DeliveryZoneView[];
   open: boolean;
   onOpenChange(open: boolean): void;
   onSaved(zone: DeliveryZoneView): void;
@@ -282,12 +286,14 @@ function ZoneDialog({
 function ZoneForm({
   restaurantId,
   zone,
+  zones,
   onSaved,
   onStale,
   onClose,
 }: {
   restaurantId: string;
   zone: DeliveryZoneView | null;
+  zones: readonly DeliveryZoneView[];
   onSaved(zone: DeliveryZoneView): void;
   onStale(): void;
   onClose(): void;
@@ -308,6 +314,12 @@ function ZoneForm({
 
   async function onSubmit(values: DeliveryZoneValues) {
     setError(null);
+    // The edit always sends the name, and the api checks it against the other zones.
+    const taken = nameTakenMessage("zone", values.name, zones, zone?.id);
+    if (taken) {
+      form.setError("name", { message: taken }, { shouldFocus: true });
+      return;
+    }
     setSaving(true);
     // Validated by the schema: both parse.
     const body = {
@@ -330,7 +342,10 @@ function ZoneForm({
         onClose();
         return;
       }
-      setError(failure);
+      // Added from another tab meanwhile: the api's message, on the field.
+      const taken = nameTakenFromError("zone", failure);
+      if (taken) form.setError("name", { message: taken }, { shouldFocus: true });
+      else setError(failure);
     }
   }
 

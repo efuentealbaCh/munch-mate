@@ -116,7 +116,7 @@ test("pickup: the owner turns it on, a customer orders, the board accepts with a
     const submit = cart.getByRole("button", { name: "Pedir para retirar · $2.990" });
     await submit.click();
     // Checked in the browser with the api's own rules before sending anything.
-    await expect(cart.getByText("Revisa el teléfono, ej. +56 9 1234 5678")).toBeVisible();
+    await expect(cart.getByText("Revisa el teléfono, ej. +569 12345678")).toBeVisible();
     await cart.getByLabel("Teléfono").fill("9 8765 4321");
     await expect(cart.getByText("Te enviamos el comprobante cuando el local acepte tu pedido.")).toBeVisible();
     await screenshot(phone, "pickup-checkout");
@@ -132,7 +132,7 @@ test("pickup: the owner turns it on, a customer orders, the board accepts with a
     const card = board.locator('[data-testid="order-card"][data-channel="pickup"]').filter({ hasText: "Paula" });
     await expect(card).toBeVisible();
     await expect(card.getByTestId("order-destination")).toHaveText("Para retirar");
-    await expect(card.getByRole("link", { name: /\+56 9 8765 4321/ })).toHaveAttribute("href", "tel:+56987654321");
+    await expect(card.getByRole("link", { name: /\+569 87654321/ })).toHaveAttribute("href", "tel:+56987654321");
     await expect(card).toContainText(customerEmail);
     await expect(card).toContainText("$2.990");
 
