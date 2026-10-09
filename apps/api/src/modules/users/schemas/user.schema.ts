@@ -21,6 +21,10 @@ export class User {
 
   @Prop({ type: String, enum: PLATFORM_ROLES, default: null })
   platformRole!: PlatformRole | null;
+
+  /** Normalized (+56912345678); prefills checkouts. "" when not set. */
+  @Prop({ default: "" })
+  phone!: string;
 }
 
 export type UserDocument = HydratedDocument<User>;

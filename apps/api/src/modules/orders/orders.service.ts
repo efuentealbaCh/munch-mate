@@ -1,4 +1,8 @@
 import {
+  CUSTOMER_LIMITS,
+  FINAL_ORDER_STATUSES,
+  type PushSubscriptionInput,
+  type CustomerOrdersPage,
   type CreateDeliveryOrderInput,
   type DailySummary,
   type CreateDineInOrderInput,
@@ -47,6 +51,7 @@ import { DeliveryZonesRepository } from "./delivery-zones.repository";
 import { OrderValidationError, type PricingMenu, priceOrder } from "./order-pricing";
 import { businessDate, deriveAccessToken, isCalendarDate } from "./order-tokens";
 import { MapsService } from "../maps/maps.service";
+import { PushService } from "../push/push.service";
 import { summarizeDay } from "./daily-summary";
 import { RiderTrackingService } from "./rider-tracking.service";
 import { hasReceipt, receiptKey, toExpectedPaymentView, toOrderView, toPublicOrderView } from "./order.views";
@@ -66,7 +71,20 @@ interface OrderRequest {
   clientOrderId: string;
   items: OrderItemInput[];
   note?: string;
+  /** Set by the controller from the session (never from the request body): the signed-in customer. */
+  customerId?: string;
 }
+
+/** "<ISO date>_<order id>" → its parts, or null when malformed. */
+function parseCursor(cursor: string): { createdAt: Date; id: string } | null {
+  const [iso, id] = cursor.split("_");
+  const createdAt = iso ? new Date(iso) : null;
+  if (!createdAt || Number.isNaN(createdAt.getTime()) || !id || !/^[0-9a-f]{24}$/.test(id)) return null;
+  return { createdAt, id };
+}
+
+/** A request as the controller passes it: the body plus the signed-in customer, if any. */
+type WithCustomer<T> = T & { customerId?: string };
 
 /** What each channel adds to the order (who and where). */
 type ChannelFields = Pick<
@@ -123,6 +141,7 @@ export class OrdersService {
     config: ConfigService<ApiEnv, true>,
     private readonly tracking: RiderTrackingService,
     private readonly maps: MapsService,
+    private readonly push: PushService,
   ) {
     this.tokenSecret = config.get("ORDER_TOKEN_SECRET", { infer: true });
     this.appUrl = config.get("APP_URL", { infer: true });
@@ -135,7 +154,7 @@ export class OrdersService {
    * @throws NotFoundException TABLE_NOT_FOUND; ConflictException NOT_ACCEPTING_ORDERS, PRODUCT_SOLD_OUT,
    *   PRODUCT_NOT_AVAILABLE, OPTION_SOLD_OUT, INVALID_MODIFIERS.
    */
-  async createDineIn(tableToken: string, input: CreateDineInOrderInput): Promise<CreatedOrder> {
+  async createDineIn(tableToken: string, input: WithCustomer<CreateDineInOrderInput>): Promise<CreatedOrder> {
     const table = await this.tables.findByToken(tableToken);
     const restaurant = table?.active ? await this.restaurants.findById(table.restaurantId) : null;
     if (!table || !restaurant || restaurant.status !== "active") throw tableNotFound();
@@ -157,7 +176,7 @@ export class OrdersService {
    * @throws NotFoundException MENU_NOT_FOUND; BadRequestException INVALID_PHONE; ConflictException
    *   PICKUP_DISABLED, NOT_ACCEPTING_ORDERS and the pricing errors; 429 TOO_MANY_ACTIVE_ORDERS.
    */
-  async createPickup(slug: string, input: CreatePickupOrderInput): Promise<CreatedOrder> {
+  async createPickup(slug: string, input: WithCustomer<CreatePickupOrderInput>): Promise<CreatedOrder> {
     const restaurant = await this.publicRestaurant(slug);
     const contact = this.contact(input);
 
@@ -177,7 +196,7 @@ export class OrdersService {
    *   ConflictException DELIVERY_DISABLED, ZONE_NOT_AVAILABLE, BELOW_MINIMUM_ORDER, NOT_ACCEPTING_ORDERS and
    *   the pricing errors; 429 TOO_MANY_ACTIVE_ORDERS.
    */
-  async createDelivery(slug: string, input: CreateDeliveryOrderInput): Promise<CreatedOrder> {
+  async createDelivery(slug: string, input: WithCustomer<CreateDeliveryOrderInput>): Promise<CreatedOrder> {
     const restaurant = await this.publicRestaurant(slug);
     const contact = this.contact(input);
 
@@ -317,6 +336,7 @@ export class OrdersService {
             note: input.note?.trim() ?? "",
             accessTokenHash: hashToken(accessToken),
             clientOrderId: input.clientOrderId,
+            customerId: input.customerId ?? null,
           },
           session,
         );
@@ -331,6 +351,7 @@ export class OrdersService {
     }
 
     this.realtime.toRestaurant(restaurant.id).emit("order.created", toOrderView(created));
+    await this.push.newOrder(created);
     return { accessToken, order: this.publicView(created, restaurant) };
   }
 
@@ -366,6 +387,42 @@ export class OrdersService {
         HttpStatus.TOO_MANY_REQUESTS,
       );
     }
+  }
+
+  /**
+   * "Mis pedidos": the signed-in customer's orders, newest first, with the tracking token of each (derived,
+   * as only its hash is stored; the customer placed these orders, so they may hold it).
+   * @param before Cursor from the previous page (`nextBefore`: "<ISO date>_<order id>").
+   */
+  async listForCustomer(customerId: string, before?: string): Promise<CustomerOrdersPage> {
+    const cursor = before ? parseCursor(before) : null;
+    if (before && !cursor) {
+      throw new BadRequestException(apiError("INVALID_CURSOR", "El cursor de la página no es válido"));
+    }
+    const size = CUSTOMER_LIMITS.ordersPageSize;
+    const orders = await this.orders.listByCustomer(customerId, cursor, size + 1);
+    const page = orders.slice(0, size);
+    const restaurants = new Map(
+      (await this.restaurants.findByIds([...new Set(page.map((o) => o.restaurantId))])).map((r) => [r.id, r]),
+    );
+    return {
+      items: page.map((order) => {
+        const restaurant = restaurants.get(order.restaurantId);
+        return {
+          trackingToken: deriveAccessToken(this.tokenSecret, order.restaurantId, order.clientOrderId),
+          restaurant: { name: restaurant?.name ?? "Restaurante", slug: restaurant?.slug ?? "" },
+          number: order.number,
+          ticketNumber: order.ticketNumber,
+          channel: order.channel,
+          status: order.status,
+          total: order.total,
+          currency: order.currency,
+          itemCount: order.items.reduce((sum, item) => sum + item.quantity, 0),
+          createdAt: order.createdAt.toISOString(),
+        };
+      }),
+      nextBefore: orders.length > size ? `${page.at(-1)!.createdAt.toISOString()}_${page.at(-1)!.id}` : null,
+    };
   }
 
   /** Kitchen board ("active": still in progress) or the day's history ("today"). */
@@ -450,6 +507,10 @@ export class OrdersService {
       throw new ConflictException(apiError("ORDER_CHANGED", "Alguien actualizó este pedido; revisa su estado"));
     }
     if (to === "accepted" && hasReceipt(updated)) await this.requestReceipt(updated);
+    // Push to the customers following the order: ready to pick up, or on its way.
+    if ((to === "ready" && updated.channel === "pickup") || to === "out_for_delivery") {
+      await this.push.customerUpdate(updated, to === "ready" ? "ready" : "on_the_way", this.trackingUrl(updated));
+    }
     // Delivered (or otherwise left the road): the rider's position is not shared any more.
     if (order.status === "out_for_delivery") await this.tracking.clear(order.id);
     await this.broadcast(updated);
@@ -571,6 +632,7 @@ export class OrdersService {
     if (!updated) throw orderNotFound();
     // The previous rider gets the update too, so the order leaves their screen.
     await this.broadcast(updated, [previous?.riderId ?? null]);
+    if (rider && rider.id !== previous?.riderId) await this.push.riderAssigned(updated, rider.id);
     return toOrderView(updated);
   }
 
@@ -598,6 +660,25 @@ export class OrdersService {
     const order = await this.orders.findOne(tenant.restaurantId, orderId);
     if (!order) throw orderNotFound();
     return order.status === "out_for_delivery" ? this.tracking.lastPosition(order.id) : null;
+  }
+
+  /**
+   * The customer's browser asks to be notified about this order ("Avísame").
+   * @throws NotFoundException ORDER_NOT_FOUND; ConflictException ORDER_FINISHED; BadRequestException
+   *   PUSH_NOT_CONFIGURED, INVALID_PUSH_ENDPOINT.
+   */
+  async followOrder(accessToken: string, subscription: PushSubscriptionInput): Promise<void> {
+    const order = await this.orders.findByAccessTokenHash(hashToken(accessToken));
+    if (!order) throw orderNotFound();
+    if (FINAL_ORDER_STATUSES.includes(order.status)) {
+      throw new ConflictException(apiError("ORDER_FINISHED", "Este pedido ya terminó"));
+    }
+    await this.push.followOrder(order.id, subscription);
+  }
+
+  /** The customer's tracking link (token derived again: only its hash is stored). */
+  private trackingUrl(order: OrderRecord): string {
+    return `/pedido#t=${deriveAccessToken(this.tokenSecret, order.restaurantId, order.clientOrderId)}`;
   }
 
   /** @returns The order record behind a tracking token (Socket.IO subscriptions), or null. */

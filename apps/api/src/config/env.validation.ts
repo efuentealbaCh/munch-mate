@@ -28,6 +28,8 @@ export const envValidationSchema = z.object({
   S3_MEDIA_BUCKET: z.string().min(3),
   /** Base URL browsers load media from; object keys are appended to it. */
   MEDIA_PUBLIC_URL: z.url({ protocol: /^https?$/ }).transform((url) => url.replace(/\/+$/, "")),
+  /** Web push (optional): without it the api enqueues no notifications. Generate with `pnpm push:keys`. */
+  VAPID_PUBLIC_KEY: z.string().optional().transform((value) => (value ? value : undefined)),
 });
 
 export type ApiEnv = z.infer<typeof envValidationSchema>;

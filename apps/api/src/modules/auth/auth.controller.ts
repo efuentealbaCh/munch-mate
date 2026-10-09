@@ -132,5 +132,6 @@ function toProfile(user: UserRecord): UserProfile {
     name: user.name,
     emailVerified: user.emailVerifiedAt !== null,
     platformRole: user.platformRole,
+    phone: user.phone,
   };
 }

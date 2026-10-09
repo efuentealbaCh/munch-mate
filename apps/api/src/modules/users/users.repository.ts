@@ -11,6 +11,7 @@ export interface UserRecord {
   passwordHash: string;
   emailVerifiedAt: Date | null;
   platformRole: PlatformRole | null;
+  phone: string;
 }
 
 /** Thrown when the unique index on `email` rejects an insert. */
@@ -65,6 +66,13 @@ export class UsersRepository {
     );
   }
 
+  /** Name and/or phone (already validated and normalized). */
+  async updateProfile(id: string, changes: { name?: string; phone?: string }): Promise<UserRecord | null> {
+    if (!Types.ObjectId.isValid(id)) return null;
+    const doc = await this.users.findByIdAndUpdate(id, { $set: changes }, { returnDocument: "after" }).lean();
+    return doc ? toRecord(doc) : null;
+  }
+
   async updatePasswordHash(id: string, passwordHash: string): Promise<void> {
     await this.users.updateOne({ _id: id }, { $set: { passwordHash } });
   }
@@ -78,5 +86,6 @@ function toRecord(doc: User & { _id: Types.ObjectId }): UserRecord {
     passwordHash: doc.passwordHash,
     emailVerifiedAt: doc.emailVerifiedAt ?? null,
     platformRole: doc.platformRole ?? null,
+    phone: doc.phone ?? "",
   };
 }

@@ -29,6 +29,7 @@ function order(overrides: Partial<OrderRecord>): OrderRecord {
     expectedPayment: null,
     riderId: null,
     riderName: null,
+    customerId: null,
     clientOrderId: "c",
     createdAt: new Date(),
     updatedAt: new Date(),

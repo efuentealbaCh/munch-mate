@@ -21,6 +21,7 @@ const user: UserRecord = {
   passwordHash: "hash",
   emailVerifiedAt: null,
   platformRole: null,
+  phone: "",
 };
 
 function session(overrides: Partial<SessionRecord> = {}): SessionRecord {

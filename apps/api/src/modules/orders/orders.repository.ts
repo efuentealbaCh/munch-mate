@@ -54,6 +54,7 @@ export interface OrderRecord {
   expectedPayment: ExpectedPaymentRecord | null;
   riderId: string | null;
   riderName: string | null;
+  customerId: string | null;
   /** Browser-generated submission id; with ORDER_TOKEN_SECRET it re-derives the customer's access token. */
   clientOrderId: string;
   createdAt: Date;
@@ -78,6 +79,7 @@ export interface NewOrder {
   tableLabel: string | null;
   delivery: DeliveryRecord | null;
   expectedPayment: ExpectedPaymentRecord | null;
+  customerId: string | null;
   accessTokenHash: string;
   clientOrderId: string;
 }
@@ -98,6 +100,7 @@ export class OrdersRepository {
           ...input,
           restaurantId: oid(restaurantId),
           tableId: input.tableId ? oid(input.tableId) : null,
+          customerId: input.customerId ? oid(input.customerId) : null,
           delivery: input.delivery
             ? {
                 ...input.delivery,
@@ -182,6 +185,34 @@ export class OrdersRepository {
       )
       .lean();
     return doc ? toRecord(doc) : null;
+  }
+
+  /**
+   * A customer's orders across restaurants, newest first: the only cross-tenant listing, scoped by the
+   * customer instead (like memberships by user).
+   * @param before Only orders after this one in the listing (createdAt, then id: two orders created in the
+   *   same millisecond are neither skipped nor repeated across pages).
+   */
+  async listByCustomer(
+    customerId: string,
+    before: { createdAt: Date; id: string } | null,
+    limit: number,
+  ): Promise<OrderRecord[]> {
+    if (!Types.ObjectId.isValid(customerId)) return [];
+    const page = before
+      ? {
+          $or: [
+            { createdAt: { $lt: before.createdAt } },
+            { createdAt: before.createdAt, _id: { $lt: oid(before.id) } },
+          ],
+        }
+      : {};
+    const docs = await this.orders
+      .find({ customerId: oid(customerId), ...page })
+      .sort({ createdAt: -1, _id: -1 })
+      .limit(limit)
+      .lean();
+    return docs.map(toRecord);
   }
 
   /** Any restaurant's order by id: only for checks that verify the caller's rights themselves (rider reports). */
@@ -329,6 +360,7 @@ function toRecord(doc: OrderDoc): OrderRecord {
       : null,
     riderId: doc.riderId ? doc.riderId.toString() : null,
     riderName: doc.riderName ?? null,
+    customerId: doc.customerId ? doc.customerId.toString() : null,
     clientOrderId: doc.clientOrderId,
     createdAt: doc.createdAt ?? doc._id.getTimestamp(),
     updatedAt: doc.updatedAt ?? doc._id.getTimestamp(),

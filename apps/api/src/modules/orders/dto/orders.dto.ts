@@ -34,6 +34,7 @@ import {
 } from "class-validator";
 import { cleanLine, cleanText } from "../../../common/validation/clean-text";
 import { GeoPointDto } from "../../../common/validation/geo-point.dto";
+import { PushSubscriptionDto } from "../../push/dto/push.dto";
 
 
 export class TableDto {
@@ -277,6 +278,14 @@ export class UpdateDeliveryZoneDto {
   area?: GeoPointDto[] | null;
 }
 
+export class CustomerOrdersQueryDto {
+  /** The `nextBefore` of the previous page ("<ISO date>_<order id>"; the service parses it). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  before?: string;
+}
+
 export class DailySummaryQueryDto {
   @IsOptional()
   @Matches(/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/, { message: "date debe tener el formato AAAA-MM-DD" })
@@ -317,4 +326,11 @@ export class AccessTokenDto {
   @IsString()
   @Length(20, 100)
   accessToken!: string;
+}
+
+/** "Avísame" on the tracking page: the order's token plus the browser's push subscription. */
+export class FollowOrderDto extends AccessTokenDto {
+  @ValidateNested()
+  @Type(() => PushSubscriptionDto)
+  subscription!: PushSubscriptionDto;
 }

@@ -1,4 +1,5 @@
 import type {
+  CustomerOrdersPage,
   CreatedOrder,
   DailySummary,
   OrderView,
@@ -24,7 +25,7 @@ import {
 import type { Response } from "express";
 import { Throttle } from "@nestjs/throttler";
 import type { AuthUser } from "../auth/auth.types";
-import { CurrentUser, Public } from "../auth/decorators";
+import { CurrentUser, OptionalUser, Public } from "../auth/decorators";
 import {
   CurrentTenant,
   RestaurantAccessGuard,
@@ -38,6 +39,8 @@ import {
   CreateDeliveryOrderDto,
   CreateDineInOrderDto,
   CreatePickupOrderDto,
+  CustomerOrdersQueryDto,
+  FollowOrderDto,
   DailySummaryQueryDto,
   OrdersQueryDto,
   PaymentDto,
@@ -129,6 +132,17 @@ export class ReportsController {
   }
 }
 
+/** The signed-in customer's own orders, across restaurants. */
+@Controller("me/orders")
+export class CustomerOrdersController {
+  constructor(private readonly orders: OrdersService) {}
+
+  @Get()
+  list(@CurrentUser() user: AuthUser, @Query() query: CustomerOrdersQueryDto): Promise<CustomerOrdersPage> {
+    return this.orders.listForCustomer(user.id, query.before);
+  }
+}
+
 /** Members with the rider role, for the assignment picker on the board. */
 @Controller("restaurants/:restaurantId/riders")
 @UseGuards(RestaurantAccessGuard)
@@ -200,8 +214,12 @@ export class PublicOrdersController {
   @Public()
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @Post("tables/:token/orders")
-  create(@Param("token") token: string, @Body() dto: CreateDineInOrderDto): Promise<CreatedOrder> {
-    return this.orders.createDineIn(token, dto);
+  create(
+    @Param("token") token: string,
+    @Body() dto: CreateDineInOrderDto,
+    @OptionalUser() user?: AuthUser,
+  ): Promise<CreatedOrder> {
+    return this.orders.createDineIn(token, { ...dto, customerId: user?.id });
   }
 
   /**
@@ -211,16 +229,24 @@ export class PublicOrdersController {
   @Public()
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post("restaurants/:slug/orders")
-  createPickup(@Param("slug") slug: string, @Body() dto: CreatePickupOrderDto): Promise<CreatedOrder> {
-    return this.orders.createPickup(slug, dto);
+  createPickup(
+    @Param("slug") slug: string,
+    @Body() dto: CreatePickupOrderDto,
+    @OptionalUser() user?: AuthUser,
+  ): Promise<CreatedOrder> {
+    return this.orders.createPickup(slug, { ...dto, customerId: user?.id });
   }
 
   /** Delivery from the public menu; same limits as pickup. */
   @Public()
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post("restaurants/:slug/delivery-orders")
-  createDelivery(@Param("slug") slug: string, @Body() dto: CreateDeliveryOrderDto): Promise<CreatedOrder> {
-    return this.orders.createDelivery(slug, dto);
+  createDelivery(
+    @Param("slug") slug: string,
+    @Body() dto: CreateDeliveryOrderDto,
+    @OptionalUser() user?: AuthUser,
+  ): Promise<CreatedOrder> {
+    return this.orders.createDelivery(slug, { ...dto, customerId: user?.id });
   }
 
   @Public()
@@ -246,6 +272,15 @@ export class PublicOrdersController {
   @HttpCode(HttpStatus.OK)
   async riderLocation(@Body() dto: AccessTokenDto): Promise<{ position: RiderPosition | null }> {
     return { position: await this.orders.riderPositionForCustomer(dto.accessToken) };
+  }
+
+  /** "Avísame": this browser gets a push when the order is ready or on its way (guests too). */
+  @Public()
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @Post("orders/push-subscription")
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async followOrder(@Body() dto: FollowOrderDto): Promise<void> {
+    await this.orders.followOrder(dto.accessToken, dto.subscription);
   }
 
   /** POST so the tracking token stays in the body (and out of access logs); the web saves the blob. */
