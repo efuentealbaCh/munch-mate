@@ -133,7 +133,7 @@ export function ContactFields({
         description="Para avisarte si hay algún problema con tu pedido."
       >
         {(control) => (
-          <PhoneInput {...control} prefill maxLength={30} aria-required {...register.customerPhone} />
+          <PhoneInput {...control} maxLength={30} aria-required {...register.customerPhone} />
         )}
       </FormField>
       <FormField

@@ -3,7 +3,7 @@
 import { PHONE_EXAMPLE } from "@app/utils";
 import { type ComponentProps, useRef } from "react";
 import { Input } from "@/components/ui/input";
-import { editPhone, isOnlyPrefix, PHONE_PREFILL } from "@/lib/phone-input";
+import { editPhone } from "@/lib/phone-input";
 
 /**
  * Phone field that formats as you type ("+569 12345678", same rule as `formatPhone` everywhere else) with
@@ -11,16 +11,11 @@ import { editPhone, isOnlyPrefix, PHONE_PREFILL } from "@/lib/phone-input";
  * the form's onChange reads it (the same approach as PriceInput). The form still validates with
  * normalizePhone and the api normalizes again.
  *
- * @param prefill Written when the field gets focus empty (customer checkout: "+569"); removed on blur if the
- *   customer typed nothing after it.
+ * No "+569" is written in advance: Chileans type their mobile starting with 9 ("9 1234 5678"), which after a
+ * prefilled "+569" became "+569 912345678" (a wrong number). The formatter adds "+569" itself as soon as a
+ * 9 is typed, and "+569 9xxxxxxx" is a valid mobile, so a doubled 9 cannot be guessed away afterwards.
  */
-export function PhoneInput({
-  prefill,
-  onChange,
-  onFocus,
-  onBlur,
-  ...props
-}: Omit<ComponentProps<"input">, "type" | "inputMode"> & { prefill?: boolean }) {
+export function PhoneInput({ onChange, onFocus, ...props }: Omit<ComponentProps<"input">, "type" | "inputMode">) {
   // Value before each edit, to tell a backspace over a separator from one over a digit.
   const previous = useRef("");
   return (
@@ -31,13 +26,7 @@ export function PhoneInput({
       placeholder={PHONE_EXAMPLE}
       {...props}
       onFocus={(event) => {
-        const input = event.currentTarget;
-        if (prefill && input.value === "") {
-          input.value = PHONE_PREFILL;
-          // After the browser places the caret for the tap/click.
-          requestAnimationFrame(() => input.setSelectionRange(input.value.length, input.value.length));
-        }
-        previous.current = input.value;
+        previous.current = event.currentTarget.value;
         onFocus?.(event);
       }}
       onChange={(event) => {
@@ -51,15 +40,6 @@ export function PhoneInput({
         }
         previous.current = edit.value;
         onChange?.(event);
-      }}
-      onBlur={(event) => {
-        const input = event.target;
-        if (prefill && input.value !== "" && isOnlyPrefix(input.value)) {
-          // react-hook-form's onBlur reads the field again, so the form sees it empty too.
-          input.value = "";
-          previous.current = "";
-        }
-        onBlur?.(event);
       }}
     />
   );

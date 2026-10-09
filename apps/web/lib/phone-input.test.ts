@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { editPhone, isOnlyPrefix } from "./phone-input";
+import { editPhone } from "./phone-input";
 
 describe("editPhone", () => {
   it("formats while typing at the end, keeping the caret at the end", () => {
@@ -32,9 +32,13 @@ describe("editPhone", () => {
   });
 });
 
-describe("isOnlyPrefix", () => {
-  it("is true while nothing but the prefilled +569 (or part of it) is there", () => {
-    for (const value of ["", "+", "+5", "+56", "+569"]) expect(isOnlyPrefix(value), value).toBe(true);
-    for (const value of ["+569 1", "+54", "+56 2"]) expect(isOnlyPrefix(value), value).toBe(false);
+describe("typing a Chilean mobile the usual way", () => {
+  it("adds +569 by itself and never doubles the 9", () => {
+    let value = "";
+    for (const key of "9 8765 4321") {
+      const raw = value + key;
+      value = editPhone(value, raw, raw.length).value;
+    }
+    expect(value).toBe("+569 87654321");
   });
 });

@@ -1,8 +1,6 @@
 import { formatPhoneInput } from "@app/utils";
 
 /** Prefix written in an empty customer phone field when it gets focus: most customers have a Chilean mobile. */
-export const PHONE_PREFILL = "+569";
-
 /** Field value and caret position after re-formatting an edit. */
 export interface PhoneEdit {
   value: string;
@@ -48,13 +46,4 @@ export function editPhone(previous: string, raw: string, caret: number, deleting
     if (/\d/.test(value[i] ?? "") && ++seen === target) return { value, caret: i + 1 };
   }
   return { value, caret: value.length };
-}
-
-/**
- * Whether the field holds only the prefix written on focus (or less), i.e. the customer typed no number:
- * the field is cleared on blur so the form says "Ingresa tu teléfono" instead of a format error.
- */
-export function isOnlyPrefix(value: string): boolean {
-  const digits = value.replace(/\D/g, "");
-  return digits === "" || "569".startsWith(digits);
 }
