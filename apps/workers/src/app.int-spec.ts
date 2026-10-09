@@ -251,7 +251,12 @@ describe("workers (integration)", () => {
       status: "ok",
       mongo: "up",
       valkey: "up",
-      queues: { [QUEUES.SYSTEM]: "running", [QUEUES.EMAIL]: "running", [QUEUES.PDF]: "running" },
+      queues: {
+        [QUEUES.SYSTEM]: "running",
+        [QUEUES.EMAIL]: "running",
+        [QUEUES.PDF]: "running",
+        [QUEUES.NOTIF]: "running",
+      },
     });
   });
 });
