@@ -3,6 +3,7 @@
 import { ORDER_LIMITS } from "@app/types";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
+import { AccountHint, type AccountHintProps } from "@/components/account-hint";
 import { CartLines, CartSheet, type LineProblem } from "@/components/cart-sheet";
 import { FormError } from "@/components/form-error";
 import { FormField } from "@/components/form-field";
@@ -30,6 +31,10 @@ interface TableCartSheetProps {
   error: unknown;
   problem: LineProblem | null;
   checkout: CheckoutValues;
+  /** Bumped when `checkout` was filled from the account: remounts the form with it (see CheckoutSheet). */
+  prefillKey: number;
+  /** Login link for guests, "Pides con tu cuenta" for customers. */
+  account: AccountHintProps;
   onCheckoutChange(values: CheckoutValues): void;
   onQuantity(key: string, quantity: number): void;
   onRemove(key: string): void;
@@ -47,7 +52,7 @@ export function TableCartSheet(props: TableCartSheetProps) {
       description={`${props.tableLabel} · revisa antes de enviar.`}
       empty={props.lines.length === 0}
     >
-      <TableCheckout {...props} />
+      <TableCheckout key={props.prefillKey} {...props} />
     </CartSheet>
   );
 }
@@ -62,6 +67,7 @@ function TableCheckout({
   error,
   problem,
   checkout,
+  account,
   onCheckoutChange,
   onQuantity,
   onRemove,
@@ -94,6 +100,7 @@ function TableCheckout({
       <p className="px-4 text-xs text-muted-foreground">El local confirma el total al recibir tu pedido. Pagas en el local.</p>
 
       <div className="flex flex-col gap-4 px-4 pt-4">
+        <AccountHint account={account} />
         <FormField id="checkout-name" label="Tu nombre (opcional)" error={errors.customerName?.message} description="Para que te encuentren al servir.">
           {(control) => (
             <Input

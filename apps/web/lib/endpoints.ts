@@ -5,6 +5,7 @@ import type {
   CreateDeliveryOrderInput,
   CreateDineInOrderInput,
   CreatePickupOrderInput,
+  CustomerOrdersPage,
   DailySummary,
   DeliveryZoneInput,
   DeliveryZoneView,
@@ -20,14 +21,19 @@ import type {
   PaymentMethod,
   PlatformRestaurantPage,
   ProductView,
+  ProfileInput,
   PublicDeliveryZone,
   PublicMenu,
   PublicOrderView,
+  PushConfig,
+  PushSubscriptionInput,
   RestaurantRole,
   RestaurantStatus,
   RestaurantView,
   RiderPosition,
   RiderView,
+  SavedAddressInput,
+  SavedAddressView,
   SlugAvailability,
   TableContext,
   TableView,
@@ -420,4 +426,36 @@ export const publicOrdersApi = {
 export const mapsApi = {
   /** `available: false` until the map data is uploaded (`pnpm maps:init`): the pages work without a map. */
   config: () => api.request<MapConfig>("/public/map-config"),
+};
+
+/** The signed-in person as a customer (phase 6): profile, saved addresses and order history. */
+export const customersApi = {
+  /** @throws ApiError INVALID_PHONE (400). The phone is stored normalized; "" clears it. */
+  updateProfile: (body: ProfileInput) => api.request<UserProfile>("/me", { method: "PATCH", body }),
+  addresses: () => api.request<SavedAddressView[]>("/me/addresses"),
+  /** @throws ApiError ADDRESSES_LIMIT / ADDRESS_LABEL_TAKEN (409). */
+  createAddress: (body: SavedAddressInput) => api.request<SavedAddressView>("/me/addresses", { method: "POST", body }),
+  /** Full replacement. @throws ApiError ADDRESS_LABEL_TAKEN (409). */
+  updateAddress: (addressId: string, body: SavedAddressInput) =>
+    api.request<SavedAddressView>(`/me/addresses/${segment(addressId)}`, { method: "PUT", body }),
+  deleteAddress: (addressId: string) => api.request<void>(`/me/addresses/${segment(addressId)}`, { method: "DELETE" }),
+  /** Newest first, CUSTOMER_LIMITS.ordersPageSize per page. @param before `nextBefore` of the previous page. */
+  orders: (before?: string | null, signal?: AbortSignal) =>
+    api.request<CustomerOrdersPage>(`/me/orders${before ? `?before=${encodeURIComponent(before)}` : ""}`, { signal }),
+};
+
+/**
+ * Web push (phase 6). Every subscribe call can answer 400 PUSH_NOT_CONFIGURED (no VAPID keys on the server)
+ * or 400 INVALID_PUSH_ENDPOINT (a browser whose push service is not supported).
+ */
+export const pushApi = {
+  /** publicKey null = push is off on this server: hide everything about notifications. */
+  config: () => api.request<PushConfig>("/public/push-config"),
+  /** This device gets the account notifications (staff: new orders; riders: assigned deliveries). */
+  subscribeDevice: (subscription: PushSubscriptionInput) =>
+    api.request<void>("/me/push-subscriptions", { method: "POST", body: subscription }),
+  unsubscribeDevice: (endpoint: string) => api.request<void>("/me/push-subscriptions", { method: "DELETE", body: { endpoint } }),
+  /** "Avísame": this browser follows one order (guests too). @throws ApiError ORDER_FINISHED (409). */
+  followOrder: (accessToken: string, subscription: PushSubscriptionInput) =>
+    api.request<void>("/public/orders/push-subscription", { method: "POST", body: { accessToken, subscription } }),
 };

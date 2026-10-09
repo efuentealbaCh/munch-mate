@@ -4,13 +4,14 @@ import type { OpenState, PublicMenu, PublicProduct, TableContext } from "@app/ty
 import { ClockIcon, ReceiptTextIcon, StoreIcon } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { CartBar, type LineProblem } from "@/components/cart-sheet";
 import { OrderProductSheet } from "@/components/order-product-sheet";
 import { MenuSections } from "@/components/public-menu";
 import { RestaurantLogo } from "@/components/restaurant-logo";
 import { Badge } from "@/components/ui/badge";
+import { useCustomerSession } from "@/hooks/use-customer-session";
 import { useNow } from "@/hooks/use-now";
 import { useOnVisible } from "@/hooks/use-realtime";
 import { useRefreshAt } from "@/hooks/use-refresh-at";
@@ -27,10 +28,12 @@ import {
   maxFromMeta,
   toOrderItems,
 } from "@/lib/cart";
+import { prefillContact } from "@/lib/customer";
 import { publicOrdersApi } from "@/lib/endpoints";
 import { hasCode } from "@/lib/errors";
 import { closedByScheduleText, closedStateFromError } from "@/lib/opening-hours";
 import { loadMyOrders, rememberOrder, trackingHref } from "@/lib/order-tracking";
+import { safeNextPath, withQuery } from "@/lib/safe-next";
 import type { CheckoutValues } from "@/lib/validation";
 import { TableCartSheet } from "./cart-sheet";
 
@@ -40,7 +43,10 @@ interface TableOrderingProps {
   initialMenu: PublicMenu;
 }
 
-/** Menu + cart + checkout for one table. Customers order without an account; the table QR identifies them. */
+/**
+ * Menu + cart + checkout for one table. Customers order without an account; the table QR identifies them.
+ * With an account the name is prefilled and the api adds the order to "Mis pedidos".
+ */
 export function TableOrdering({ tableToken, table, initialMenu }: TableOrderingProps) {
   const router = useRouter();
   const [menu, setMenu] = useState(initialMenu);
@@ -57,12 +63,24 @@ export function TableOrdering({ tableToken, table, initialMenu }: TableOrderingP
   const [error, setError] = useState<unknown>(null);
   const [problem, setProblem] = useState<LineProblem | null>(null);
   const [myOrdersCount, setMyOrdersCount] = useState(0);
+  const session = useCustomerSession();
+  const [prefillKey, setPrefillKey] = useState(0);
+  const prefilled = useRef(false);
   const currency = menu.restaurant.currency;
   const now = useNow(30_000);
   const closedBySchedule = accepting && !openState.openNow && !tableGone;
   const canOrder = accepting && openState.openNow && !tableGone;
 
   useEffect(() => setMyOrdersCount(loadMyOrders(localStore()).length), []);
+
+  // Signed in: the name comes from the account, unless the customer already typed one.
+  const sessionUser = session.state.user;
+  useEffect(() => {
+    if (!sessionUser || prefilled.current) return;
+    prefilled.current = true;
+    setCheckout((current) => prefillContact(current, sessionUser));
+    setPrefillKey((key) => key + 1);
+  }, [sessionUser]);
 
   // Back from another app or tab: the restaurant may have opened or closed meanwhile.
   const refreshTable = useCallback(async () => {
@@ -116,6 +134,8 @@ export function TableOrdering({ tableToken, table, initialMenu }: TableOrderingP
     setSubmitting(true);
     setError(null);
     setProblem(null);
+    // A fresh access cookie, so the api links the order to the account (never throws).
+    await session.ensureFresh();
     try {
       const created = await publicOrdersApi.create(tableToken, { clientOrderId, ...body });
       rememberOrder(localStore(), {
@@ -232,6 +252,11 @@ export function TableOrdering({ tableToken, table, initialMenu }: TableOrderingP
         error={error}
         problem={activeProblem}
         checkout={checkout}
+        prefillKey={prefillKey}
+        account={{
+          status: session.state.status,
+          loginHref: withQuery("/ingresar", { next: safeNextPath(`/m/${encodeURIComponent(tableToken)}`, "/") }),
+        }}
         onCheckoutChange={setCheckout}
         onQuantity={(key, quantity) => dispatch({ type: "setQuantity", key, quantity })}
         onRemove={(key) => dispatch({ type: "remove", key })}

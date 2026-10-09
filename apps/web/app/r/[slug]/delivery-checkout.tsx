@@ -5,17 +5,20 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { CircleAlertIcon, CloudOffIcon, MapPinIcon, MapPinOffIcon } from "lucide-react";
 import { useEffect, useMemo, useRef } from "react";
 import { type Resolver, useForm, useWatch } from "react-hook-form";
+import { AccountHint } from "@/components/account-hint";
 import { CartLines } from "@/components/cart-sheet";
 import { FormError } from "@/components/form-error";
 import { FormField } from "@/components/form-field";
 import { NativeSelect } from "@/components/native-select";
 import { PriceInput } from "@/components/price-input";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cartCount, cartTotal } from "@/lib/cart";
+import { canOfferSaveAddress, findSavedAddress, savedAddressLine, savedAddressToCheckout } from "@/lib/customer";
 import { cashChange, defaultZoneId, deliveryTotals, zoneOptionLabel } from "@/lib/delivery";
-import { pinProblem } from "@/lib/maps";
+import { pinProblem, zoneAtPoint } from "@/lib/maps";
 import { formatPrice, parsePriceInput } from "@/lib/money";
 import { type DeliveryCheckoutValues, deliveryCheckoutSchema } from "@/lib/validation";
 import { DeliveryPinSection } from "./delivery-pin";
@@ -34,7 +37,8 @@ export interface DeliveryPinProps {
   /** The restaurant's location (where the map starts). */
   center: GeoPoint | null;
   value: GeoPoint | null;
-  onChange(pin: GeoPoint): void;
+  /** null clears it (a saved address without a pin). */
+  onChange(pin: GeoPoint | null): void;
   /** Pickup is on: offered when the pin falls outside the delivery area. */
   canPickup: boolean;
   onChoosePickup(): void;
@@ -88,6 +92,7 @@ export function DeliveryCheckout({
 
 function DeliveryForm({
   zones,
+  account,
   lines,
   currency,
   maxItems,
@@ -125,7 +130,10 @@ function DeliveryForm({
   const initialZone = zones.some((zone) => zone.id === checkout.zoneId) ? checkout.zoneId : defaultZoneId(zones);
   const form = useForm<DeliveryCheckoutValues>({ resolver, defaultValues: { ...checkout, zoneId: initialZone } });
   const { errors } = form.formState;
-  const [zoneId, paymentMethod, cashText] = useWatch({ control: form.control, name: ["zoneId", "paymentMethod", "cashAmount"] });
+  const [zoneId, paymentMethod, cashText, address, unit] = useWatch({
+    control: form.control,
+    name: ["zoneId", "paymentMethod", "cashAmount", "address", "unit"],
+  });
 
   // The zone list was refreshed and the chosen one is gone (deactivated): fall back to the default.
   useEffect(() => {
@@ -141,6 +149,27 @@ function DeliveryForm({
   const sync = () => onCheckoutChange(form.getValues());
   // A zone drawn on the map needs the pin inside it (the api answers LOCATION_REQUIRED / OUTSIDE_ZONE).
   const pinIssue = pinProblem(zone, pin.value);
+  const savedAddresses = account.addresses ?? [];
+  const chosenSaved = findSavedAddress(savedAddresses, { address, unit });
+  const offerSave = account.status === "customer" && account.addresses !== null && canOfferSaveAddress(savedAddresses, { address, unit });
+
+  /**
+   * "Mis direcciones": fills the address and moves the pin, whose zone gets selected (as when placed by hand).
+   * "Otra dirección" ("") empties the fields to type a new one.
+   */
+  function applySavedAddress(id: string) {
+    const saved = savedAddresses.find((a) => a.id === id);
+    if (id !== "" && !saved) return;
+    const fields = saved ? savedAddressToCheckout(saved) : { address: "", unit: "", reference: "", location: null };
+    const validate = { shouldValidate: form.formState.isSubmitted };
+    form.setValue("address", fields.address, validate);
+    form.setValue("unit", fields.unit, validate);
+    form.setValue("reference", fields.reference, validate);
+    pin.onChange(fields.location);
+    const pinZone = fields.location ? zoneAtPoint(fields.location, zones) : null;
+    if (pinZone) form.setValue("zoneId", pinZone.id, validate);
+    sync();
+  }
 
   return (
     <form noValidate onSubmit={form.handleSubmit(onSubmit)} onChange={sync} className="flex flex-col" aria-label="Pedir delivery">
@@ -160,6 +189,7 @@ function DeliveryForm({
       </p>
 
       <div className="flex flex-col gap-4 px-4 pt-4">
+        <AccountHint account={account} />
         <ContactFields
           idPrefix="delivery"
           nameDescription="Para quien recibe el pedido."
@@ -177,6 +207,31 @@ function DeliveryForm({
 
         <fieldset className="flex flex-col gap-4 border-t pt-4">
           <legend className="float-left font-semibold">¿Dónde lo llevamos?</legend>
+          {savedAddresses.length > 0 ? (
+            <div className="clear-left">
+              <FormField
+                id="delivery-saved-address"
+                label="Mis direcciones"
+                description={chosenSaved ? undefined : "Elige una para rellenar la dirección."}
+              >
+                {(control) => (
+                  <NativeSelect
+                    {...control}
+                    value={chosenSaved?.id ?? ""}
+                    onChange={(event) => applySavedAddress(event.target.value)}
+                    data-testid="saved-address-select"
+                  >
+                    <option value="">{chosenSaved ? "Otra dirección" : "Elige una dirección guardada"}</option>
+                    {savedAddresses.map((saved) => (
+                      <option key={saved.id} value={saved.id}>
+                        {saved.label} · {savedAddressLine(saved)}
+                      </option>
+                    ))}
+                  </NativeSelect>
+                )}
+              </FormField>
+            </div>
+          ) : null}
           <DeliveryPinSection
             slug={pin.slug}
             zones={zones}
@@ -280,6 +335,19 @@ function DeliveryForm({
               />
             )}
           </FormField>
+          {offerSave ? (
+            <label
+              htmlFor="delivery-save-address"
+              className="flex min-h-10 cursor-pointer items-center gap-2 text-sm select-none"
+            >
+              <Checkbox
+                id="delivery-save-address"
+                checked={account.saveAddress}
+                onCheckedChange={(state) => account.onSaveAddressChange(state === true)}
+              />
+              Guardar esta dirección en mi cuenta
+            </label>
+          ) : null}
         </fieldset>
 
         <fieldset

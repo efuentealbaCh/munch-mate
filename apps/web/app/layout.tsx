@@ -6,6 +6,8 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: { default: "Munch Mate", template: "%s · Munch Mate" },
   description: "Pedidos para restaurantes: mesa, retiro y delivery.",
+  // Installed on an iPhone home screen (required there for push notifications): full screen, our name.
+  appleWebApp: { capable: true, title: "Munch Mate", statusBarStyle: "default" },
 };
 
 export const viewport: Viewport = {

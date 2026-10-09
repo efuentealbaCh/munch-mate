@@ -7,6 +7,20 @@ const nextConfig: NextConfig = {
   // Monorepo: trace dependencies from the workspace root so hoisted pnpm packages are included.
   outputFileTracingRoot: join(__dirname, "../.."),
   poweredByHeader: false,
+  async headers() {
+    return [
+      {
+        // Web push service worker (public/sw.js): always revalidated, so a new version reaches every device on
+        // its next registration check instead of waiting for an HTTP cache to expire.
+        source: "/sw.js",
+        headers: [
+          { key: "Content-Type", value: "application/javascript; charset=utf-8" },
+          { key: "Cache-Control", value: "no-cache, no-store, must-revalidate" },
+          { key: "Content-Security-Policy", value: "default-src 'self'; script-src 'self'" },
+        ],
+      },
+    ];
+  },
   async rewrites() {
     // In production Caddy routes /api/* to the api. In `pnpm dev` Next plays that role, so the browser
     // sees a single origin (localhost:3100) and the session cookies behave exactly as in production.

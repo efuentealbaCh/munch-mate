@@ -3,6 +3,8 @@
 import type { UserProfile } from "@app/types";
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { api } from "./api";
+import { localStore } from "./browser-storage";
+import { setSessionHint } from "./customer";
 import { authApi } from "./endpoints";
 import { hasCode } from "./errors";
 
@@ -37,6 +39,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const setUser = useCallback((next: UserProfile | null) => {
     setUserState(next);
     setStatus(next ? "authenticated" : "unauthenticated");
+    // Lets the public pages know whether asking /auth/me is worth it (see SESSION_HINT_KEY).
+    setSessionHint(localStore(), next !== null);
   }, []);
 
   const reloadProfile = useCallback(async () => {

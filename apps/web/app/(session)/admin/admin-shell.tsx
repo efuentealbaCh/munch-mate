@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { Brand } from "@/components/brand";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { forgetDevicePush } from "@/hooks/use-push";
 import { useAuth } from "@/lib/auth-context";
 import { errorMessage } from "@/lib/errors";
 import { withQuery } from "@/lib/safe-next";
@@ -34,6 +35,8 @@ export function AdminShell({ children }: { children: ReactNode }) {
   async function handleLogout() {
     leaving.current = true;
     try {
+      // While the session still works: a shared phone must not keep getting this account's notifications.
+      if (user) await forgetDevicePush(user.id);
       await logout();
       router.replace("/ingresar");
     } catch (error) {

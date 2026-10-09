@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronRightIcon, PlusIcon, StoreIcon } from "lucide-react";
+import { ChevronRightIcon, PlusIcon, ReceiptTextIcon, StoreIcon, UserRoundIcon } from "lucide-react";
 import Link from "next/link";
 import { FormError } from "@/components/form-error";
 import { RestaurantLogo } from "@/components/restaurant-logo";
@@ -89,6 +89,24 @@ function EmptyState() {
           Crear mi restaurante
         </Link>
       </Button>
+      {/* Customers land here after logging in too: ordering never requires a restaurant. */}
+      <div className="mt-2 flex w-full max-w-sm flex-col gap-2 border-t pt-5" data-testid="customer-shortcuts">
+        <p className="text-sm text-muted-foreground">¿Solo quieres pedir? Revisa tus pedidos y tus datos de entrega.</p>
+        <div className="flex flex-wrap justify-center gap-2">
+          <Button asChild variant="outline">
+            <Link href="/mis-pedidos">
+              <ReceiptTextIcon aria-hidden data-icon="inline-start" />
+              Mis pedidos
+            </Link>
+          </Button>
+          <Button asChild variant="outline">
+            <Link href="/mi-cuenta">
+              <UserRoundIcon aria-hidden data-icon="inline-start" />
+              Mi cuenta
+            </Link>
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }

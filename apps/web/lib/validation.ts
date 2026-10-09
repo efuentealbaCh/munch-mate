@@ -1,4 +1,5 @@
 import {
+  CUSTOMER_LIMITS,
   DELIVERY_ZONE_LIMITS,
   MENU_LIMITS,
   ORDER_LIMITS,
@@ -320,6 +321,35 @@ export const bulkTablesSchema = z
     }
   });
 
+/** "Mi cuenta" (ProfileDto): name required, phone optional ("" clears it; stored normalized). */
+export const customerProfileSchema = z.object({
+  name: z.string().overwrite(cleanLine).min(1, "Ingresa tu nombre").max(100, "El nombre no puede superar los 100 caracteres"),
+  phone: z
+    .string()
+    .overwrite(cleanLine)
+    .max(30, PHONE_ERROR)
+    .refine((value) => value === "" || normalizePhone(value) !== null, PHONE_ERROR),
+});
+
+/** A saved delivery address (SavedAddressDto); the pin is handled outside the form. Same bounds as the checkout. */
+export const savedAddressSchema = z.object({
+  label: z
+    .string()
+    .overwrite(cleanLine)
+    .min(1, "Ponle un nombre, ej. Casa")
+    .max(CUSTOMER_LIMITS.addressLabelMax, `Usa hasta ${CUSTOMER_LIMITS.addressLabelMax} caracteres`),
+  address: z
+    .string()
+    .overwrite(cleanLine)
+    .min(3, "Indica la calle y el número")
+    .max(ORDER_LIMITS.addressMax, `La dirección puede tener hasta ${ORDER_LIMITS.addressMax} caracteres`),
+  unit: z.string().overwrite(cleanLine).max(ORDER_LIMITS.addressUnitMax, `Usa hasta ${ORDER_LIMITS.addressUnitMax} caracteres`),
+  reference: z
+    .string()
+    .overwrite(cleanText)
+    .max(ORDER_LIMITS.addressReferenceMax, `La referencia puede tener hasta ${ORDER_LIMITS.addressReferenceMax} caracteres`),
+});
+
 export type LoginValues = z.infer<typeof loginSchema>;
 export type RegisterValues = z.infer<typeof registerSchema>;
 export type ForgotPasswordValues = z.infer<typeof forgotPasswordSchema>;
@@ -338,3 +368,5 @@ export type DeliveryZoneValues = z.infer<typeof deliveryZoneSchema>;
 export type StatusReasonValues = z.infer<typeof statusReasonSchema>;
 export type TableValues = z.infer<typeof tableSchema>;
 export type BulkTablesValues = z.infer<typeof bulkTablesSchema>;
+export type CustomerProfileValues = z.infer<typeof customerProfileSchema>;
+export type SavedAddressValues = z.infer<typeof savedAddressSchema>;
