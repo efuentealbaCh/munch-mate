@@ -242,7 +242,7 @@ apps/api/src/
 - **API access only through `lib/api.ts`** (same-origin `/api/...`): typed errors (`ApiError` with `code`), automatic single-flight refresh on 401 `UNAUTHENTICATED`, never refreshes on auth endpoints. Show the api's `message` to users; branch on `code`.
 - **Sessions are checked client-side** (`AuthProvider` → `/api/auth/me`): the cookies are httpOnly and `mm_rt` is scoped to `/api/auth`, so Next middleware/proxy cannot see the session. Protected areas render a skeleton, then redirect to `/ingresar?next=…`.
 - `next` redirect params go through `lib/safe-next.ts` (open-redirect protection).
-- Forms: react-hook-form + zod schemas in `lib/validation.ts` that mirror the api DTOs. Slug rules come from `@app/utils`, never re-implemented.
+- Forms: react-hook-form + zod schemas in `lib/validation.ts` that mirror the api DTOs. Forms that can be server-rendered (reachable by a full page load) take their `defaultValues` from `typedDefaults(formId, defaults)` (`lib/form-defaults.ts`) and carry `data-form="<formId>"`: react-hook-form writes `defaultValues` into the DOM when a field registers, which would erase what a slow phone's user typed before hydration. E2E tests call `waitForHydration(page)` (`<html data-hydrated>`) before typing after a navigation. Slug rules come from `@app/utils`, never re-implemented.
 - No global state library; React context for auth, small hooks (`hooks/`) for data.
 - Public pages (`/r`, `/m`, `/pedido`) only call `/api/auth/me` when the `mm:session` localStorage mark exists (set and cleared by `AuthProvider`), so guests never trigger 401/refresh round trips; before placing an order with a session older than 10 min the web refreshes it, so the order is linked to the account.
 - PWA: `app/manifest.ts` + `public/sw.js`, which **only** handles `push` and `notificationclick` (no fetch handler, no caching) and is registered on demand when the user enables notifications (`lib/push.ts`, `hooks/use-push.ts`). One push subscription per browser is shared by the staff switch and the "Avísame" buttons: turning the switch off deletes it server-side, never `subscription.unsubscribe()`.
@@ -544,7 +544,7 @@ pnpm smoke               # infra/scripts/smoke.sh against https://localhost
 pnpm maps:init          # self-hosted map of Chile into Garage (Docker + ~hundreds of MB download; cached in .maps-cache/)
 pnpm push:keys          # VAPID keys for web push into .env (only when empty; rotating breaks existing subscriptions)
 pnpm platform:admin <email>   # grant the platform admin role to an existing account (--revoke to remove)
-pnpm seed:demo           # 3 demo restaurants with full menus and photos (demo@munchmate.local / "munchmate demo 2026"); idempotent
+pnpm seed:demo           # 3 demo restaurants with full menus, photos, tables, locations and delivery zones drawn on the map (demo@munchmate.local / "munchmate demo 2026"); idempotent
 pnpm stack:down
 
 # Deploy (from main, after CI pushed the images)
