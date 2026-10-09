@@ -48,6 +48,7 @@ describe("ProductsService", () => {
   function setup(options: { categoryExists?: boolean; existingGroups?: string[]; current?: ProductRecord | null } = {}) {
     const products = {
       create: jest.fn(async (_r: string, input: object) => product(input)),
+      list: jest.fn(async () => [] as ReturnType<typeof product>[]),
       findOne: jest.fn(async () => (options.current === undefined ? product() : options.current)),
       update: jest.fn(async (_r: string, _p: string, changes: object) => product(changes)),
       delete: jest.fn(async () => product({ imageKey: "old" })),

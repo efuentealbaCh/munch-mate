@@ -12,6 +12,10 @@ export const categoryNotEmpty = () =>
   new ConflictException(
     apiError("CATEGORY_NOT_EMPTY", "La categoría tiene productos: muévelos o elimínalos antes de borrarla"),
   );
+export const categoryNameTaken = (name: string) =>
+  new ConflictException(apiError("CATEGORY_NAME_TAKEN", `Ya tienes una categoría llamada «${name}»`));
+export const productNameTaken = (name: string) =>
+  new ConflictException(apiError("PRODUCT_NAME_TAKEN", `Ya hay un producto llamado «${name}» en esta categoría`));
 /** A referenced category does not belong to the restaurant (or does not exist). */
 export const invalidCategory = () =>
   new BadRequestException(apiError("INVALID_CATEGORY", "La categoría elegida no existe en este restaurante"));

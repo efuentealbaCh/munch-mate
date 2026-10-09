@@ -1,7 +1,8 @@
 import type { AdminMenuView, MenuCategoryView } from "@app/types";
+import { isNameTaken } from "@app/utils";
 import { Injectable } from "@nestjs/common";
 import { type CategoryRecord, CategoriesRepository } from "./categories.repository";
-import { categoryNotEmpty, categoryNotFound, invalidOrder, isPermutation } from "./menu.errors";
+import { categoryNameTaken, categoryNotEmpty, categoryNotFound, invalidOrder, isPermutation } from "./menu.errors";
 import { ModifierGroupsService } from "./modifier-groups.service";
 import { ProductsRepository } from "./products.repository";
 import { ProductsService } from "./products.service";
@@ -36,18 +37,23 @@ export class MenuService {
     };
   }
 
+  /** @throws ConflictException CATEGORY_NAME_TAKEN (same name ignoring case, accents and spaces). */
   async createCategory(restaurantId: string, input: { name: string; description?: string }): Promise<MenuCategoryView> {
+    if (isNameTaken(input.name, await this.categories.list(restaurantId))) throw categoryNameTaken(input.name);
     return toCategoryView(
       await this.categories.create(restaurantId, { name: input.name, description: input.description ?? "" }),
     );
   }
 
-  /** @throws NotFoundException CATEGORY_NOT_FOUND. */
+  /** @throws NotFoundException CATEGORY_NOT_FOUND; ConflictException CATEGORY_NAME_TAKEN. */
   async updateCategory(
     restaurantId: string,
     categoryId: string,
     changes: { name?: string; description?: string; active?: boolean },
   ): Promise<MenuCategoryView> {
+    if (changes.name !== undefined && isNameTaken(changes.name, await this.categories.list(restaurantId), categoryId)) {
+      throw categoryNameTaken(changes.name);
+    }
     const updated = await this.categories.update(restaurantId, categoryId, changes);
     if (!updated) throw categoryNotFound();
     return toCategoryView(updated);

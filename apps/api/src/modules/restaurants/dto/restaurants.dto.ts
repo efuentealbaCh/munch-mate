@@ -11,7 +11,6 @@ import {
   IsOptional,
   IsString,
   Length,
-  Matches,
   MaxLength,
   ValidateIf,
 } from "class-validator";
@@ -53,7 +52,8 @@ export class UpdateRestaurantDto {
   @IsOptional()
   @Transform(trim)
   @IsString()
-  @Matches(/^$|^\+?[0-9 ()-]{6,20}$/, { message: "phone debe ser un teléfono válido, ej. +56 9 1234 5678" })
+  // Format checked and normalized by the service with normalizePhone (same rules as customer phones).
+  @MaxLength(30, { message: "phone debe ser un teléfono válido, ej. +569 12345678" })
   phone?: string;
 
   @IsOptional()

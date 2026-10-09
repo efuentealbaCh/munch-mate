@@ -104,7 +104,7 @@ describe("Pickup orders (e2e)", () => {
       tableLabel: null,
       estimatedReadyAt: null,
       receiptAvailable: false,
-      restaurant: { name: "Completos Don Pepe", slug: s.restaurant.slug, phone: "+56 2 2345 6789" },
+      restaurant: { name: "Completos Don Pepe", slug: s.restaurant.slug, phone: "+56223456789" },
     });
     const [staffView] = await s.staffOrders();
     expect(staffView).toMatchObject({

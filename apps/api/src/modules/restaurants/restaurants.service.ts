@@ -1,5 +1,5 @@
 import { OPENING_HOURS_LIMITS, type RestaurantView, type SlugAvailability, type WeeklyHours } from "@app/types";
-import { openingHoursProblem, slugify, slugProblem, withSuffix } from "@app/utils";
+import { normalizePhone, openingHoursProblem, slugify, slugProblem, withSuffix } from "@app/utils";
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { InjectConnection } from "@nestjs/mongoose";
 import type { Connection } from "mongoose";
@@ -85,7 +85,7 @@ export class RestaurantsService {
     const update: RestaurantChanges = {};
     if (changes.name !== undefined) update.name = changes.name;
     if (changes.description !== undefined) update.description = changes.description;
-    if (changes.phone !== undefined) update.phone = changes.phone;
+    if (changes.phone !== undefined) update.phone = this.normalizedPhone(changes.phone);
     if (changes.pickupEnabled !== undefined) update.pickupEnabled = changes.pickupEnabled;
     if (changes.deliveryEnabled !== undefined) update.deliveryEnabled = changes.deliveryEnabled;
     if (changes.slug !== undefined) update.slug = normalizeRequestedSlug(changes.slug);
@@ -98,6 +98,17 @@ export class RestaurantsService {
       if (error instanceof SlugTakenError) throw slugTaken(await this.nextFreeSlug(error.slug));
       throw error;
     }
+  }
+
+  /**
+   * Restaurant phones follow the customer rules: stored normalized (+56912345678), shown as "+569 12345678".
+   * Empty clears it. @throws BadRequestException INVALID_PHONE.
+   */
+  private normalizedPhone(phone: string): string {
+    if (phone.trim() === "") return "";
+    const normalized = normalizePhone(phone);
+    if (!normalized) throw new BadRequestException(apiError("INVALID_PHONE", "Revisa el teléfono, ej. +569 12345678"));
+    return normalized;
   }
 
   /**

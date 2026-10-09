@@ -1,5 +1,6 @@
 import type { TableContext, TableView } from "@app/types";
-import { Injectable, NotFoundException, UnprocessableEntityException } from "@nestjs/common";
+import { isNameTaken } from "@app/utils";
+import { ConflictException, Injectable, NotFoundException, UnprocessableEntityException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { apiError } from "../../common/errors/api-error";
 import type { ApiEnv } from "../../config/env.validation";
@@ -12,6 +13,8 @@ import { generateTableToken } from "./order-tokens";
 import { type TableRecord, TablesRepository } from "./tables.repository";
 
 const tableNotFound = () => new NotFoundException(apiError("TABLE_NOT_FOUND", "La mesa no existe"));
+const labelTaken = (label: string) =>
+  new ConflictException(apiError("TABLE_LABEL_TAKEN", `Ya tienes una mesa llamada «${label}»; usa otro nombre`));
 const qrNotFound = () =>
   new NotFoundException(apiError("TABLE_NOT_FOUND", "Este código QR no está activo. Pide ayuda al personal."));
 
@@ -35,11 +38,15 @@ export class TablesService {
     return (await this.tables.list(restaurantId)).map(toView);
   }
 
+  /** @throws ConflictException TABLE_LABEL_TAKEN (same label ignoring case, accents and spaces). */
   async create(restaurantId: string, label: string): Promise<TableView> {
+    await this.assertLabelFree(restaurantId, label);
     return toView(await this.tables.create(restaurantId, label, generateTableToken));
   }
 
+  /** @throws NotFoundException TABLE_NOT_FOUND; ConflictException TABLE_LABEL_TAKEN. */
   async update(restaurantId: string, tableId: string, changes: { label?: string; active?: boolean }): Promise<TableView> {
+    if (changes.label !== undefined) await this.assertLabelFree(restaurantId, changes.label, tableId);
     const updated = await this.tables.update(restaurantId, tableId, changes);
     if (!updated) throw tableNotFound();
     return toView(updated);
@@ -112,6 +119,11 @@ export class TablesService {
     const pdf = await this.storage.getPrivate(job.data.outputKey);
     if (!pdf) return { status: "pending" };
     return { status: "ready", pdf };
+  }
+
+  private async assertLabelFree(restaurantId: string, label: string, exceptId?: string): Promise<void> {
+    const tables = await this.tables.list(restaurantId);
+    if (isNameTaken(label, tables.map((t) => ({ id: t.id, name: t.label })), exceptId)) throw labelTaken(label);
   }
 
   private qrUrl(table: TableRecord): string {
