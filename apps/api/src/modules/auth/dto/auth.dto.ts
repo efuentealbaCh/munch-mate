@@ -1,7 +1,7 @@
 import { Transform } from "class-transformer";
 import { IsEmail, IsString, Length, MaxLength, MinLength } from "class-validator";
+import { cleanLine, cleanText } from "../../../common/validation/clean-text";
 
-const trim = ({ value }: { value: unknown }) => (typeof value === "string" ? value.trim() : value);
 const normalizeEmail = ({ value }: { value: unknown }) =>
   typeof value === "string" ? value.trim().toLowerCase() : value;
 
@@ -20,7 +20,7 @@ export class RegisterDto {
   @MaxLength(PASSWORD_MAX)
   password!: string;
 
-  @Transform(trim)
+  @Transform(cleanLine)
   @IsString()
   @Length(1, 100, { message: "name debe tener entre 1 y 100 caracteres" })
   name!: string;

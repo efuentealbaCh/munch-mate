@@ -129,4 +129,58 @@ describe("Validation gaps: unique names, phone format, cancellation reasons (e2e
       expect((await lookup(s.accessToken)).cancelReason).toBe("Cancelado por el cliente");
     });
   });
+
+  describe("items per order, real dates and clean text", () => {
+    async function openTable() {
+      const o = await owner();
+      const category = (await o.agent.post(`${o.base}/menu/categories`).send({ name: "Completos" }).expect(201)).body;
+      const product = (
+        await o.agent.post(`${o.base}/menu/products`).send({ categoryId: category.id, name: "Completo", price: 1000 }).expect(201)
+      ).body as { id: string };
+      const table = (await o.agent.post(`${o.base}/tables`).send({ label: "Mesa 1" }).expect(201)).body as TableView;
+      await o.agent.put(`${o.base}/accepting-orders`).send({ acceptingOrders: true }).expect(200);
+      const order = (quantities: number[], extra: object = {}) =>
+        request(f.server)
+          .post(`/api/public/tables/${table.token}/orders`)
+          .send({
+            clientOrderId: randomUUID(),
+            items: quantities.map((quantity) => ({ productId: product.id, quantity, modifiers: [] })),
+            ...extra,
+          });
+      return { ...o, order };
+    }
+
+    it("caps the units of an order at the owner's limit", async () => {
+      const s = await openTable();
+      const view = (await s.agent.patch(s.base).send({ maxItemsPerOrder: 3 }).expect(200)).body as RestaurantView;
+      expect(view.maxItemsPerOrder).toBe(3);
+
+      const res = await s.order([2, 2]).expect(409);
+      expect(res.body).toMatchObject({ code: "TOO_MANY_ITEMS", meta: { max: "3" } });
+      await s.order([1, 2]).expect(201);
+      await s.agent.patch(s.base).send({ maxItemsPerOrder: 0 }).expect(400);
+      await s.agent.patch(s.base).send({ maxItemsPerOrder: 501 }).expect(400);
+    });
+
+    it("measures text after cleaning it: blanks do not count and invisible-only names are empty", async () => {
+      const s = await openTable();
+
+      // 300 spaces used to exceed the 200-character limit; cleaned, the note is simply empty.
+      await s.order([1], { note: " ".repeat(300), customerName: "  Camila   Soto  " }).expect(201);
+      const [placed] = (await s.agent.get(`${s.base}/orders`).expect(200)).body as OrderView[];
+      expect(placed).toMatchObject({ note: "", customerName: "Camila Soto" });
+
+      expect((await s.agent.post(`${s.base}/tables`).send({ label: String.fromCharCode(0x200b).repeat(2) }).expect(400)).body.code).toBe(
+        "VALIDATION_FAILED",
+      );
+    });
+
+    it("answers the sales summary only for real days that already started", async () => {
+      const s = await openTable();
+
+      expect((await s.agent.get(`${s.base}/reports/daily?date=2026-02-31`).expect(400)).body.code).toBe("INVALID_DATE");
+      expect((await s.agent.get(`${s.base}/reports/daily?date=2999-01-01`).expect(400)).body.code).toBe("FUTURE_DATE");
+      await s.agent.get(`${s.base}/reports/daily?date=2024-02-29`).expect(200);
+    });
+  });
 });

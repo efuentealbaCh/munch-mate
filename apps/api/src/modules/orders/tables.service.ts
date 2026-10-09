@@ -77,6 +77,7 @@ export class TablesService {
       restaurant: { name: restaurant.name, slug: restaurant.slug },
       acceptingOrders: restaurant.acceptingOrders,
       openState: openState(restaurant),
+      maxItemsPerOrder: restaurant.maxItemsPerOrder,
     };
   }
 

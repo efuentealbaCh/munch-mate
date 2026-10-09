@@ -88,6 +88,7 @@ export class RestaurantsService {
     if (changes.phone !== undefined) update.phone = this.normalizedPhone(changes.phone);
     if (changes.pickupEnabled !== undefined) update.pickupEnabled = changes.pickupEnabled;
     if (changes.deliveryEnabled !== undefined) update.deliveryEnabled = changes.deliveryEnabled;
+    if (changes.maxItemsPerOrder !== undefined) update.maxItemsPerOrder = changes.maxItemsPerOrder;
     if (changes.slug !== undefined) update.slug = normalizeRequestedSlug(changes.slug);
 
     try {

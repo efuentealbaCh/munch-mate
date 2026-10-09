@@ -29,11 +29,11 @@ import {
   Min,
   ValidateNested,
 } from "class-validator";
+import { cleanLine, cleanText } from "../../../common/validation/clean-text";
 
-const trim = ({ value }: { value: unknown }) => (typeof value === "string" ? value.trim() : value);
 
 export class TableDto {
-  @Transform(trim)
+  @Transform(cleanLine)
   @IsString()
   @Length(1, 30, { message: "label debe tener entre 1 y 30 caracteres" })
   label!: string;
@@ -41,7 +41,7 @@ export class TableDto {
 
 export class UpdateTableDto {
   @IsOptional()
-  @Transform(trim)
+  @Transform(cleanLine)
   @IsString()
   @Length(1, 30, { message: "label debe tener entre 1 y 30 caracteres" })
   label?: string;
@@ -77,6 +77,7 @@ export class OrderItemDto {
   modifiers!: ModifierSelectionDto[];
 
   @IsOptional()
+  @Transform(cleanText)
   @IsString()
   @MaxLength(ORDER_LIMITS.noteMax)
   note?: string;
@@ -95,11 +96,13 @@ export class CreateDineInOrderDto {
   items!: OrderItemDto[];
 
   @IsOptional()
+  @Transform(cleanLine)
   @IsString()
   @MaxLength(ORDER_LIMITS.customerNameMax)
   customerName?: string;
 
   @IsOptional()
+  @Transform(cleanText)
   @IsString()
   @MaxLength(ORDER_LIMITS.noteMax)
   note?: string;
@@ -117,13 +120,13 @@ export class CreatePickupOrderDto {
   @Type(() => OrderItemDto)
   items!: OrderItemDto[];
 
-  @Transform(trim)
+  @Transform(cleanLine)
   @IsString()
   @Length(2, ORDER_LIMITS.customerNameMax, { message: "Indica tu nombre (2 a 60 caracteres)" })
   customerName!: string;
 
   /** Format is checked and normalized by the service (normalizePhone, shared with the web). */
-  @Transform(trim)
+  @Transform(cleanLine)
   @IsString()
   @MaxLength(30)
   customerPhone!: string;
@@ -137,6 +140,7 @@ export class CreatePickupOrderDto {
   customerEmail?: string;
 
   @IsOptional()
+  @Transform(cleanText)
   @IsString()
   @MaxLength(ORDER_LIMITS.noteMax)
   note?: string;
@@ -146,19 +150,19 @@ export class DeliveryAddressDto {
   @IsMongoId({ message: "Elige la comuna o zona de entrega" })
   zoneId!: string;
 
-  @Transform(trim)
+  @Transform(cleanLine)
   @IsString()
   @Length(3, ORDER_LIMITS.addressMax, { message: "Indica la calle y el número" })
   address!: string;
 
   @IsOptional()
-  @Transform(trim)
+  @Transform(cleanLine)
   @IsString()
   @MaxLength(ORDER_LIMITS.addressUnitMax)
   unit?: string;
 
   @IsOptional()
-  @Transform(trim)
+  @Transform(cleanText)
   @IsString()
   @MaxLength(ORDER_LIMITS.addressReferenceMax)
   reference?: string;
@@ -194,7 +198,7 @@ export class AssignRiderDto {
 }
 
 export class DeliveryZoneDto {
-  @Transform(trim)
+  @Transform(cleanLine)
   @IsString()
   @Length(1, DELIVERY_ZONE_LIMITS.nameMax, { message: "name debe tener entre 1 y 60 caracteres" })
   name!: string;
@@ -220,7 +224,7 @@ export class DeliveryZoneDto {
 
 export class UpdateDeliveryZoneDto {
   @IsOptional()
-  @Transform(trim)
+  @Transform(cleanLine)
   @IsString()
   @Length(1, DELIVERY_ZONE_LIMITS.nameMax, { message: "name debe tener entre 1 y 60 caracteres" })
   name?: string;
@@ -263,6 +267,7 @@ export class ChangeStatusDto {
   status!: OrderStatus;
 
   @IsOptional()
+  @Transform(cleanText)
   @IsString()
   @MaxLength(ORDER_LIMITS.rejectReasonMax)
   reason?: string;

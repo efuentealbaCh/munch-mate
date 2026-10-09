@@ -42,6 +42,10 @@ export class Restaurant {
   @Prop({ type: [[{ _id: false, open: String, close: String }]], default: null })
   openingHours!: WeeklyHours | null;
 
+  /** Units (sum of quantities) allowed in one order; stops absurd carts (ORDER_LIMITS.itemsPerOrder*). */
+  @Prop({ default: 50, min: 1, max: 500 })
+  maxItemsPerOrder!: number;
+
   /** ISO 4217. Amounts are stored as integers in the currency's minor unit (CLP has none). */
   @Prop({ required: true, default: "CLP" })
   currency!: string;

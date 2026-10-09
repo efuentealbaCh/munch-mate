@@ -51,6 +51,7 @@ export class PublicMenuService {
         deliveryEnabled: restaurant.deliveryEnabled,
         openingHours: restaurant.openingHours,
         openState: openState(restaurant),
+        maxItemsPerOrder: restaurant.maxItemsPerOrder,
       },
       categories: categories
         .map((category) => ({

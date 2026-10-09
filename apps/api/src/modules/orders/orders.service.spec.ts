@@ -30,6 +30,7 @@ const restaurant = {
   acceptingOrders: true,
   pickupEnabled: true,
   deliveryEnabled: true,
+  maxItemsPerOrder: 10,
   currency: "CLP",
   timezone: "America/Santiago",
   status: "active" as const,
@@ -586,5 +587,21 @@ describe("OrdersService delivery handling", () => {
         }),
       }),
     );
+  });
+});
+
+describe("OrdersService items per order", () => {
+  it("rejects carts with more units than the restaurant allows", async () => {
+    const big = { ...input, items: [{ productId: "p1", quantity: 6, modifiers: [] }, { productId: "p1", quantity: 5, modifiers: [] }] };
+
+    await expect(setup().service.createDineIn("abc", big)).rejects.toMatchObject({
+      response: { code: "TOO_MANY_ITEMS", meta: { max: "10" } },
+    });
+  });
+
+  it("accepts exactly the limit", async () => {
+    const full = { ...input, items: [{ productId: "p1", quantity: 10, modifiers: [] }] };
+
+    await expect(setup().service.createDineIn("abc", full)).resolves.toBeDefined();
   });
 });

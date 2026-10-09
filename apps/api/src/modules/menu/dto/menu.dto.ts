@@ -16,20 +16,20 @@ import {
   Min,
   ValidateNested,
 } from "class-validator";
+import { cleanLine, cleanText } from "../../../common/validation/clean-text";
 
-const trim = ({ value }: { value: unknown }) => (typeof value === "string" ? value.trim() : value);
 const NAME = { message: `name debe tener entre 1 y ${MENU_LIMITS.nameMax} caracteres` };
 const DESCRIPTION = { message: `description no puede superar ${MENU_LIMITS.descriptionMax} caracteres` };
 const PRICE = { message: `debe ser un entero entre 0 y ${MENU_LIMITS.priceMax}` };
 
 export class CreateCategoryDto {
-  @Transform(trim)
+  @Transform(cleanLine)
   @IsString()
   @Length(1, MENU_LIMITS.nameMax, NAME)
   name!: string;
 
   @IsOptional()
-  @Transform(trim)
+  @Transform(cleanText)
   @IsString()
   @MaxLength(MENU_LIMITS.descriptionMax, DESCRIPTION)
   description?: string;
@@ -37,13 +37,13 @@ export class CreateCategoryDto {
 
 export class UpdateCategoryDto {
   @IsOptional()
-  @Transform(trim)
+  @Transform(cleanLine)
   @IsString()
   @Length(1, MENU_LIMITS.nameMax, NAME)
   name?: string;
 
   @IsOptional()
-  @Transform(trim)
+  @Transform(cleanText)
   @IsString()
   @MaxLength(MENU_LIMITS.descriptionMax, DESCRIPTION)
   description?: string;
@@ -65,13 +65,13 @@ export class CreateProductDto {
   @IsMongoId()
   categoryId!: string;
 
-  @Transform(trim)
+  @Transform(cleanLine)
   @IsString()
   @Length(1, MENU_LIMITS.nameMax, NAME)
   name!: string;
 
   @IsOptional()
-  @Transform(trim)
+  @Transform(cleanText)
   @IsString()
   @MaxLength(MENU_LIMITS.descriptionMax, DESCRIPTION)
   description?: string;
@@ -100,13 +100,13 @@ export class UpdateProductDto {
   categoryId?: string;
 
   @IsOptional()
-  @Transform(trim)
+  @Transform(cleanLine)
   @IsString()
   @Length(1, MENU_LIMITS.nameMax, NAME)
   name?: string;
 
   @IsOptional()
-  @Transform(trim)
+  @Transform(cleanText)
   @IsString()
   @MaxLength(MENU_LIMITS.descriptionMax, DESCRIPTION)
   description?: string;
@@ -140,7 +140,7 @@ export class ModifierOptionDto {
   @IsMongoId()
   id?: string;
 
-  @Transform(trim)
+  @Transform(cleanLine)
   @IsString()
   @Length(1, MENU_LIMITS.nameMax, NAME)
   name!: string;
@@ -156,7 +156,7 @@ export class ModifierOptionDto {
 }
 
 export class ModifierGroupDto {
-  @Transform(trim)
+  @Transform(cleanLine)
   @IsString()
   @Length(1, MENU_LIMITS.nameMax, NAME)
   name!: string;

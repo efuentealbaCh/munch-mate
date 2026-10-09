@@ -44,7 +44,7 @@ import { openState } from "../restaurants/restaurant.views";
 import { UsersRepository } from "../users/users.repository";
 import { DeliveryZonesRepository } from "./delivery-zones.repository";
 import { OrderValidationError, type PricingMenu, priceOrder } from "./order-pricing";
-import { businessDate, deriveAccessToken } from "./order-tokens";
+import { businessDate, deriveAccessToken, isCalendarDate } from "./order-tokens";
 import { summarizeDay } from "./daily-summary";
 import { hasReceipt, receiptKey, toExpectedPaymentView, toOrderView, toPublicOrderView } from "./order.views";
 import { CountersRepository } from "./counters.repository";
@@ -250,6 +250,16 @@ export class OrdersService {
         ),
       );
     }
+    const units = input.items.reduce((sum, item) => sum + item.quantity, 0);
+    if (units > restaurant.maxItemsPerOrder) {
+      throw new ConflictException(
+        apiError(
+          "TOO_MANY_ITEMS",
+          `Este local acepta hasta ${restaurant.maxItemsPerOrder} ${restaurant.maxItemsPerOrder === 1 ? "producto" : "productos"} por pedido; quita algunos o haz otro pedido`,
+          { max: String(restaurant.maxItemsPerOrder) },
+        ),
+      );
+    }
     const { fields, deliveryFee: feeFor } = await prepare();
 
     let priced;
@@ -350,7 +360,15 @@ export class OrdersService {
    */
   async dailySummary(tenant: TenantContext, date?: string): Promise<DailySummary> {
     const restaurant = await this.restaurant(tenant.restaurantId);
-    const day = date ?? businessDate(new Date(), restaurant.timezone);
+    const today = businessDate(new Date(), restaurant.timezone);
+    const day = date ?? today;
+    // The DTO checks the shape; here: a day that exists (no 2026-02-31) and has already started locally.
+    if (!isCalendarDate(day)) {
+      throw new BadRequestException(apiError("INVALID_DATE", "Esa fecha no existe; revisa el día y el mes"));
+    }
+    if (day > today) {
+      throw new BadRequestException(apiError("FUTURE_DATE", "Aún no hay ventas para esa fecha"));
+    }
     const orders = await this.orders.listByBusinessDate(tenant.restaurantId, day);
     return summarizeDay(orders, day, restaurant.currency);
   }

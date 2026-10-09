@@ -1,4 +1,4 @@
-import type { RestaurantStatus, WeeklyHours } from "@app/types";
+import { ORDER_LIMITS, type RestaurantStatus, type WeeklyHours } from "@app/types";
 import { Injectable } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { type ClientSession, type Model, Types } from "mongoose";
@@ -15,6 +15,7 @@ export interface RestaurantRecord {
   pickupEnabled: boolean;
   deliveryEnabled: boolean;
   openingHours: WeeklyHours | null;
+  maxItemsPerOrder: number;
   currency: string;
   timezone: string;
   status: RestaurantStatus;
@@ -29,6 +30,7 @@ export interface RestaurantChanges {
   pickupEnabled?: boolean;
   deliveryEnabled?: boolean;
   openingHours?: WeeklyHours | null;
+  maxItemsPerOrder?: number;
 }
 
 /** Thrown when the unique index on `slug` rejects a write. */
@@ -186,6 +188,7 @@ function toRecord(doc: Restaurant & { _id: Types.ObjectId }): RestaurantRecord {
       Array.isArray(doc.openingHours) && doc.openingHours.length === 7
         ? doc.openingHours.map((day) => day.map((r) => ({ open: r.open, close: r.close })))
         : null,
+    maxItemsPerOrder: doc.maxItemsPerOrder ?? ORDER_LIMITS.itemsPerOrderDefault,
     currency: doc.currency,
     timezone: doc.timezone,
     status: doc.status,
