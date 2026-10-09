@@ -137,6 +137,15 @@ esac
 code=$(status "$BASE/api/public/restaurants/smoke-no-existe/delivery-zones")
 if [ "$code" = "404" ]; then pass "delivery zones of an unknown restaurant → 404"; else fail "unknown delivery zones returned $code"; fi
 
+# Phase 7, safe everywhere: the map configuration answers, and map paths cannot reach other bucket keys.
+if $CURL "$BASE/api/public/map-config" | grep -q '"tilesUrl":"/api/public/maps/chile.pmtiles"'; then
+  pass "map configuration served"
+else
+  fail "map configuration"
+fi
+code=$(status "$BASE/api/public/maps/restaurants/x/receipts/y.pdf")
+if [ "$code" = "404" ]; then pass "map files cannot reach other storage keys (404)"; else fail "map path outside maps/ returned $code"; fi
+
 # Platform admin, safe everywhere: requires a session.
 code=$(status "$BASE/api/platform/restaurants")
 if [ "$code" = "401" ]; then pass "platform admin requires a session (401)"; else fail "anonymous platform admin returned $code"; fi

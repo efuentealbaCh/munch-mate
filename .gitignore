@@ -25,3 +25,9 @@ next-env.d.ts
 
 # Photos downloaded by infra/scripts/seed-demo.mjs
 # .demo-cache/
+
+# Self-hosted map data downloaded by `pnpm maps:init` (hundreds of MB; lives in Garage, not in git)
+.maps-cache/
+
+# MapLibre's worker, copied from node_modules by apps/web/scripts/copy-maplibre-worker.mjs (dev and build)
+apps/web/public/maplibre/
