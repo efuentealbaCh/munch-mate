@@ -1,23 +1,45 @@
 "use client";
 
-import { ORDER_STATUS_LABELS, type OrderStatus, type OrderView, PAYMENT_METHOD_LABELS, type PaymentMethod } from "@app/types";
+import {
+  type GeoPoint,
+  type MapConfig,
+  ORDER_STATUS_LABELS,
+  type OrderStatus,
+  type OrderView,
+  PAYMENT_METHOD_LABELS,
+  type PaymentMethod,
+} from "@app/types";
 import { formatPhone, nextStatuses } from "@app/utils";
-import { AlarmClockIcon, BikeIcon, MapPinIcon, MessageSquareTextIcon, PhoneIcon, WalletIcon, WifiOffIcon } from "lucide-react";
+import {
+  AlarmClockIcon,
+  BikeIcon,
+  CircleAlertIcon,
+  MapPinIcon,
+  MessageSquareTextIcon,
+  NavigationIcon,
+  PhoneIcon,
+  WalletIcon,
+  WifiOffIcon,
+} from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AccessDenied } from "@/components/access-denied";
+import { TrackingMap } from "@/components/map";
 import { FormError } from "@/components/form-error";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { useMapConfig } from "@/hooks/use-map-config";
 import { useNow } from "@/hooks/use-now";
 import { useSocketEvent } from "@/hooks/use-realtime";
+import { type RiderSharing, useRiderLocationSharing } from "@/hooks/use-rider-location-sharing";
 import { useAuth } from "@/lib/auth-context";
-import { addressLine, expectedPaymentLabel, mapsSearchUrl } from "@/lib/delivery";
+import { addressLine, expectedPaymentLabel, mapsDirectionsUrl, mapsSearchUrl } from "@/lib/delivery";
 import { deliveriesApi } from "@/lib/endpoints";
 import { errorMessage, hasCode } from "@/lib/errors";
 import { formatClockTime, telHref } from "@/lib/format";
+import { formatAgo, RIDER_GEOLOCATION_MESSAGES, RIDER_REPORT_ERRORS } from "@/lib/maps";
 import { formatPrice } from "@/lib/money";
 import { showsReadyEstimate } from "@/lib/order-tracking";
 import {
@@ -111,6 +133,16 @@ function RiderDeliveries({ riderId }: { riderId: string }) {
   useSocketEvent(socket, "order.updated", apply);
   useSocketEvent(socket, "order.created", apply);
 
+  // Phase 7: while a delivery of mine is on its way, the customer follows my phone on a map.
+  const map = useMapConfig();
+  const onTheWay = (orders ?? []).filter((order) => order.status === "out_for_delivery").map((order) => order.id);
+  const sharing = useRiderLocationSharing({
+    socket,
+    orderIds: onTheWay,
+    // Delivered or reassigned from another device: the list catches up.
+    onFinal: () => void refetch(),
+  });
+
   function setBusyFor(orderId: string, value: Busy | null) {
     setBusy((current) => {
       const next = { ...current };
@@ -189,6 +221,8 @@ function RiderDeliveries({ riderId }: { riderId: string }) {
         <LiveBadge status={live} />
       </div>
 
+      {sharing.active ? <SharingBanner sharing={sharing} online={live === "live"} /> : null}
+
       {!orders ? (
         error ? (
           <div className="flex flex-col items-start gap-3">
@@ -218,6 +252,9 @@ function RiderDeliveries({ riderId }: { riderId: string }) {
                   key={order.id}
                   order={order}
                   now={now}
+                  mapConfig={map.available ? map.config : null}
+                  ownPosition={sharing.position}
+                  reportError={sharing.errors[order.id] ?? null}
                   busy={busy[order.id] ?? null}
                   onAction={(to) => onAction(order, to)}
                 />
@@ -261,11 +298,20 @@ function LiveBadge({ status }: { status: string }) {
 function DeliveryCard({
   order,
   now,
+  mapConfig,
+  ownPosition,
+  reportError,
   busy,
   onAction,
 }: {
   order: OrderView;
   now: number;
+  /** The base map, when available (phase 7). */
+  mapConfig: MapConfig | null;
+  /** My position while sharing it. */
+  ownPosition: GeoPoint | null;
+  /** Last refusal of my position reports for this order (ack code). */
+  reportError: string | null;
   busy: Busy | null;
   onAction(to: OrderStatus): void;
 }) {
@@ -327,13 +373,48 @@ function DeliveryCard({
               {delivery.reference ? <span className="text-sm break-words">Ref.: {delivery.reference}</span> : null}
             </span>
           </p>
-          <Button asChild variant="secondary" className="self-start">
-            <a href={mapsSearchUrl(delivery)} target="_blank" rel="noopener noreferrer">
-              <MapPinIcon aria-hidden data-icon="inline-start" />
-              Abrir en el mapa<span className="sr-only"> (se abre en una pestaña nueva)</span>
-            </a>
-          </Button>
+          {delivery.location ? (
+            <Button asChild variant="secondary" className="self-start">
+              <a href={mapsDirectionsUrl(delivery)} target="_blank" rel="noopener noreferrer" data-testid="rider-navigate">
+                <NavigationIcon aria-hidden data-icon="inline-start" />
+                Navegar con Google Maps<span className="sr-only"> (se abre en una pestaña nueva)</span>
+              </a>
+            </Button>
+          ) : (
+            <Button asChild variant="secondary" className="self-start">
+              <a href={mapsSearchUrl(delivery)} target="_blank" rel="noopener noreferrer">
+                <MapPinIcon aria-hidden data-icon="inline-start" />
+                Abrir en el mapa<span className="sr-only"> (se abre en una pestaña nueva)</span>
+              </a>
+            </Button>
+          )}
         </div>
+      ) : null}
+
+      {order.status === "out_for_delivery" && mapConfig && (delivery?.location || ownPosition) ? (
+        <div className="h-56 w-full">
+          <TrackingMap
+            config={mapConfig}
+            destination={delivery?.location ?? null}
+            rider={ownPosition}
+            riderLabel="Tu posición"
+            label={`Mapa del reparto #${order.ticketNumber}`}
+          />
+        </div>
+      ) : null}
+      {order.status === "out_for_delivery" && reportError ? (
+        <p
+          className="flex items-start gap-2 rounded-lg bg-destructive/5 px-3 py-2 text-sm text-destructive"
+          role="alert"
+          data-testid="rider-report-error"
+        >
+          <CircleAlertIcon className="mt-0.5 size-4 shrink-0" aria-hidden />
+          <span>
+            {RIDER_REPORT_ERRORS[reportError] ??
+              (reportError === "TIMEOUT" ? "El servidor no confirmó tu ubicación. Seguimos intentando." : "No pudimos enviar tu ubicación.")}{" "}
+            <span className="text-xs opacity-80">({reportError})</span>
+          </span>
+        </p>
       ) : null}
 
       {order.paymentStatus === "paid" ? (
@@ -403,5 +484,49 @@ function DeliveryCard({
         </p>
       )}
     </article>
+  );
+}
+
+/** "Compartiendo tu ubicación": what the customer sees depends on this phone staying awake and online. */
+function SharingBanner({ sharing, online }: { sharing: RiderSharing; online: boolean }) {
+  const now = useNow(5_000);
+  const problem = sharing.geolocationError ? RIDER_GEOLOCATION_MESSAGES[sharing.geolocationError] : null;
+  return (
+    <div
+      className={cn(
+        "flex flex-col gap-1 rounded-xl px-4 py-3 text-sm",
+        problem ? "bg-destructive/5 text-destructive ring-1 ring-destructive/30" : "bg-brand-soft ring-1 ring-primary/30",
+      )}
+      role="status"
+      aria-live="polite"
+      data-testid="location-sharing"
+    >
+      {problem ? (
+        <p className="flex items-start gap-2 font-medium">
+          <CircleAlertIcon className="mt-0.5 size-4 shrink-0" aria-hidden />
+          {problem}
+        </p>
+      ) : (
+        <p className="flex items-center gap-2 font-semibold">
+          <span className="relative flex size-2.5" aria-hidden>
+            <span className="absolute inset-0 animate-ping rounded-full bg-primary opacity-60 motion-reduce:animate-none" />
+            <span className="relative size-2.5 rounded-full bg-primary" />
+          </span>
+          Compartiendo tu ubicación · mantén la pantalla encendida
+        </p>
+      )}
+      {!online ? (
+        <p className="text-muted-foreground">Sin conexión: enviaremos tu ubicación apenas vuelva.</p>
+      ) : sharing.lastSentAt !== null && now > 0 ? (
+        <p className="text-muted-foreground">Última ubicación enviada {formatAgo(Math.max(0, now - sharing.lastSentAt))}.</p>
+      ) : !problem ? (
+        <p className="text-muted-foreground">Buscando señal de GPS…</p>
+      ) : null}
+      {sharing.wakeLock === "unsupported" || sharing.wakeLock === "denied" ? (
+        <p className="text-muted-foreground">
+          Este teléfono no deja mantener la pantalla encendida desde aquí: no la bloquees mientras repartes o el GPS se detiene.
+        </p>
+      ) : null}
+    </div>
   );
 }

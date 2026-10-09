@@ -1,8 +1,8 @@
 "use client";
 
-import { ORDER_LIMITS, PAYMENT_METHOD_LABELS, PAYMENT_METHODS, type PublicDeliveryZone } from "@app/types";
+import { type GeoPoint, ORDER_LIMITS, PAYMENT_METHOD_LABELS, PAYMENT_METHODS, type PublicDeliveryZone } from "@app/types";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { CircleAlertIcon, CloudOffIcon, MapPinOffIcon } from "lucide-react";
+import { CircleAlertIcon, CloudOffIcon, MapPinIcon, MapPinOffIcon } from "lucide-react";
 import { useEffect, useMemo, useRef } from "react";
 import { type Resolver, useForm, useWatch } from "react-hook-form";
 import { CartLines } from "@/components/cart-sheet";
@@ -15,8 +15,10 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cartCount, cartTotal } from "@/lib/cart";
 import { cashChange, defaultZoneId, deliveryTotals, zoneOptionLabel } from "@/lib/delivery";
+import { pinProblem } from "@/lib/maps";
 import { formatPrice, parsePriceInput } from "@/lib/money";
 import { type DeliveryCheckoutValues, deliveryCheckoutSchema } from "@/lib/validation";
+import { DeliveryPinSection } from "./delivery-pin";
 import { CheckoutFooter, type CheckoutFormProps, ContactFields, NoteField } from "./pickup-checkout";
 
 /** Zones as the ordering page loaded them: null while loading. */
@@ -24,6 +26,18 @@ export interface ZonesState {
   zones: PublicDeliveryZone[] | null;
   error: unknown;
   retry(): void;
+}
+
+/** The customer's pin on the map (phase 7), kept by the ordering page while the sheet is closed. */
+export interface DeliveryPinProps {
+  slug: string;
+  /** The restaurant's location (where the map starts). */
+  center: GeoPoint | null;
+  value: GeoPoint | null;
+  onChange(pin: GeoPoint): void;
+  /** Pickup is on: offered when the pin falls outside the delivery area. */
+  canPickup: boolean;
+  onChoosePickup(): void;
 }
 
 /**
@@ -35,6 +49,7 @@ export function DeliveryCheckout({
   ...props
 }: CheckoutFormProps & {
   zones: ZonesState;
+  pin: DeliveryPinProps;
   checkout: DeliveryCheckoutValues;
   onCheckoutChange(values: DeliveryCheckoutValues): void;
   onSubmit(values: DeliveryCheckoutValues): void;
@@ -82,6 +97,7 @@ function DeliveryForm({
   error,
   problem,
   checkout,
+  pin,
   onCheckoutChange,
   onQuantity,
   onRemove,
@@ -89,6 +105,7 @@ function DeliveryForm({
   onSubmit,
 }: CheckoutFormProps & {
   zones: PublicDeliveryZone[];
+  pin: DeliveryPinProps;
   checkout: DeliveryCheckoutValues;
   onCheckoutChange(values: DeliveryCheckoutValues): void;
   onSubmit(values: DeliveryCheckoutValues): void;
@@ -122,6 +139,8 @@ function DeliveryForm({
   const cashAmount = paymentMethod === "cash" ? parsePriceInput(cashText) : null;
   const change = cashChange(totals.total, cashAmount);
   const sync = () => onCheckoutChange(form.getValues());
+  // A zone drawn on the map needs the pin inside it (the api answers LOCATION_REQUIRED / OUTSIDE_ZONE).
+  const pinIssue = pinProblem(zone, pin.value);
 
   return (
     <form noValidate onSubmit={form.handleSubmit(onSubmit)} onChange={sync} className="flex flex-col" aria-label="Pedir delivery">
@@ -158,6 +177,21 @@ function DeliveryForm({
 
         <fieldset className="flex flex-col gap-4 border-t pt-4">
           <legend className="float-left font-semibold">¿Dónde lo llevamos?</legend>
+          <DeliveryPinSection
+            slug={pin.slug}
+            zones={zones}
+            selectedZone={zone}
+            center={pin.center}
+            pin={pin.value}
+            canPickup={pin.canPickup}
+            onPinChange={pin.onChange}
+            onZoneFromPin={(id) => {
+              if (form.getValues("zoneId") === id) return;
+              form.setValue("zoneId", id, { shouldValidate: form.formState.isSubmitted });
+              sync();
+            }}
+            onChoosePickup={pin.onChoosePickup}
+          />
           <FormField
             id="delivery-zone"
             label="Comuna o zona"
@@ -180,6 +214,20 @@ function DeliveryForm({
               </NativeSelect>
             )}
           </FormField>
+          {zone && pinIssue ? (
+            <p
+              className="flex items-start gap-2 rounded-lg bg-warning px-3 py-2 text-sm text-warning-foreground"
+              role="status"
+              data-testid="pin-required"
+            >
+              <MapPinIcon className="mt-0.5 size-4 shrink-0" aria-hidden />
+              <span>
+                {pinIssue === "missing"
+                  ? `Para ${zone.name} necesitamos tu ubicación: marca en el mapa dónde entregamos o usa tu ubicación.`
+                  : `El punto marcado está fuera de ${zone.name}. Mueve el pin o elige otra zona.`}
+              </span>
+            </p>
+          ) : null}
           {zone && totals.missing > 0 ? (
             <p
               className="flex items-start gap-2 rounded-lg bg-warning px-3 py-2 text-sm text-warning-foreground"
@@ -291,7 +339,7 @@ function DeliveryForm({
       <CheckoutFooter
         error={error}
         pending={submitting}
-        disabled={!canOrder || problem !== null || !zone || totals.missing > 0 || cartCount(lines) > maxItems}
+        disabled={!canOrder || problem !== null || !zone || totals.missing > 0 || pinIssue !== null || cartCount(lines) > maxItems}
         closedMessage={canOrder ? null : closedMessage}
       >
         Pedir delivery · {formatPrice(totals.total, currency)}

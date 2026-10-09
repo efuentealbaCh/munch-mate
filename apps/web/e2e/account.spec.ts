@@ -45,6 +45,7 @@ test("protected pages send anonymous visitors to login and back; logout ends the
 test("forgot password: emailed link, new password, old one stops working", async ({ page }) => {
   await page.goto("/ingresar");
   await page.getByRole("link", { name: "¿Olvidaste tu contraseña?" }).click();
+  await expect(page.getByRole("heading", { name: "Recuperar contraseña" })).toBeVisible();
   await page.getByLabel("Correo").fill(email);
   await page.getByRole("button", { name: "Enviar enlace" }).click();
   await expect(page.getByRole("heading", { name: "Revisa tu correo" })).toBeVisible();

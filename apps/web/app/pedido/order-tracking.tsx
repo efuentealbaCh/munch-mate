@@ -47,6 +47,7 @@ import {
   trackingHref,
 } from "@/lib/order-tracking";
 import { cn } from "@/lib/utils";
+import { RiderTracking } from "./rider-tracking";
 
 /** Keeps the newest copy: a REST answer and a socket event can arrive in any order. */
 function newest(current: PublicOrderView | null, incoming: PublicOrderView): PublicOrderView {
@@ -249,6 +250,10 @@ function TrackedOrder({ token }: { token: string }) {
         </div>
         <LiveIndicator status={live} />
       </section>
+
+      {onTheWay && order.delivery ? (
+        <RiderTracking token={token} socket={socket} live={live} delivery={order.delivery} riderName={order.riderName} />
+      ) : null}
 
       {finished ? null : <StatusSteps order={order} />}
 

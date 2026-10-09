@@ -13,6 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useChime } from "@/hooks/use-chime";
+import { useMapConfig } from "@/hooks/use-map-config";
 import { useNow } from "@/hooks/use-now";
 import { useSocketEvent } from "@/hooks/use-realtime";
 import { useReceiptDownload } from "@/hooks/use-receipt-download";
@@ -47,6 +48,7 @@ import { cn } from "@/lib/utils";
 import { useRestaurant } from "../restaurant-context";
 import { useRestaurantRealtime } from "../restaurant-realtime";
 import { OrderCard, PaymentBadge } from "./order-card";
+import { RiderMapDialog } from "./rider-map-dialog";
 import { HandOverDialog, PaymentDialog, ReadyTimeDialog, ReasonDialog, RiderDialog } from "./order-dialogs";
 
 /** How long a new order stays highlighted. */
@@ -133,6 +135,9 @@ function OrdersBoard() {
   const [paying, setPaying] = useState<OrderView | null>(null);
   const [payMethod, setPayMethod] = useState<PaymentMethod | null>(null);
   const [acceptingWithTime, setAcceptingWithTime] = useState<OrderView | null>(null);
+  // Phase 7: follow the rider of a delivery on its way (only with the base map).
+  const map = useMapConfig();
+  const [trackingRider, setTrackingRider] = useState<OrderView | null>(null);
   const [assigningRider, setAssigningRider] = useState<OrderView | null>(null);
   const [riderPending, setRiderPending] = useState<string | null>(null);
   const [handingOver, setHandingOver] = useState<OrderView | null>(null);
@@ -419,6 +424,7 @@ function OrdersBoard() {
                 onReceipt={() => downloadReceipt(order)}
                 canAssignRider={canAssign}
                 onAssignRider={() => setAssigningRider(order)}
+                onTrackRider={map.available ? () => setTrackingRider(order) : undefined}
               />
             )}
           />
@@ -465,6 +471,15 @@ function OrdersBoard() {
           });
         }}
       />
+      {map.available && map.config ? (
+        <RiderMapDialog
+          restaurantId={restaurant.id}
+          // The live copy, so the dialog title follows a reassignment.
+          order={trackingRider ? (active.orders?.find((o) => o.id === trackingRider.id) ?? trackingRider) : null}
+          config={map.config}
+          onOpenChange={(open) => !open && setTrackingRider(null)}
+        />
+      ) : null}
       <RiderDialog
         restaurantId={restaurant.id}
         order={assigningRider}
