@@ -2,6 +2,7 @@
 
 import { ORDER_LIMITS, type PublicModifierGroup, type PublicProduct } from "@app/types";
 import { type ReactNode, useId, useState } from "react";
+import { ItemLimitNotice } from "@/components/cart-sheet";
 import { ProductSheetHeader, useLastNonNull } from "@/components/public-menu";
 import { QuantityStepper } from "@/components/quantity-stepper";
 import { Badge } from "@/components/ui/badge";
@@ -17,6 +18,8 @@ import {
   createLine,
   isOptionDisabled,
   isSingleChoice,
+  type ItemLimit,
+  itemLimitMessage,
   type ModifierSelection,
   missingGroups,
   resolveModifiers,
@@ -32,19 +35,21 @@ interface OrderProductSheetProps {
   currency: string;
   /** False while the restaurant is closed: the sheet still shows the product, without the order controls. */
   canOrder: boolean;
+  /** Where the cart stands against the restaurant's units-per-order cap. */
+  limit: ItemLimit;
   onClose(): void;
   onAdd(line: CartLine): void;
 }
 
 /** Product detail with modifier selection, quantity and note (table page and pickup menu). */
-export function OrderProductSheet({ product, currency, canOrder, onClose, onAdd }: OrderProductSheetProps) {
+export function OrderProductSheet({ product, currency, canOrder, limit, onClose, onAdd }: OrderProductSheetProps) {
   const shown = useLastNonNull(product);
   return (
     <Sheet open={product !== null} onOpenChange={(open) => !open && onClose()}>
       <SheetContent side="bottom" className="mx-auto max-h-[92dvh] gap-0 overflow-y-auto rounded-t-2xl sm:max-w-lg">
         {/* Keyed by product: every opening starts with a clean selection. */}
         {shown ? (
-          <ProductForm key={shown.id} product={shown} currency={currency} canOrder={canOrder} onAdd={onAdd} />
+          <ProductForm key={shown.id} product={shown} currency={currency} canOrder={canOrder} limit={limit} onAdd={onAdd} />
         ) : null}
       </SheetContent>
     </Sheet>
@@ -55,11 +60,13 @@ function ProductForm({
   product,
   currency,
   canOrder,
+  limit,
   onAdd,
 }: {
   product: PublicProduct;
   currency: string;
   canOrder: boolean;
+  limit: ItemLimit;
   onAdd(line: CartLine): void;
 }) {
   const [selection, setSelection] = useState<ModifierSelection>({});
@@ -71,10 +78,15 @@ function ProductForm({
   const missing = missingGroups(product, selection);
   const blocked = blockedGroups(product);
   const orderable = canOrder && product.available && blocked.length === 0;
+  // The cart is full (or over the cap): nothing more can be added until the customer removes something.
+  const full = limit.remaining === 0;
+  const quantityMax = Math.min(ORDER_LIMITS.quantityMax, limit.remaining);
+  // The stepper started at 1 before the cart filled up elsewhere: never add more than what is left.
+  const shownQuantity = Math.max(1, Math.min(quantity, quantityMax));
 
   function submit() {
-    if (!orderable || missing.length > 0) return;
-    onAdd(createLine(product, selection, quantity, note));
+    if (!orderable || full || missing.length > 0) return;
+    onAdd(createLine(product, selection, shownQuantity, note));
   }
 
   return (
@@ -122,9 +134,11 @@ function ProductForm({
           <p className="rounded-lg bg-muted px-3 py-2 text-center text-sm text-muted-foreground">
             No quedan opciones disponibles en «{blocked[0]?.name}».
           </p>
+        ) : full ? (
+          <ItemLimitNotice count={limit.count} max={limit.max} />
         ) : (
           <div className="flex items-center gap-3">
-            <QuantityStepper value={quantity} onChange={setQuantity} label={`Cantidad de ${product.name}`} />
+            <QuantityStepper value={shownQuantity} max={quantityMax} onChange={setQuantity} label={`Cantidad de ${product.name}`} />
             <Button
               size="lg"
               className="flex-1"
@@ -132,11 +146,16 @@ function ProductForm({
               aria-describedby={missing.length > 0 ? `${noteId}-missing` : undefined}
               onClick={submit}
             >
-              Agregar {formatPrice(unit * quantity, currency)}
+              Agregar {formatPrice(unit * shownQuantity, currency)}
             </Button>
           </div>
         )}
-        {orderable && missing.length > 0 ? (
+        {orderable && !full && shownQuantity >= limit.remaining && limit.remaining < ORDER_LIMITS.quantityMax ? (
+          <p className="text-center text-sm text-muted-foreground" data-testid="item-limit-hint">
+            {itemLimitMessage({ max: limit.max, count: 0 })}
+          </p>
+        ) : null}
+        {orderable && !full && missing.length > 0 ? (
           <p id={`${noteId}-missing`} className="text-center text-sm text-muted-foreground">
             Elige {missing.map((group) => `«${group.name}»`).join(", ")} para continuar.
           </p>

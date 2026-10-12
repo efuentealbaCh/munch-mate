@@ -1,7 +1,10 @@
 "use client";
 
 import { ORDER_CHANNEL_LABELS, ORDER_STATUS_LABELS, type PublicOrderView } from "@app/types";
+import { formatPhone } from "@app/utils";
 import {
+  BellPlusIcon,
+  BellRingIcon,
   BikeIcon,
   CheckIcon,
   CircleXIcon,
@@ -25,9 +28,11 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { useOrderFollow } from "@/hooks/use-push";
 import { useReceiptDownload } from "@/hooks/use-receipt-download";
 import { subscribeWithTimeout, useOnVisible, useRealtime, useSocketEvent } from "@/hooks/use-realtime";
 import { localStore } from "@/lib/browser-storage";
+import { hasSessionHint } from "@/lib/customer";
 import { addressLine, customerPaymentLabel } from "@/lib/delivery";
 import { publicOrdersApi } from "@/lib/endpoints";
 import { errorMessage, hasCode } from "@/lib/errors";
@@ -45,7 +50,9 @@ import {
   stepIndex,
   trackingHref,
 } from "@/lib/order-tracking";
+import { followOffer } from "@/lib/push";
 import { cn } from "@/lib/utils";
+import { RiderTracking } from "./rider-tracking";
 
 /** Keeps the newest copy: a REST answer and a socket event can arrive in any order. */
 function newest(current: PublicOrderView | null, incoming: PublicOrderView): PublicOrderView {
@@ -67,7 +74,10 @@ function useHashToken(): { token: string | null; ready: boolean } {
 export function OrderTracking() {
   const { token, ready } = useHashToken();
   const [myOrders, setMyOrders] = useState<MyOrder[]>([]);
+  // Signed in on this browser (hint only, no request): the full history lives in the account.
+  const [hasAccount, setHasAccount] = useState(false);
   useEffect(() => setMyOrders(loadMyOrders(localStore())), [token]);
+  useEffect(() => setHasAccount(hasSessionHint(localStore())), []);
 
   return (
     <div className="flex min-h-dvh flex-col bg-background">
@@ -83,6 +93,15 @@ export function OrderTracking() {
           </div>
         )}
         {ready ? <MyOrdersList orders={myOrders} current={token} /> : null}
+        {ready && hasAccount ? (
+          <Link
+            href="/mis-pedidos"
+            className="inline-flex min-h-11 items-center justify-center gap-2 self-center rounded-md px-3 text-sm font-medium text-primary underline-offset-4 outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
+          >
+            <ReceiptTextIcon className="size-4" aria-hidden />
+            Ver todos mis pedidos en mi cuenta
+          </Link>
+        ) : null}
       </main>
       <footer className="flex justify-center px-4 py-6">
         <Brand className="text-sm" />
@@ -240,11 +259,22 @@ function TrackedOrder({ token }: { token: string }) {
               Motivo: {order.rejectReason}
             </p>
           ) : null}
+          {order.status === "cancelled" && order.cancelReason ? (
+            <p className="mt-1 rounded-lg bg-destructive/5 px-3 py-2 text-sm font-medium text-destructive" data-testid="cancel-reason">
+              Motivo: {order.cancelReason}
+            </p>
+          ) : null}
         </div>
         <LiveIndicator status={live} />
       </section>
 
+      {onTheWay && order.delivery ? (
+        <RiderTracking token={token} socket={socket} live={live} delivery={order.delivery} riderName={order.riderName} />
+      ) : null}
+
       {finished ? null : <StatusSteps order={order} />}
+
+      <FollowOrderButton token={token} order={order} />
 
       {order.delivery && !finished ? <DeliveryDetails order={order} /> : null}
 
@@ -255,7 +285,7 @@ function TrackedOrder({ token }: { token: string }) {
           data-testid="restaurant-phone"
         >
           <PhoneIcon className="size-4" aria-hidden />
-          ¿Algún problema? Llama al local: {order.restaurant.phone}
+          ¿Algún problema? Llama al local: {formatPhone(order.restaurant.phone)}
         </a>
       ) : null}
 
@@ -344,6 +374,45 @@ function TrackedOrder({ token }: { token: string }) {
         pending={cancelling}
         onConfirm={() => void cancel()}
       />
+    </div>
+  );
+}
+
+/**
+ * "Avísame cuando esté listo / salga" (phase 6): a push to this browser when the pickup is ready or the
+ * delivery leaves. Hidden for dine-in, once that moment passed, when push is off on the server or the browser
+ * cannot do it. Remembered per order on the device ("Te avisaremos").
+ */
+function FollowOrderButton({ token, order }: { token: string; order: PublicOrderView }) {
+  const follow = useOrderFollow(token);
+  const offer = followOffer(order);
+  if (!offer || follow.state.kind === "hidden" || follow.finished) return null;
+  if (follow.active) {
+    return (
+      <p className="flex items-center justify-center gap-2 text-sm font-medium text-success" role="status" data-testid="push-following">
+        <BellRingIcon className="size-4" aria-hidden />
+        {offer.done}
+      </p>
+    );
+  }
+  return (
+    <div className="flex flex-col items-center gap-1">
+      <Button
+        variant="outline"
+        size="lg"
+        onClick={follow.toggle}
+        disabled={follow.busy}
+        aria-busy={follow.busy || undefined}
+        data-testid="push-follow"
+      >
+        {follow.busy ? <Spinner aria-hidden data-icon="inline-start" /> : <BellPlusIcon aria-hidden data-icon="inline-start" />}
+        {offer.label}
+      </Button>
+      {follow.message ? (
+        <p className="max-w-sm text-center text-sm text-muted-foreground" role="status">
+          {follow.message}
+        </p>
+      ) : null}
     </div>
   );
 }

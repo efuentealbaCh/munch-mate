@@ -1,6 +1,8 @@
 import { Module } from "@nestjs/common";
 import { MongooseModule } from "@nestjs/mongoose";
 import { AuthModule } from "../auth/auth.module";
+import { MapsModule } from "../maps/maps.module";
+import { PushModule } from "../push/push.module";
 import { MenuModule } from "../menu/menu.module";
 import { RestaurantsModule } from "../restaurants/restaurants.module";
 import { UsersModule } from "../users/users.module";
@@ -9,6 +11,7 @@ import { DeliveryZonesController, PublicDeliveryZonesController } from "./delive
 import { DeliveryZonesRepository } from "./delivery-zones.repository";
 import { DeliveryZonesService } from "./delivery-zones.service";
 import {
+  CustomerOrdersController,
   OrdersController,
   PublicOrdersController,
   ReportsController,
@@ -18,6 +21,7 @@ import {
 import { OrdersGateway } from "./orders.gateway";
 import { OrdersRepository } from "./orders.repository";
 import { OrdersService } from "./orders.service";
+import { RiderTrackingService } from "./rider-tracking.service";
 import { Counter, CounterSchema } from "./schemas/counter.schema";
 import { DeliveryZone, DeliveryZoneSchema } from "./schemas/delivery-zone.schema";
 import { Order, OrderSchema } from "./schemas/order.schema";
@@ -33,6 +37,8 @@ import { TablesService } from "./tables.service";
     UsersModule,
     RestaurantsModule,
     MenuModule,
+    MapsModule,
+    PushModule,
     MongooseModule.forFeature([
       { name: Table.name, schema: TableSchema },
       { name: Order.name, schema: OrderSchema },
@@ -46,6 +52,7 @@ import { TablesService } from "./tables.service";
     RidersController,
     RiderDeliveriesController,
     ReportsController,
+    CustomerOrdersController,
     PublicOrdersController,
     DeliveryZonesController,
     PublicDeliveryZonesController,
@@ -59,6 +66,7 @@ import { TablesService } from "./tables.service";
     TablesRepository,
     CountersRepository,
     DeliveryZonesRepository,
+    RiderTrackingService,
   ],
 })
 export class OrdersModule {}

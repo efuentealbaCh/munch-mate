@@ -16,12 +16,15 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { menuApi } from "@/lib/endpoints";
 import { hasCode } from "@/lib/errors";
+import { nameTakenFromError, nameTakenMessage } from "@/lib/unique-names";
 import { type CategoryValues, categorySchema } from "@/lib/validation";
 
 interface CategoryDialogProps {
   restaurantId: string;
   /** null = create a new category. */
   category: MenuCategoryView | null;
+  /** Categories already loaded by the editor, to catch a repeated name before sending it. */
+  categories: readonly MenuCategoryView[];
   open: boolean;
   onOpenChange(open: boolean): void;
   onSaved(category: MenuCategoryView, created: boolean): void;
@@ -44,6 +47,7 @@ export function CategoryDialog({ open, onOpenChange, ...props }: CategoryDialogP
 function CategoryForm({
   restaurantId,
   category,
+  categories,
   onSaved,
   onStale,
   onClose,
@@ -62,6 +66,12 @@ function CategoryForm({
 
   async function onSubmit(values: CategoryValues) {
     setError(null);
+    // Same rule as the api, which only checks the name when it is sent (it changed).
+    const taken = values.name !== category?.name ? nameTakenMessage("category", values.name, categories, category?.id) : null;
+    if (taken) {
+      form.setError("name", { message: taken }, { shouldFocus: true });
+      return;
+    }
     setSaving(true);
     try {
       if (category) {
@@ -89,7 +99,10 @@ function CategoryForm({
         onClose();
         return;
       }
-      setError(failure);
+      // Created from another tab meanwhile: the api's message, on the field.
+      const taken = nameTakenFromError("category", failure);
+      if (taken) form.setError("name", { message: taken }, { shouldFocus: true });
+      else setError(failure);
     }
   }
 

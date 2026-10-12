@@ -1,4 +1,13 @@
-import type { CreatedOrder, DailySummary, OrderView, PublicOrderView, RiderView, TableContext } from "@app/types";
+import type {
+  CustomerOrdersPage,
+  CreatedOrder,
+  DailySummary,
+  OrderView,
+  PublicOrderView,
+  RiderPosition,
+  RiderView,
+  TableContext,
+} from "@app/types";
 import {
   Body,
   Controller,
@@ -16,7 +25,7 @@ import {
 import type { Response } from "express";
 import { Throttle } from "@nestjs/throttler";
 import type { AuthUser } from "../auth/auth.types";
-import { CurrentUser, Public } from "../auth/decorators";
+import { CurrentUser, OptionalUser, Public } from "../auth/decorators";
 import {
   CurrentTenant,
   RestaurantAccessGuard,
@@ -30,6 +39,8 @@ import {
   CreateDeliveryOrderDto,
   CreateDineInOrderDto,
   CreatePickupOrderDto,
+  CustomerOrdersQueryDto,
+  FollowOrderDto,
   DailySummaryQueryDto,
   OrdersQueryDto,
   PaymentDto,
@@ -63,6 +74,15 @@ export class OrdersController {
     @Body() dto: ChangeStatusDto,
   ): Promise<OrderView> {
     return this.orders.changeStatus(tenant, user.id, orderId, dto.status, dto.reason, dto.readyInMinutes);
+  }
+
+  /** Last position of the rider (null when not on its way or no report yet). */
+  @Get(":orderId/rider-location")
+  async riderLocation(
+    @CurrentTenant() tenant: TenantContext,
+    @Param("orderId") orderId: string,
+  ): Promise<{ position: RiderPosition | null }> {
+    return { position: await this.orders.riderPosition(tenant, orderId) };
   }
 
   /** 202 `{ status: "pending" }` while the workers generate it; the PDF once ready. */
@@ -109,6 +129,17 @@ export class ReportsController {
   @Get("daily")
   daily(@CurrentTenant() tenant: TenantContext, @Query() query: DailySummaryQueryDto): Promise<DailySummary> {
     return this.orders.dailySummary(tenant, query.date);
+  }
+}
+
+/** The signed-in customer's own orders, across restaurants. */
+@Controller("me/orders")
+export class CustomerOrdersController {
+  constructor(private readonly orders: OrdersService) {}
+
+  @Get()
+  list(@CurrentUser() user: AuthUser, @Query() query: CustomerOrdersQueryDto): Promise<CustomerOrdersPage> {
+    return this.orders.listForCustomer(user.id, query.before);
   }
 }
 
@@ -183,8 +214,12 @@ export class PublicOrdersController {
   @Public()
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @Post("tables/:token/orders")
-  create(@Param("token") token: string, @Body() dto: CreateDineInOrderDto): Promise<CreatedOrder> {
-    return this.orders.createDineIn(token, dto);
+  create(
+    @Param("token") token: string,
+    @Body() dto: CreateDineInOrderDto,
+    @OptionalUser() user?: AuthUser,
+  ): Promise<CreatedOrder> {
+    return this.orders.createDineIn(token, { ...dto, customerId: user?.id });
   }
 
   /**
@@ -194,16 +229,24 @@ export class PublicOrdersController {
   @Public()
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post("restaurants/:slug/orders")
-  createPickup(@Param("slug") slug: string, @Body() dto: CreatePickupOrderDto): Promise<CreatedOrder> {
-    return this.orders.createPickup(slug, dto);
+  createPickup(
+    @Param("slug") slug: string,
+    @Body() dto: CreatePickupOrderDto,
+    @OptionalUser() user?: AuthUser,
+  ): Promise<CreatedOrder> {
+    return this.orders.createPickup(slug, { ...dto, customerId: user?.id });
   }
 
   /** Delivery from the public menu; same limits as pickup. */
   @Public()
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post("restaurants/:slug/delivery-orders")
-  createDelivery(@Param("slug") slug: string, @Body() dto: CreateDeliveryOrderDto): Promise<CreatedOrder> {
-    return this.orders.createDelivery(slug, dto);
+  createDelivery(
+    @Param("slug") slug: string,
+    @Body() dto: CreateDeliveryOrderDto,
+    @OptionalUser() user?: AuthUser,
+  ): Promise<CreatedOrder> {
+    return this.orders.createDelivery(slug, { ...dto, customerId: user?.id });
   }
 
   @Public()
@@ -220,6 +263,24 @@ export class PublicOrdersController {
   @HttpCode(HttpStatus.OK)
   cancel(@Body() dto: AccessTokenDto): Promise<PublicOrderView> {
     return this.orders.cancelByCustomer(dto.accessToken);
+  }
+
+  /** The rider's last position, to draw the map before the next live update arrives. */
+  @Public()
+  @Throttle({ default: { limit: 120, ttl: 60_000 } })
+  @Post("orders/rider-location")
+  @HttpCode(HttpStatus.OK)
+  async riderLocation(@Body() dto: AccessTokenDto): Promise<{ position: RiderPosition | null }> {
+    return { position: await this.orders.riderPositionForCustomer(dto.accessToken) };
+  }
+
+  /** "Avísame": this browser gets a push when the order is ready or on its way (guests too). */
+  @Public()
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @Post("orders/push-subscription")
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async followOrder(@Body() dto: FollowOrderDto): Promise<void> {
+    await this.orders.followOrder(dto.accessToken, dto.subscription);
   }
 
   /** POST so the tracking token stays in the body (and out of access logs); the web saves the blob. */

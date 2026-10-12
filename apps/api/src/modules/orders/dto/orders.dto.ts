@@ -1,5 +1,6 @@
 import {
   DELIVERY_ETA_MINUTES,
+  GEO_LIMITS,
   DELIVERY_ZONE_LIMITS,
   ORDER_LIMITS,
   ORDER_STATUSES,
@@ -8,6 +9,7 @@ import {
   type PaymentMethod,
   PICKUP_READY_MINUTES,
 } from "@app/types";
+import { applyDecorators } from "@nestjs/common";
 import { Transform, Type } from "class-transformer";
 import {
   ArrayMaxSize,
@@ -18,6 +20,7 @@ import {
   IsIn,
   IsInt,
   IsMongoId,
+  IsNumber,
   IsOptional,
   IsString,
   IsUUID,
@@ -29,11 +32,13 @@ import {
   Min,
   ValidateNested,
 } from "class-validator";
+import { cleanLine, cleanText } from "../../../common/validation/clean-text";
+import { GeoPointDto } from "../../../common/validation/geo-point.dto";
+import { PushSubscriptionDto } from "../../push/dto/push.dto";
 
-const trim = ({ value }: { value: unknown }) => (typeof value === "string" ? value.trim() : value);
 
 export class TableDto {
-  @Transform(trim)
+  @Transform(cleanLine)
   @IsString()
   @Length(1, 30, { message: "label debe tener entre 1 y 30 caracteres" })
   label!: string;
@@ -41,7 +46,7 @@ export class TableDto {
 
 export class UpdateTableDto {
   @IsOptional()
-  @Transform(trim)
+  @Transform(cleanLine)
   @IsString()
   @Length(1, 30, { message: "label debe tener entre 1 y 30 caracteres" })
   label?: string;
@@ -77,6 +82,7 @@ export class OrderItemDto {
   modifiers!: ModifierSelectionDto[];
 
   @IsOptional()
+  @Transform(cleanText)
   @IsString()
   @MaxLength(ORDER_LIMITS.noteMax)
   note?: string;
@@ -95,11 +101,13 @@ export class CreateDineInOrderDto {
   items!: OrderItemDto[];
 
   @IsOptional()
+  @Transform(cleanLine)
   @IsString()
   @MaxLength(ORDER_LIMITS.customerNameMax)
   customerName?: string;
 
   @IsOptional()
+  @Transform(cleanText)
   @IsString()
   @MaxLength(ORDER_LIMITS.noteMax)
   note?: string;
@@ -117,13 +125,13 @@ export class CreatePickupOrderDto {
   @Type(() => OrderItemDto)
   items!: OrderItemDto[];
 
-  @Transform(trim)
+  @Transform(cleanLine)
   @IsString()
   @Length(2, ORDER_LIMITS.customerNameMax, { message: "Indica tu nombre (2 a 60 caracteres)" })
   customerName!: string;
 
   /** Format is checked and normalized by the service (normalizePhone, shared with the web). */
-  @Transform(trim)
+  @Transform(cleanLine)
   @IsString()
   @MaxLength(30)
   customerPhone!: string;
@@ -137,6 +145,7 @@ export class CreatePickupOrderDto {
   customerEmail?: string;
 
   @IsOptional()
+  @Transform(cleanText)
   @IsString()
   @MaxLength(ORDER_LIMITS.noteMax)
   note?: string;
@@ -146,22 +155,28 @@ export class DeliveryAddressDto {
   @IsMongoId({ message: "Elige la comuna o zona de entrega" })
   zoneId!: string;
 
-  @Transform(trim)
+  @Transform(cleanLine)
   @IsString()
   @Length(3, ORDER_LIMITS.addressMax, { message: "Indica la calle y el número" })
   address!: string;
 
   @IsOptional()
-  @Transform(trim)
+  @Transform(cleanLine)
   @IsString()
   @MaxLength(ORDER_LIMITS.addressUnitMax)
   unit?: string;
 
   @IsOptional()
-  @Transform(trim)
+  @Transform(cleanText)
   @IsString()
   @MaxLength(ORDER_LIMITS.addressReferenceMax)
   reference?: string;
+
+  /** The customer's pin; required when the zone has an area drawn. */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => GeoPointDto)
+  location?: GeoPointDto;
 }
 
 export class ExpectedPaymentDto {
@@ -193,8 +208,18 @@ export class AssignRiderDto {
   riderId!: string | null;
 }
 
+/** Area of a zone: its vertices (3–200, validated by the service with geoAreaProblem). */
+const AREA = [
+  IsOptional(),
+  ValidateIf((_: unknown, value: unknown) => value !== null),
+  IsArray(),
+  ArrayMaxSize(GEO_LIMITS.zoneVerticesMax),
+  ValidateNested({ each: true }),
+  Type(() => GeoPointDto),
+];
+
 export class DeliveryZoneDto {
-  @Transform(trim)
+  @Transform(cleanLine)
   @IsString()
   @Length(1, DELIVERY_ZONE_LIMITS.nameMax, { message: "name debe tener entre 1 y 60 caracteres" })
   name!: string;
@@ -216,11 +241,14 @@ export class DeliveryZoneDto {
   @IsOptional()
   @IsBoolean()
   isHome?: boolean;
+
+  @applyDecorators(...AREA)
+  area?: GeoPointDto[] | null;
 }
 
 export class UpdateDeliveryZoneDto {
   @IsOptional()
-  @Transform(trim)
+  @Transform(cleanLine)
   @IsString()
   @Length(1, DELIVERY_ZONE_LIMITS.nameMax, { message: "name debe tener entre 1 y 60 caracteres" })
   name?: string;
@@ -244,6 +272,18 @@ export class UpdateDeliveryZoneDto {
   @IsOptional()
   @IsBoolean()
   isHome?: boolean;
+
+  /** null removes the area (the zone goes back to being chosen by name). */
+  @applyDecorators(...AREA)
+  area?: GeoPointDto[] | null;
+}
+
+export class CustomerOrdersQueryDto {
+  /** The `nextBefore` of the previous page ("<ISO date>_<order id>"; the service parses it). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  before?: string;
 }
 
 export class DailySummaryQueryDto {
@@ -263,6 +303,7 @@ export class ChangeStatusDto {
   status!: OrderStatus;
 
   @IsOptional()
+  @Transform(cleanText)
   @IsString()
   @MaxLength(ORDER_LIMITS.rejectReasonMax)
   reason?: string;
@@ -285,4 +326,11 @@ export class AccessTokenDto {
   @IsString()
   @Length(20, 100)
   accessToken!: string;
+}
+
+/** "Avísame" on the tracking page: the order's token plus the browser's push subscription. */
+export class FollowOrderDto extends AccessTokenDto {
+  @ValidateNested()
+  @Type(() => PushSubscriptionDto)
+  subscription!: PushSubscriptionDto;
 }

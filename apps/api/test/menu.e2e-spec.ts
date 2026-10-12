@@ -283,7 +283,7 @@ describe("Menu (e2e)", () => {
       expect(menu.restaurant).toMatchObject({
         name: "Sanguchería Central",
         description: "Los mejores completos",
-        phone: "+56 9 1234 5678",
+        phone: "+56912345678",
         currency: "CLP",
       });
       expect(menu.restaurant.logo?.md).toMatch(/-md\.webp$/);

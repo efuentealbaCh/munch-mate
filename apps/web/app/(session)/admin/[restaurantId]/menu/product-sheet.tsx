@@ -23,6 +23,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { menuApi, type ProductInput } from "@/lib/endpoints";
 import { hasCode } from "@/lib/errors";
 import { formatPriceInput, parsePriceInput } from "@/lib/money";
+import { nameTakenFromError, nameTakenMessage } from "@/lib/unique-names";
 import { type ProductValues, productSchema } from "@/lib/validation";
 import { ModifierGroupsPicker } from "./modifier-groups-picker";
 
@@ -43,6 +44,8 @@ export interface ProductSheetState {
 interface ProductSheetProps {
   restaurantId: string;
   categories: readonly MenuCategoryView[];
+  /** Every product of the menu, to catch a name repeated within the chosen category before sending it. */
+  products: readonly ProductView[];
   groups: readonly ModifierGroupView[];
   state: ProductSheetState | null;
   onClose(): void;
@@ -91,9 +94,21 @@ function changedFields(product: ProductView, input: ProductInput): Partial<Produ
   return changes;
 }
 
+/**
+ * Names repeat-free within a category, checked like the api: only when the name is sent or the product
+ * moves to another category (so legacy duplicates can still be edited otherwise).
+ * @returns The message for the name field, or null.
+ */
+function productNameProblem(input: ProductInput, product: ProductView | null, products: readonly ProductView[]): string | null {
+  if (product && input.name === product.name && input.categoryId === product.categoryId) return null;
+  const siblings = products.filter((other) => other.categoryId === input.categoryId);
+  return nameTakenMessage("product", input.name, siblings, product?.id);
+}
+
 function ProductForm({
   restaurantId,
   categories,
+  products,
   groups,
   state,
   onClose,
@@ -112,6 +127,11 @@ function ProductForm({
   async function onSubmit(values: ProductValues) {
     setError(null);
     const input = toInput(values);
+    const taken = productNameProblem(input, product, products);
+    if (taken) {
+      form.setError("name", { message: taken }, { shouldFocus: true });
+      return;
+    }
     setSaving(true);
     try {
       if (!product) {
@@ -133,7 +153,11 @@ function ProductForm({
   }
 
   function handleError(failure: unknown) {
-    if (hasCode(failure, "INVALID_CATEGORY")) {
+    const taken = nameTakenFromError("product", failure);
+    if (taken) {
+      // Created (or moved) from another tab meanwhile: the api's message, on the field.
+      form.setError("name", { message: taken }, { shouldFocus: true });
+    } else if (hasCode(failure, "INVALID_CATEGORY")) {
       form.setError("categoryId", { message: failure.message }, { shouldFocus: true });
       onStale();
     } else if (hasCode(failure, "INVALID_MODIFIER_GROUP")) {

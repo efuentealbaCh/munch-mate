@@ -3,6 +3,7 @@
 import type { DailySummary } from "@app/types";
 import { ChevronLeftIcon, ChevronRightIcon, InboxIcon, RefreshCwIcon } from "lucide-react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { toast } from "sonner";
 import { AccessDenied } from "@/components/access-denied";
 import { FormError } from "@/components/form-error";
 import { Button } from "@/components/ui/button";
@@ -24,6 +25,7 @@ import {
   todayIn,
 } from "@/lib/daily-summary";
 import { reportsApi } from "@/lib/endpoints";
+import { errorMessage, hasCode } from "@/lib/errors";
 import { formatPrice } from "@/lib/money";
 import { cn } from "@/lib/utils";
 import { useRestaurant } from "../restaurant-context";
@@ -60,6 +62,17 @@ function SalesReport() {
   // useApiQuery keeps the previous day visible while loading: only show data that belongs to the chosen date.
   const summary = data?.date === date ? data : undefined;
   const isToday = date === today;
+
+  // The api refuses days that do not exist (INVALID_DATE) or are after today in the restaurant's zone
+  // (FUTURE_DATE): a tampered date input, or this device's clock ahead of the restaurant's. Say why and go
+  // back to today; if today itself is refused (clock skew), the error block below shows the message.
+  // Only once the run for the current date has finished (`loading` false), so a stale error never resets a
+  // date chosen meanwhile.
+  useEffect(() => {
+    if (loading || date === today || !hasCode(error, "INVALID_DATE", "FUTURE_DATE")) return;
+    toast.error(errorMessage(error));
+    setDate(today);
+  }, [loading, error, date, today]);
 
   // Today's numbers follow the board: refetch after order events and after a reconnect (missed events).
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);

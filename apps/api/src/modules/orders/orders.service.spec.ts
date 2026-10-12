@@ -17,6 +17,9 @@ import type { DeliveryZonesRepository } from "./delivery-zones.repository";
 import { deriveAccessToken } from "./order-tokens";
 import type { OrderRecord, OrdersRepository } from "./orders.repository";
 import { OrdersService } from "./orders.service";
+import type { MapsService } from "../maps/maps.service";
+import type { PushService } from "../push/push.service";
+import type { RiderTrackingService } from "./rider-tracking.service";
 import type { TablesRepository } from "./tables.repository";
 
 const SECRET = "s".repeat(64);
@@ -30,6 +33,7 @@ const restaurant = {
   acceptingOrders: true,
   pickupEnabled: true,
   deliveryEnabled: true,
+  maxItemsPerOrder: 10,
   currency: "CLP",
   timezone: "America/Santiago",
   status: "active" as const,
@@ -66,6 +70,7 @@ function order(overrides: Partial<OrderRecord> = {}): OrderRecord {
     expectedPayment: null,
     riderId: null,
     riderName: null,
+    customerId: null,
     clientOrderId: "c-1",
     createdAt: new Date(),
     updatedAt: new Date(),
@@ -82,11 +87,21 @@ function setup(
     activeByPhone?: number;
     receipt?: Buffer | null;
     deliveryEnabled?: boolean;
-    zone?: { id: string; name: string; fee: number; minOrder: number; active: boolean } | null;
+    zone?: { id: string; name: string; fee: number; minOrder: number; active: boolean; area?: unknown } | null;
     membershipRoles?: string[] | null;
+    insideZone?: boolean;
+    mapAvailable?: boolean;
+    customerOrders?: OrderRecord[];
   } = {},
 ) {
   const emitted: string[] = [];
+  const push = {
+    newOrder: jest.fn(async () => undefined),
+    customerUpdate: jest.fn(async () => undefined),
+    riderAssigned: jest.fn(async () => undefined),
+    followOrder: jest.fn(async () => undefined),
+  };
+  const tracking = { clear: jest.fn(async () => undefined), lastPosition: jest.fn(async () => null) };
   const pdfQueue = {
     enqueueReceipt: jest.fn(async () => undefined),
     receiptFailed: jest.fn(async () => false),
@@ -126,6 +141,7 @@ function setup(
       order({ channel: "delivery", riderId: rider?.id ?? null, riderName: rider?.name ?? null }),
     ),
     listActiveForRider: jest.fn(async () => []),
+    listByCustomer: jest.fn(async () => options.customerOrders ?? []),
     listActive: jest.fn(async () => [order()]),
     listByBusinessDate: jest.fn(async () => []),
     markPaid: jest.fn(async () => order({ paymentStatus: "paid", paymentMethod: "cash" })),
@@ -137,6 +153,7 @@ function setup(
     {
       findById: jest.fn(async () => restaurantRecord()),
       findBySlug: jest.fn(async (slug: string) => (slug === "don-pepe" ? restaurantRecord() : null)),
+      findByIds: jest.fn(async () => [restaurantRecord()]),
     } as unknown as RestaurantsRepository,
     { list: jest.fn(async () => [{ id: "c1", name: "C", description: "", active: true, position: 0 }]) } as unknown as CategoriesRepository,
     {
@@ -158,7 +175,7 @@ function setup(
         { userId: "cook", roles: ["kitchen"] },
       ]),
     } as unknown as MembershipsRepository,
-    { findOne: jest.fn(async () => zone) } as unknown as DeliveryZonesRepository,
+    { findOne: jest.fn(async () => zone), contains: jest.fn(async () => options.insideZone ?? true) } as unknown as DeliveryZonesRepository,
     {
       toRestaurant: () => ({ emit: (event: string) => emitted.push(`restaurant:${event}`) }),
       toStaffOf: () => ({ emit: (event: string) => emitted.push(`restaurant:${event}`) }),
@@ -170,8 +187,11 @@ function setup(
     {
       get: (key: string) => (key === "APP_URL" ? "https://munch.test" : SECRET),
     } as unknown as ConfigService<ApiEnv, true>,
+    tracking as unknown as RiderTrackingService,
+    { isAvailable: jest.fn(async () => options.mapAvailable ?? true) } as unknown as MapsService,
+    push as unknown as PushService,
   );
-  return { service, orders, emitted, pdfQueue, storage };
+  return { service, orders, emitted, pdfQueue, storage, tracking, push };
 }
 
 const input = { clientOrderId: "c-1", items: [{ productId: "p1", quantity: 1, modifiers: [] }] };
@@ -456,7 +476,14 @@ describe("OrdersService.createDelivery", () => {
         subtotal: 6000,
         deliveryFee: 1500,
         total: 7500,
-        delivery: { zoneId: "z1", zoneName: "Ñuñoa", address: "Av. Grecia 1234", unit: "Depto 5", reference: "" },
+        delivery: {
+          zoneId: "z1",
+          zoneName: "Ñuñoa",
+          address: "Av. Grecia 1234",
+          unit: "Depto 5",
+          reference: "",
+          location: null,
+        },
         expectedPayment: { method: "cash", cashAmount: 10000 },
       }),
       {},
@@ -499,7 +526,7 @@ const deliveryOrder = (overrides: Partial<OrderRecord> = {}) =>
     channel: "delivery",
     deliveryFee: 1500,
     total: 7500,
-    delivery: { zoneId: "z1", zoneName: "Ñuñoa", address: "Av. Grecia 1234", unit: "", reference: "" },
+    delivery: { zoneId: "z1", zoneName: "Ñuñoa", address: "Av. Grecia 1234", unit: "", reference: "", location: null },
     expectedPayment: { method: "cash", cashAmount: 10000 },
     ...overrides,
   });
@@ -586,5 +613,157 @@ describe("OrdersService delivery handling", () => {
         }),
       }),
     );
+  });
+});
+
+describe("OrdersService items per order", () => {
+  it("rejects carts with more units than the restaurant allows", async () => {
+    const big = { ...input, items: [{ productId: "p1", quantity: 6, modifiers: [] }, { productId: "p1", quantity: 5, modifiers: [] }] };
+
+    await expect(setup().service.createDineIn("abc", big)).rejects.toMatchObject({
+      response: { code: "TOO_MANY_ITEMS", meta: { max: "10" } },
+    });
+  });
+
+  it("accepts exactly the limit", async () => {
+    const full = { ...input, items: [{ productId: "p1", quantity: 10, modifiers: [] }] };
+
+    await expect(setup().service.createDineIn("abc", full)).resolves.toBeDefined();
+  });
+});
+
+describe("OrdersService delivery pin", () => {
+  const drawn = { id: "z1", name: "Ñuñoa", fee: 1500, minOrder: 0, active: true, area: [{ lat: 0, lng: 0 }] };
+  const pinned = { ...deliveryInput, delivery: { ...deliveryInput.delivery, location: { lat: -33.4561234567, lng: -70.6 } } };
+
+  it("asks for a pin when the zone is drawn on the map", async () => {
+    await expect(setup({ zone: drawn }).service.createDelivery("don-pepe", deliveryInput)).rejects.toMatchObject({
+      response: { code: "LOCATION_REQUIRED" },
+    });
+  });
+
+  it("rejects a pin outside the zone", async () => {
+    await expect(
+      setup({ zone: drawn, insideZone: false }).service.createDelivery("don-pepe", pinned),
+    ).rejects.toMatchObject({ response: { code: "OUTSIDE_ZONE" } });
+  });
+
+  it("stores the pin, rounded, when it is inside", async () => {
+    const { service, orders } = setup({ zone: drawn, insideZone: true });
+
+    await service.createDelivery("don-pepe", pinned);
+
+    expect(orders.create).toHaveBeenCalledWith(
+      "r1",
+      expect.objectContaining({ delivery: expect.objectContaining({ location: { lat: -33.456123, lng: -70.6 } }) }),
+      {},
+    );
+  });
+
+  it("does not ask for a pin while the base map is not uploaded (no way to place one)", async () => {
+    await expect(setup({ zone: drawn, mapAvailable: false }).service.createDelivery("don-pepe", deliveryInput)).resolves.toBeDefined();
+    await expect(
+      setup({ zone: drawn, mapAvailable: false, insideZone: false }).service.createDelivery("don-pepe", pinned),
+    ).rejects.toMatchObject({ response: { code: "OUTSIDE_ZONE" } });
+  });
+
+  it("does not need a pin for zones chosen by name", async () => {
+    await expect(setup().service.createDelivery("don-pepe", deliveryInput)).resolves.toBeDefined();
+  });
+});
+
+describe("OrdersService rider position", () => {
+  it("forgets the rider's position once the delivery is handed over", async () => {
+    const onTheWay = order({ channel: "delivery", status: "out_for_delivery", riderId: "u1" });
+    const { service, tracking } = setup({ current: onTheWay });
+
+    await service.changeStatus({ ...tenant, roles: ["kitchen"] }, "u1", "o1", "delivered");
+
+    expect(tracking.clear).toHaveBeenCalledWith("o1");
+  });
+
+  it("only shows a position while the delivery is on its way", async () => {
+    const { service, tracking } = setup({ current: order({ channel: "delivery", status: "ready" }) });
+
+    await expect(service.riderPositionForCustomer("tok")).resolves.toBeNull();
+    expect(tracking.lastPosition).not.toHaveBeenCalled();
+  });
+});
+
+describe("OrdersService customers and push", () => {
+  it("links the order to the signed-in customer and tells the board by push", async () => {
+    const { service, orders, push } = setup();
+
+    await service.createDineIn("abc", { ...input, customerId: "cust1" });
+
+    expect(orders.create).toHaveBeenCalledWith("r1", expect.objectContaining({ customerId: "cust1" }), {});
+    expect(push.newOrder).toHaveBeenCalledTimes(1);
+  });
+
+  it("stores guests without a customer", async () => {
+    const { service, orders } = setup();
+
+    await service.createDineIn("abc", input);
+
+    expect(orders.create).toHaveBeenCalledWith("r1", expect.objectContaining({ customerId: null }), {});
+  });
+
+  it("pushes 'ready' to pickup customers and 'on the way' to delivery customers, with their tracking link", async () => {
+    const pickup = setup({ current: pickupOrder({ status: "preparing" }) });
+    await pickup.service.changeStatus(tenant, "u1", "o1", "ready");
+    const token = deriveAccessToken(SECRET, "r1", "c-1");
+    expect(pickup.push.customerUpdate).toHaveBeenCalledWith(expect.objectContaining({ id: "o1" }), "ready", `/pedido#t=${token}`);
+
+    const dineIn = setup({ current: order({ status: "preparing" }) });
+    await dineIn.service.changeStatus(tenant, "u1", "o1", "ready");
+    expect(dineIn.push.customerUpdate).not.toHaveBeenCalled();
+
+    const delivery = setup({ current: order({ channel: "delivery", status: "ready" }) });
+    await delivery.service.changeStatus(tenant, "u1", "o1", "out_for_delivery");
+    expect(delivery.push.customerUpdate).toHaveBeenCalledWith(expect.anything(), "on_the_way", expect.any(String));
+  });
+
+  it("tells a rider when a delivery is assigned to them, not when unassigned", async () => {
+    const { service, push } = setup();
+
+    await service.assignRider(tenant, "o1", "rider1");
+    await service.assignRider(tenant, "o1", null);
+
+    expect(push.riderAssigned).toHaveBeenCalledTimes(1);
+    expect(push.riderAssigned).toHaveBeenCalledWith(expect.anything(), "rider1");
+  });
+
+  it("lists the customer's orders with their tracking token and a cursor for the next page", async () => {
+    const many = Array.from({ length: 21 }, (_, i) =>
+      order({
+        id: `66f00000000000000000000${(i % 10).toString()}`.slice(0, 22) + String(i).padStart(2, "0"),
+        clientOrderId: `c-${i}`,
+        createdAt: new Date(Date.UTC(2026, 9, 9, 12, 0, 59 - i)),
+      }),
+    );
+    const { service } = setup({ customerOrders: many });
+
+    const page = await service.listForCustomer("cust1");
+
+    expect(page.items).toHaveLength(20);
+    expect(page.items[0]).toMatchObject({
+      trackingToken: deriveAccessToken(SECRET, "r1", "c-0"),
+      restaurant: { name: "Don Pepe", slug: "don-pepe" },
+    });
+    expect(page.nextBefore).toBe(`${many[19]!.createdAt.toISOString()}_${many[19]!.id}`);
+    await expect(service.listForCustomer("cust1", "no-es-fecha")).rejects.toMatchObject({
+      response: { code: "INVALID_CURSOR" },
+    });
+  });
+
+  it("lets a customer follow an order only while it is in progress", async () => {
+    const sub = { endpoint: "https://fcm.googleapis.com/fcm/send/x", keys: { p256dh: "p".repeat(20), auth: "a".repeat(16) } };
+    const live = setup();
+    await live.service.followOrder("tok", sub);
+    expect(live.push.followOrder).toHaveBeenCalledWith("o1", sub);
+
+    await expect(setup({ current: order({ status: "served" }) }).service.followOrder("tok", sub)).rejects.toMatchObject({
+      response: { code: "ORDER_FINISHED" },
+    });
   });
 });

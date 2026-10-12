@@ -1,26 +1,40 @@
 "use client";
 
-import { ORDER_LIMITS } from "@app/types";
+import { ORDER_LIMITS, type SavedAddressView } from "@app/types";
 import { zodResolver } from "@hookform/resolvers/zod";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { type UseFormRegisterReturn, useForm } from "react-hook-form";
+import { AccountHint, type AccountHintProps } from "@/components/account-hint";
 import { CartLines, type LineProblem } from "@/components/cart-sheet";
 import { FormError } from "@/components/form-error";
 import { FormField } from "@/components/form-field";
+import { PhoneInput } from "@/components/phone-input";
 import { SubmitButton } from "@/components/submit-button";
 import { Input } from "@/components/ui/input";
 import { SheetFooter } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
-import { type CartLine, cartTotal } from "@/lib/cart";
+import { type CartLine, cartCount, cartTotal } from "@/lib/cart";
 import { hasCode } from "@/lib/errors";
 import { formatPrice } from "@/lib/money";
 import { type PickupCheckoutValues, pickupCheckoutSchema } from "@/lib/validation";
 
+/** The visitor's account at checkout (phase 6): guests get a login link, customers their saved data. */
+export interface CheckoutAccount extends AccountHintProps {
+  /** Delivery: the customer's saved addresses (null: guest, still loading, or failed to load). */
+  addresses: SavedAddressView[] | null;
+  /** Delivery: "Guardar esta dirección en mi cuenta" is checked (saved after the order goes through). */
+  saveAddress: boolean;
+  onSaveAddressChange(save: boolean): void;
+}
+
 /** What both checkout forms (pickup and delivery) receive from the ordering page. */
 export interface CheckoutFormProps {
+  account: CheckoutAccount;
   lines: CartLine[];
   currency: string;
+  /** The restaurant's `maxItemsPerOrder`: a cart above it cannot be sent. */
+  maxItems: number;
   canOrder: boolean;
   /** Why ordering is not possible right now (shown under the disabled button). */
   closedMessage: string;
@@ -35,8 +49,10 @@ export interface CheckoutFormProps {
 
 /** Pickup form: lines, name, phone, optional email and comment, "Pedir para retirar". */
 export function PickupCheckout({
+  account,
   lines,
   currency,
+  maxItems,
   canOrder,
   closedMessage,
   submitting,
@@ -70,6 +86,7 @@ export function PickupCheckout({
         lines={lines}
         currency={currency}
         total={total}
+        maxItems={maxItems}
         problem={problem}
         onQuantity={onQuantity}
         onRemove={onRemove}
@@ -80,6 +97,7 @@ export function PickupCheckout({
       </p>
 
       <div className="flex flex-col gap-4 px-4 pt-4">
+        <AccountHint account={account} />
         <ContactFields
           idPrefix="pickup"
           nameDescription="Lo dices al retirar."
@@ -97,7 +115,7 @@ export function PickupCheckout({
         <NoteField id="pickup-note" register={form.register("note")} error={errors.note?.message} />
       </div>
 
-      <CheckoutFooter error={error} pending={submitting} disabled={!canOrder || problem !== null} closedMessage={canOrder ? null : closedMessage}>
+      <CheckoutFooter error={error} pending={submitting} disabled={!canOrder || problem !== null || cartCount(lines) > maxItems} closedMessage={canOrder ? null : closedMessage}>
         Pedir para retirar · {formatPrice(total, currency)}
       </CheckoutFooter>
     </form>
@@ -132,16 +150,7 @@ export function ContactFields({
         description="Para avisarte si hay algún problema con tu pedido."
       >
         {(control) => (
-          <Input
-            {...control}
-            type="tel"
-            inputMode="tel"
-            autoComplete="tel"
-            placeholder="+56 9 1234 5678"
-            maxLength={30}
-            aria-required
-            {...register.customerPhone}
-          />
+          <PhoneInput {...control} maxLength={30} aria-required {...register.customerPhone} />
         )}
       </FormField>
       <FormField

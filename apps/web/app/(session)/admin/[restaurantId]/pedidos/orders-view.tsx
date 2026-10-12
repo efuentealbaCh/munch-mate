@@ -1,27 +1,30 @@
 "use client";
 
 import { ORDER_STATUS_LABELS, type OrderStatus, type OrderView, type PaymentMethod } from "@app/types";
-import { checkTransition, nextStatuses } from "@app/utils";
+import { nextStatuses } from "@app/utils";
 import { BellOffIcon, BellRingIcon, InboxIcon, WifiOffIcon } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useId, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AccessDenied } from "@/components/access-denied";
-import { ConfirmDialog } from "@/components/confirm-dialog";
 import { FormError } from "@/components/form-error";
+import { PushDeviceButton } from "@/components/push-device-button";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useChime } from "@/hooks/use-chime";
+import { useMapConfig } from "@/hooks/use-map-config";
 import { useNow } from "@/hooks/use-now";
 import { useSocketEvent } from "@/hooks/use-realtime";
 import { useReceiptDownload } from "@/hooks/use-receipt-download";
+import { useAuth } from "@/lib/auth-context";
 import { ordersApi, restaurantsApi } from "@/lib/endpoints";
 import { errorMessage, hasCode } from "@/lib/errors";
 import { formatPrice } from "@/lib/money";
 import { liveOpenState, nextOpeningLabel } from "@/lib/opening-hours";
 import {
+  actionStep,
   availableChannelFilters,
   type BOARD_COLUMNS,
   boardColumns,
@@ -37,8 +40,9 @@ import {
   handOverStatus,
   isDroppedStatus,
   mergeFetched,
-  needsPaymentWarning,
   pendingCount,
+  REASON_DIALOG_TEXTS,
+  type ReasonStatus,
   sortNewestFirst,
   upsertOrder,
 } from "@/lib/orders-board";
@@ -46,7 +50,8 @@ import { cn } from "@/lib/utils";
 import { useRestaurant } from "../restaurant-context";
 import { useRestaurantRealtime } from "../restaurant-realtime";
 import { OrderCard, PaymentBadge } from "./order-card";
-import { HandOverDialog, PaymentDialog, ReadyTimeDialog, RejectDialog, RiderDialog } from "./order-dialogs";
+import { RiderMapDialog } from "./rider-map-dialog";
+import { HandOverDialog, PaymentDialog, ReadyTimeDialog, ReasonDialog, RiderDialog } from "./order-dialogs";
 
 /** How long a new order stays highlighted. */
 const FRESH_MS = 10_000;
@@ -125,13 +130,17 @@ function OrdersBoard() {
   const today = useOrderList(restaurant.id, "today", tab === "today", syncCount);
   const now = useNow(30_000);
   const chime = useChime();
+  const { user } = useAuth();
   const [fresh, setFresh] = useState<ReadonlySet<string>>(new Set());
   const [busy, setBusy] = useState<Record<string, Busy>>({});
-  const [rejecting, setRejecting] = useState<OrderView | null>(null);
-  const [cancelling, setCancelling] = useState<OrderView | null>(null);
+  // Reject or cancel: both ask for a reason the customer will read.
+  const [withReason, setWithReason] = useState<{ order: OrderView; status: ReasonStatus } | null>(null);
   const [paying, setPaying] = useState<OrderView | null>(null);
   const [payMethod, setPayMethod] = useState<PaymentMethod | null>(null);
   const [acceptingWithTime, setAcceptingWithTime] = useState<OrderView | null>(null);
+  // Phase 7: follow the rider of a delivery on its way (only with the base map).
+  const map = useMapConfig();
+  const [trackingRider, setTrackingRider] = useState<OrderView | null>(null);
   const [assigningRider, setAssigningRider] = useState<OrderView | null>(null);
   const [riderPending, setRiderPending] = useState<string | null>(null);
   const [handingOver, setHandingOver] = useState<OrderView | null>(null);
@@ -220,12 +229,11 @@ function OrdersBoard() {
   }
 
   function onAction(order: OrderView, to: OrderStatus) {
-    const check = checkTransition(order.channel, order.status, to, { kind: "staff", roles });
-    if (to === "rejected") setRejecting(order);
-    else if (to === "cancelled") setCancelling(order);
+    const step = actionStep(order, to, roles);
+    if (step === "reason" && (to === "rejected" || to === "cancelled")) setWithReason({ order, status: to });
     // Pickup/delivery: the customer is told when to come (or when it arrives), so accepting asks for the minutes.
-    else if (check.ok && check.requiresReadyTime) setAcceptingWithTime(order);
-    else if (needsPaymentWarning(order, to)) setHandingOver(order);
+    else if (step === "ready_time") setAcceptingWithTime(order);
+    else if (step === "payment_warning") setHandingOver(order);
     else void changeStatus(order, to);
   }
 
@@ -314,7 +322,7 @@ function OrdersBoard() {
   }
 
   const actionsFor = (order: OrderView) => nextStatuses(order.channel, order.status, { kind: "staff", roles });
-  const rejectingBusy = rejecting ? busy[rejecting.id] === "rejected" : false;
+  const reasonBusy = withReason ? busy[withReason.order.id] === withReason.status : false;
   const acceptingBusy = acceptingWithTime ? busy[acceptingWithTime.id] === "accepted" : false;
   const allOrders = [...(active.orders ?? []), ...(today.orders ?? [])];
   // The filter only makes sense once other channels exist (or can arrive); a filter that disappeared shows all.
@@ -323,7 +331,6 @@ function OrdersBoard() {
   const shownActive = active.orders && filterByChannel(active.orders, effectiveChannel);
   const shownToday = today.orders && filterByChannel(today.orders, effectiveChannel);
   const columns = boardColumns(restaurant.deliveryEnabled || allOrders.some((order) => order.channel === "delivery"));
-  const cancellingBusy = cancelling ? busy[cancelling.id] === "cancelled" : false;
   // The switch is on but the opening hours keep customers out (recomputed with the clock, not only at load).
   const schedule = liveOpenState(restaurant.openingHours, restaurant.timezone, now, restaurant.openState);
   const outsideHours = restaurant.acceptingOrders && !schedule.openNow;
@@ -376,6 +383,7 @@ function OrdersBoard() {
             {chime.enabled ? <BellRingIcon aria-hidden data-icon="inline-start" /> : <BellOffIcon aria-hidden data-icon="inline-start" />}
             {chime.enabled ? "Sonido activado" : "Activar sonido"}
           </Button>
+          {user ? <PushDeviceButton userId={user.id} label="Activar avisos en este dispositivo" /> : null}
           <LiveBadge status={live} />
         </div>
       </section>
@@ -420,6 +428,7 @@ function OrdersBoard() {
                 onReceipt={() => downloadReceipt(order)}
                 canAssignRider={canAssign}
                 onAssignRider={() => setAssigningRider(order)}
+                onTrackRider={map.available ? () => setTrackingRider(order) : undefined}
               />
             )}
           />
@@ -437,31 +446,18 @@ function OrdersBoard() {
         </TabsContent>
       </Tabs>
 
-      <RejectDialog
-        order={rejecting}
-        pending={rejectingBusy}
-        onOpenChange={(open) => !open && setRejecting(null)}
-        onReject={(reason) => {
-          const order = rejecting;
-          if (!order) return;
-          void changeStatus(order, "rejected", { reason }).then((ok) => {
-            setRejecting(null);
-            if (ok) toast.success(`Pedido #${order.ticketNumber} rechazado`);
+      <ReasonDialog
+        order={withReason?.order ?? null}
+        status={withReason?.status ?? "rejected"}
+        pending={reasonBusy}
+        onOpenChange={(open) => !open && setWithReason(null)}
+        onConfirm={(reason) => {
+          if (!withReason) return;
+          const { order, status } = withReason;
+          void changeStatus(order, status, { reason }).then((ok) => {
+            setWithReason(null);
+            if (ok) toast.success(`Pedido #${order.ticketNumber} ${REASON_DIALOG_TEXTS[status].done}`);
           });
-        }}
-      />
-      <ConfirmDialog
-        open={cancelling !== null}
-        onOpenChange={(open) => !open && setCancelling(null)}
-        title={cancelling ? `¿Cancelar el pedido #${cancelling.ticketNumber}?` : "¿Cancelar el pedido?"}
-        description="El cliente verá que su pedido fue cancelado. No se puede deshacer."
-        confirmLabel="Cancelar pedido"
-        destructive
-        pending={cancellingBusy}
-        onConfirm={() => {
-          const order = cancelling;
-          if (!order) return;
-          void changeStatus(order, "cancelled").then(() => setCancelling(null));
         }}
       />
       <ReadyTimeDialog
@@ -479,6 +475,15 @@ function OrdersBoard() {
           });
         }}
       />
+      {map.available && map.config ? (
+        <RiderMapDialog
+          restaurantId={restaurant.id}
+          // The live copy, so the dialog title follows a reassignment.
+          order={trackingRider ? (active.orders?.find((o) => o.id === trackingRider.id) ?? trackingRider) : null}
+          config={map.config}
+          onOpenChange={(open) => !open && setTrackingRider(null)}
+        />
+      ) : null}
       <RiderDialog
         restaurantId={restaurant.id}
         order={assigningRider}

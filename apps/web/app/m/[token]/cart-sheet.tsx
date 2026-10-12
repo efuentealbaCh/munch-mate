@@ -3,6 +3,7 @@
 import { ORDER_LIMITS } from "@app/types";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
+import { AccountHint, type AccountHintProps } from "@/components/account-hint";
 import { CartLines, CartSheet, type LineProblem } from "@/components/cart-sheet";
 import { FormError } from "@/components/form-error";
 import { FormField } from "@/components/form-field";
@@ -10,7 +11,7 @@ import { SubmitButton } from "@/components/submit-button";
 import { Input } from "@/components/ui/input";
 import { SheetFooter } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
-import { type CartLine, cartTotal } from "@/lib/cart";
+import { type CartLine, cartCount, cartTotal } from "@/lib/cart";
 import { formatPrice } from "@/lib/money";
 import { type CheckoutValues, checkoutSchema } from "@/lib/validation";
 
@@ -20,6 +21,8 @@ interface TableCartSheetProps {
   lines: CartLine[];
   currency: string;
   tableLabel: string;
+  /** The restaurant's `maxItemsPerOrder`: a cart above it cannot be sent. */
+  maxItems: number;
   canOrder: boolean;
   /** Shown under the button while ordering is not possible (defaults to the closed-restaurant text). */
   closedMessage?: string;
@@ -28,6 +31,10 @@ interface TableCartSheetProps {
   error: unknown;
   problem: LineProblem | null;
   checkout: CheckoutValues;
+  /** Bumped when `checkout` was filled from the account: remounts the form with it (see CheckoutSheet). */
+  prefillKey: number;
+  /** Login link for guests, "Pides con tu cuenta" for customers. */
+  account: AccountHintProps;
   onCheckoutChange(values: CheckoutValues): void;
   onQuantity(key: string, quantity: number): void;
   onRemove(key: string): void;
@@ -45,7 +52,7 @@ export function TableCartSheet(props: TableCartSheetProps) {
       description={`${props.tableLabel} · revisa antes de enviar.`}
       empty={props.lines.length === 0}
     >
-      <TableCheckout {...props} />
+      <TableCheckout key={props.prefillKey} {...props} />
     </CartSheet>
   );
 }
@@ -53,12 +60,14 @@ export function TableCartSheet(props: TableCartSheetProps) {
 function TableCheckout({
   lines,
   currency,
+  maxItems,
   canOrder,
   closedMessage = "El local no está recibiendo pedidos ahora.",
   submitting,
   error,
   problem,
   checkout,
+  account,
   onCheckoutChange,
   onQuantity,
   onRemove,
@@ -82,6 +91,7 @@ function TableCheckout({
         lines={lines}
         currency={currency}
         total={total}
+        maxItems={maxItems}
         problem={problem}
         onQuantity={onQuantity}
         onRemove={onRemove}
@@ -90,6 +100,7 @@ function TableCheckout({
       <p className="px-4 text-xs text-muted-foreground">El local confirma el total al recibir tu pedido. Pagas en el local.</p>
 
       <div className="flex flex-col gap-4 px-4 pt-4">
+        <AccountHint account={account} />
         <FormField id="checkout-name" label="Tu nombre (opcional)" error={errors.customerName?.message} description="Para que te encuentren al servir.">
           {(control) => (
             <Input
@@ -107,7 +118,7 @@ function TableCheckout({
 
       <SheetFooter className="sticky bottom-0 mt-2 border-t bg-popover">
         <FormError error={error} />
-        <SubmitButton size="lg" pending={submitting} disabled={!canOrder || problem !== null}>
+        <SubmitButton size="lg" pending={submitting} disabled={!canOrder || problem !== null || cartCount(lines) > maxItems}>
           Enviar pedido · {formatPrice(total, currency)}
         </SubmitButton>
         {!canOrder ? (

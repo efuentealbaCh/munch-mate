@@ -1,4 +1,5 @@
 import type { ProductView } from "@app/types";
+import { isNameTaken } from "@app/utils";
 import { Injectable } from "@nestjs/common";
 import { MediaService } from "../../infra/storage/media.service";
 import { CategoriesRepository } from "./categories.repository";
@@ -8,6 +9,7 @@ import {
   invalidModifierGroups,
   invalidOrder,
   isPermutation,
+  productNameTaken,
   productNotFound,
 } from "./menu.errors";
 import { ModifierGroupsRepository } from "./modifier-groups.repository";
@@ -31,10 +33,14 @@ export class ProductsService {
     private readonly media: MediaService,
   ) {}
 
-  /** @throws BadRequestException INVALID_CATEGORY, INVALID_MODIFIER_GROUP. */
+  /**
+   * @throws BadRequestException INVALID_CATEGORY, INVALID_MODIFIER_GROUP; ConflictException PRODUCT_NAME_TAKEN
+   *   (same name in the same category, ignoring case, accents and spaces).
+   */
   async create(restaurantId: string, input: CreateProductInput): Promise<ProductView> {
     const modifierGroupIds = input.modifierGroupIds ?? [];
     await this.assertReferences(restaurantId, input.categoryId, modifierGroupIds);
+    await this.assertNameFree(restaurantId, input.categoryId, input.name);
     const created = await this.products.create(restaurantId, {
       categoryId: input.categoryId,
       name: input.name,
@@ -48,7 +54,8 @@ export class ProductsService {
 
   /**
    * Partial update. Moving to another category appends the product at its end.
-   * @throws NotFoundException PRODUCT_NOT_FOUND; BadRequestException INVALID_CATEGORY, INVALID_MODIFIER_GROUP.
+   * @throws NotFoundException PRODUCT_NOT_FOUND; BadRequestException INVALID_CATEGORY, INVALID_MODIFIER_GROUP;
+   *   ConflictException PRODUCT_NAME_TAKEN.
    */
   async update(restaurantId: string, productId: string, changes: Partial<ProductInput>): Promise<ProductView> {
     const current = await this.products.findOne(restaurantId, productId);
@@ -60,6 +67,10 @@ export class ProductsService {
       movedCategory ? changes.categoryId : undefined,
       changes.modifierGroupIds ?? [],
     );
+
+    if (changes.name !== undefined || movedCategory) {
+      await this.assertNameFree(restaurantId, changes.categoryId ?? current.categoryId, changes.name ?? current.name, productId);
+    }
 
     const updated = await this.products.update(restaurantId, productId, changes, movedCategory);
     if (!updated) throw productNotFound();
@@ -134,6 +145,12 @@ export class ProductsService {
    * Referenced ids must belong to this restaurant: ids from another tenant are rejected exactly
    * like nonexistent ones.
    */
+  /** @throws ConflictException PRODUCT_NAME_TAKEN when another product of the category has that name. */
+  private async assertNameFree(restaurantId: string, categoryId: string, name: string, exceptId?: string): Promise<void> {
+    const siblings = (await this.products.list(restaurantId)).filter((p) => p.categoryId === categoryId);
+    if (isNameTaken(name, siblings, exceptId)) throw productNameTaken(name);
+  }
+
   private async assertReferences(
     restaurantId: string,
     categoryId: string | undefined,

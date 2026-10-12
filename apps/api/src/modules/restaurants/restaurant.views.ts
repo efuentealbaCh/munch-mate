@@ -37,6 +37,8 @@ export function toRestaurantView(
     deliveryEnabled: restaurant.deliveryEnabled,
     openingHours: restaurant.openingHours,
     openState: openState(restaurant),
+    maxItemsPerOrder: restaurant.maxItemsPerOrder,
+    location: restaurant.location,
     currency: restaurant.currency,
     timezone: restaurant.timezone,
     status: restaurant.status,

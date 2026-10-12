@@ -24,3 +24,12 @@ const TABLE_TOKEN_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
 export function generateTableToken(): string {
   return Array.from({ length: 10 }, () => TABLE_TOKEN_ALPHABET[randomInt(TABLE_TOKEN_ALPHABET.length)]).join("");
 }
+
+/** Whether "YYYY-MM-DD" is a real calendar day (rejects 2026-02-31, 2026-13-01, 2025-02-29). */
+export function isCalendarDate(value: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return false;
+  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+}

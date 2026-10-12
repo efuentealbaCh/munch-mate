@@ -77,12 +77,15 @@ export function toPublicOrderView(
   restaurant: { name: string; slug: string; phone: string },
 ): PublicOrderView {
   const rejection = order.status === "rejected" ? order.statusHistory.findLast((c) => c.status === "rejected") : undefined;
+  const cancellation =
+    order.status === "cancelled" ? order.statusHistory.findLast((c) => c.status === "cancelled") : undefined;
   return {
     ticketNumber: order.ticketNumber,
     number: order.number,
     channel: order.channel,
     status: order.status,
     rejectReason: rejection?.reason ?? null,
+    cancelReason: cancellation?.reason ?? null,
     items: toItemViews(order),
     subtotal: order.subtotal,
     deliveryFee: order.deliveryFee,

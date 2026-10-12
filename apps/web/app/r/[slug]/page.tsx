@@ -1,3 +1,4 @@
+import { formatPhone } from "@app/utils";
 import { ClockIcon, PhoneIcon } from "lucide-react";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
@@ -57,7 +58,7 @@ export default async function PublicMenuPage({ params }: PageProps) {
               >
                 <PhoneIcon className="size-4" aria-hidden />
                 <span className="sr-only">Llamar al </span>
-                {restaurant.phone}
+                {formatPhone(restaurant.phone)}
               </a>
             ) : null}
             {restaurant.openingHours ? <PublicOpeningHours hours={restaurant.openingHours} /> : null}

@@ -27,52 +27,71 @@ import { expectedPaymentLabel, methodsExpectedFirst } from "@/lib/delivery";
 import { ordersApi } from "@/lib/endpoints";
 import { formatClockTime } from "@/lib/format";
 import { formatPrice } from "@/lib/money";
-import { QUICK_REJECT_REASONS } from "@/lib/orders-board";
-import { type RejectValues, rejectSchema } from "@/lib/validation";
+import { REASON_DIALOG_TEXTS, type ReasonStatus } from "@/lib/orders-board";
+import { type StatusReasonValues, statusReasonSchema } from "@/lib/validation";
 
-/** Rejecting needs a reason the customer will read: quick reasons plus free text. */
-export function RejectDialog({
+/**
+ * Rejecting or cancelling (staff) needs a reason the customer will read: quick reasons plus free text.
+ * Which transitions need it comes from the state machine (`actionStep` in lib/orders-board).
+ */
+export function ReasonDialog({
   order,
+  status,
   pending,
   onOpenChange,
-  onReject,
+  onConfirm,
 }: {
   /** null = closed. */
   order: OrderView | null;
+  status: ReasonStatus;
   pending: boolean;
   onOpenChange(open: boolean): void;
-  onReject(reason: string): void;
+  onConfirm(reason: string): void;
 }) {
   return (
     <Dialog open={order !== null} onOpenChange={(open) => !pending && onOpenChange(open)}>
       <DialogContent className="sm:max-w-md">
-        {order ? <RejectForm key={order.id} order={order} pending={pending} onCancel={() => onOpenChange(false)} onReject={onReject} /> : null}
+        {order ? (
+          <ReasonForm
+            key={`${order.id}-${status}`}
+            order={order}
+            status={status}
+            pending={pending}
+            onCancel={() => onOpenChange(false)}
+            onConfirm={onConfirm}
+          />
+        ) : null}
       </DialogContent>
     </Dialog>
   );
 }
 
-function RejectForm({
+function ReasonForm({
   order,
+  status,
   pending,
   onCancel,
-  onReject,
+  onConfirm,
 }: {
   order: OrderView;
+  status: ReasonStatus;
   pending: boolean;
   onCancel(): void;
-  onReject(reason: string): void;
+  onConfirm(reason: string): void;
 }) {
-  const form = useForm<RejectValues>({ resolver: zodResolver(rejectSchema), defaultValues: { reason: "" } });
+  const form = useForm<StatusReasonValues>({ resolver: zodResolver(statusReasonSchema), defaultValues: { reason: "" } });
   const { errors } = form.formState;
+  const texts = REASON_DIALOG_TEXTS[status];
   return (
-    <form noValidate onSubmit={form.handleSubmit((values) => onReject(values.reason))} className="flex flex-col gap-4">
+    <form noValidate onSubmit={form.handleSubmit((values) => onConfirm(values.reason))} className="flex flex-col gap-4">
       <DialogHeader>
-        <DialogTitle>Rechazar pedido #{order.ticketNumber}</DialogTitle>
-        <DialogDescription>El cliente verá el motivo en su teléfono.</DialogDescription>
+        <DialogTitle>
+          {texts.title} #{order.ticketNumber}
+        </DialogTitle>
+        <DialogDescription>{texts.description}</DialogDescription>
       </DialogHeader>
       <div className="flex flex-wrap gap-2" role="group" aria-label="Motivos rápidos">
-        {QUICK_REJECT_REASONS.map((reason) => (
+        {texts.quickReasons.map((reason) => (
           <Button
             key={reason}
             type="button"
@@ -84,7 +103,7 @@ function RejectForm({
           </Button>
         ))}
       </div>
-      <FormField id="reject-reason" label="Motivo" error={errors.reason?.message}>
+      <FormField id={`${status}-reason`} label="Motivo" error={errors.reason?.message}>
         {(control) => <Textarea {...control} rows={2} maxLength={ORDER_LIMITS.rejectReasonMax} {...form.register("reason")} />}
       </FormField>
       <DialogFooter>
@@ -92,7 +111,7 @@ function RejectForm({
           Volver
         </Button>
         <SubmitButton variant="destructive" pending={pending}>
-          Rechazar pedido
+          {texts.submit}
         </SubmitButton>
       </DialogFooter>
     </form>

@@ -4,24 +4,36 @@ import type { OpenState, PublicMenu, PublicProduct, TableContext } from "@app/ty
 import { ClockIcon, ReceiptTextIcon, StoreIcon } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { CartBar, type LineProblem } from "@/components/cart-sheet";
 import { OrderProductSheet } from "@/components/order-product-sheet";
 import { MenuSections } from "@/components/public-menu";
 import { RestaurantLogo } from "@/components/restaurant-logo";
 import { Badge } from "@/components/ui/badge";
+import { useCustomerSession } from "@/hooks/use-customer-session";
 import { useNow } from "@/hooks/use-now";
 import { useOnVisible } from "@/hooks/use-realtime";
 import { useRefreshAt } from "@/hooks/use-refresh-at";
 import { useStoredCart } from "@/hooks/use-stored-cart";
 import { ApiError } from "@/lib/api";
 import { localStore } from "@/lib/browser-storage";
-import { type CartLine, cartCount, cartTotal, LINE_ERRORS, toOrderItems } from "@/lib/cart";
+import {
+  type CartLine,
+  cartCount,
+  cartTotal,
+  itemLimit,
+  itemLimitMessage,
+  LINE_ERRORS,
+  maxFromMeta,
+  toOrderItems,
+} from "@/lib/cart";
+import { prefillContact } from "@/lib/customer";
 import { publicOrdersApi } from "@/lib/endpoints";
 import { hasCode } from "@/lib/errors";
 import { closedByScheduleText, closedStateFromError } from "@/lib/opening-hours";
 import { loadMyOrders, rememberOrder, trackingHref } from "@/lib/order-tracking";
+import { safeNextPath, withQuery } from "@/lib/safe-next";
 import type { CheckoutValues } from "@/lib/validation";
 import { TableCartSheet } from "./cart-sheet";
 
@@ -31,13 +43,18 @@ interface TableOrderingProps {
   initialMenu: PublicMenu;
 }
 
-/** Menu + cart + checkout for one table. Customers order without an account; the table QR identifies them. */
+/**
+ * Menu + cart + checkout for one table. Customers order without an account; the table QR identifies them.
+ * With an account the name is prefilled and the api adds the order to "Mis pedidos".
+ */
 export function TableOrdering({ tableToken, table, initialMenu }: TableOrderingProps) {
   const router = useRouter();
   const [menu, setMenu] = useState(initialMenu);
   const [accepting, setAccepting] = useState(table.acceptingOrders);
   const [openState, setOpenState] = useState<OpenState>(table.openState);
   const [tableGone, setTableGone] = useState(false);
+  // Units per order (owner setting): refreshed with the table and the menu, and from a 409 TOO_MANY_ITEMS.
+  const [maxItems, setMaxItems] = useState(table.maxItemsPerOrder);
   const { lines, dispatch, beginAttempt, completeOrder } = useStoredCart(tableToken);
   const [selected, setSelected] = useState<PublicProduct | null>(null);
   const [cartOpen, setCartOpen] = useState(false);
@@ -46,6 +63,9 @@ export function TableOrdering({ tableToken, table, initialMenu }: TableOrderingP
   const [error, setError] = useState<unknown>(null);
   const [problem, setProblem] = useState<LineProblem | null>(null);
   const [myOrdersCount, setMyOrdersCount] = useState(0);
+  const session = useCustomerSession();
+  const [prefillKey, setPrefillKey] = useState(0);
+  const prefilled = useRef(false);
   const currency = menu.restaurant.currency;
   const now = useNow(30_000);
   const closedBySchedule = accepting && !openState.openNow && !tableGone;
@@ -53,12 +73,22 @@ export function TableOrdering({ tableToken, table, initialMenu }: TableOrderingP
 
   useEffect(() => setMyOrdersCount(loadMyOrders(localStore()).length), []);
 
+  // Signed in: the name comes from the account, unless the customer already typed one.
+  const sessionUser = session.state.user;
+  useEffect(() => {
+    if (!sessionUser || prefilled.current) return;
+    prefilled.current = true;
+    setCheckout((current) => prefillContact(current, sessionUser));
+    setPrefillKey((key) => key + 1);
+  }, [sessionUser]);
+
   // Back from another app or tab: the restaurant may have opened or closed meanwhile.
   const refreshTable = useCallback(async () => {
     try {
       const fresh = await publicOrdersApi.table(tableToken);
       setAccepting(fresh.acceptingOrders);
       setOpenState(fresh.openState);
+      setMaxItems(fresh.maxItemsPerOrder);
       setTableGone(false);
     } catch (failure) {
       if (hasCode(failure, "TABLE_NOT_FOUND")) setTableGone(true);
@@ -71,13 +101,21 @@ export function TableOrdering({ tableToken, table, initialMenu }: TableOrderingP
 
   const refreshMenu = useCallback(async () => {
     try {
-      setMenu(await publicOrdersApi.menu(menu.restaurant.slug));
+      const fresh = await publicOrdersApi.menu(menu.restaurant.slug);
+      setMenu(fresh);
+      setMaxItems(fresh.restaurant.maxItemsPerOrder);
     } catch {
       // The stale menu stays; the api keeps validating every order anyway.
     }
   }, [menu.restaurant.slug]);
 
   function addLine(line: CartLine) {
+    // The product sheet already caps the quantity; this covers a cap lowered while the sheet was open.
+    const limit = itemLimit(lines, maxItems);
+    if (line.quantity > limit.remaining) {
+      toast.error(itemLimitMessage(limit));
+      return;
+    }
     dispatch({ type: "add", line });
     setSelected(null);
     setProblem(null);
@@ -85,7 +123,7 @@ export function TableOrdering({ tableToken, table, initialMenu }: TableOrderingP
   }
 
   async function submit(values: CheckoutValues) {
-    if (submitting || lines.length === 0) return;
+    if (submitting || lines.length === 0 || cartCount(lines) > maxItems) return;
     const body = {
       items: toOrderItems(lines),
       ...(values.customerName ? { customerName: values.customerName } : {}),
@@ -96,6 +134,8 @@ export function TableOrdering({ tableToken, table, initialMenu }: TableOrderingP
     setSubmitting(true);
     setError(null);
     setProblem(null);
+    // A fresh access cookie, so the api links the order to the account (never throws).
+    await session.ensureFresh();
     try {
       const created = await publicOrdersApi.create(tableToken, { clientOrderId, ...body });
       rememberOrder(localStore(), {
@@ -120,6 +160,12 @@ export function TableOrdering({ tableToken, table, initialMenu }: TableOrderingP
         void refreshTable();
       }
       if (hasCode(failure, "TABLE_NOT_FOUND")) setTableGone(true);
+      // The owner lowered the cap after the menu loaded: apply it so the cart shows what to remove.
+      if (hasCode(failure, "TOO_MANY_ITEMS")) {
+        const max = maxFromMeta(failure.meta);
+        if (max !== null) setMaxItems(max);
+        else void refreshTable();
+      }
       setError(failure);
     }
   }
@@ -186,6 +232,7 @@ export function TableOrdering({ tableToken, table, initialMenu }: TableOrderingP
         product={selected}
         currency={currency}
         canOrder={canOrder}
+        limit={itemLimit(lines, maxItems)}
         onClose={() => setSelected(null)}
         onAdd={addLine}
       />
@@ -198,12 +245,18 @@ export function TableOrdering({ tableToken, table, initialMenu }: TableOrderingP
         lines={lines}
         currency={currency}
         tableLabel={table.tableLabel}
+        maxItems={maxItems}
         canOrder={canOrder}
         {...(closedBySchedule ? { closedMessage: `${closedByScheduleText(openState, now ? new Date(now) : null)}.` } : {})}
         submitting={submitting}
         error={error}
         problem={activeProblem}
         checkout={checkout}
+        prefillKey={prefillKey}
+        account={{
+          status: session.state.status,
+          loginHref: withQuery("/ingresar", { next: safeNextPath(`/m/${encodeURIComponent(tableToken)}`, "/") }),
+        }}
         onCheckoutChange={setCheckout}
         onQuantity={(key, quantity) => dispatch({ type: "setQuantity", key, quantity })}
         onRemove={(key) => dispatch({ type: "remove", key })}

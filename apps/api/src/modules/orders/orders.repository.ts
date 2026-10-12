@@ -1,4 +1,4 @@
-import { FINAL_ORDER_STATUSES, type OrderChannel, type OrderStatus, type PaymentMethod } from "@app/types";
+import { FINAL_ORDER_STATUSES, type GeoPoint, type OrderChannel, type OrderStatus, type PaymentMethod } from "@app/types";
 import { Injectable } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { type ClientSession, type Model, Types } from "mongoose";
@@ -11,6 +11,7 @@ export interface DeliveryRecord {
   address: string;
   unit: string;
   reference: string;
+  location: GeoPoint | null;
 }
 
 export interface ExpectedPaymentRecord {
@@ -53,6 +54,7 @@ export interface OrderRecord {
   expectedPayment: ExpectedPaymentRecord | null;
   riderId: string | null;
   riderName: string | null;
+  customerId: string | null;
   /** Browser-generated submission id; with ORDER_TOKEN_SECRET it re-derives the customer's access token. */
   clientOrderId: string;
   createdAt: Date;
@@ -77,6 +79,7 @@ export interface NewOrder {
   tableLabel: string | null;
   delivery: DeliveryRecord | null;
   expectedPayment: ExpectedPaymentRecord | null;
+  customerId: string | null;
   accessTokenHash: string;
   clientOrderId: string;
 }
@@ -97,7 +100,14 @@ export class OrdersRepository {
           ...input,
           restaurantId: oid(restaurantId),
           tableId: input.tableId ? oid(input.tableId) : null,
-          delivery: input.delivery ? { ...input.delivery, zoneId: oid(input.delivery.zoneId) } : null,
+          customerId: input.customerId ? oid(input.customerId) : null,
+          delivery: input.delivery
+            ? {
+                ...input.delivery,
+                zoneId: oid(input.delivery.zoneId),
+                location: input.delivery.location ?? undefined,
+              }
+            : null,
           items: input.items.map((item) => ({
             ...item,
             productId: oid(item.productId),
@@ -174,6 +184,41 @@ export class OrdersRepository {
         { returnDocument: "after" },
       )
       .lean();
+    return doc ? toRecord(doc) : null;
+  }
+
+  /**
+   * A customer's orders across restaurants, newest first: the only cross-tenant listing, scoped by the
+   * customer instead (like memberships by user).
+   * @param before Only orders after this one in the listing (createdAt, then id: two orders created in the
+   *   same millisecond are neither skipped nor repeated across pages).
+   */
+  async listByCustomer(
+    customerId: string,
+    before: { createdAt: Date; id: string } | null,
+    limit: number,
+  ): Promise<OrderRecord[]> {
+    if (!Types.ObjectId.isValid(customerId)) return [];
+    const page = before
+      ? {
+          $or: [
+            { createdAt: { $lt: before.createdAt } },
+            { createdAt: before.createdAt, _id: { $lt: oid(before.id) } },
+          ],
+        }
+      : {};
+    const docs = await this.orders
+      .find({ customerId: oid(customerId), ...page })
+      .sort({ createdAt: -1, _id: -1 })
+      .limit(limit)
+      .lean();
+    return docs.map(toRecord);
+  }
+
+  /** Any restaurant's order by id: only for checks that verify the caller's rights themselves (rider reports). */
+  async findById(orderId: string): Promise<OrderRecord | null> {
+    if (!Types.ObjectId.isValid(orderId)) return null;
+    const doc = await this.orders.findById(orderId).lean();
     return doc ? toRecord(doc) : null;
   }
 
@@ -304,6 +349,10 @@ function toRecord(doc: OrderDoc): OrderRecord {
           address: doc.delivery.address,
           unit: doc.delivery.unit ?? "",
           reference: doc.delivery.reference ?? "",
+          location:
+            typeof doc.delivery.location?.lat === "number" && typeof doc.delivery.location.lng === "number"
+              ? { lat: doc.delivery.location.lat, lng: doc.delivery.location.lng }
+              : null,
         }
       : null,
     expectedPayment: doc.expectedPayment
@@ -311,6 +360,7 @@ function toRecord(doc: OrderDoc): OrderRecord {
       : null,
     riderId: doc.riderId ? doc.riderId.toString() : null,
     riderName: doc.riderName ?? null,
+    customerId: doc.customerId ? doc.customerId.toString() : null,
     clientOrderId: doc.clientOrderId,
     createdAt: doc.createdAt ?? doc._id.getTimestamp(),
     updatedAt: doc.updatedAt ?? doc._id.getTimestamp(),

@@ -1,7 +1,7 @@
 "use client";
 
 import type { UserProfile } from "@app/types";
-import { ChevronDownIcon, LogOutIcon, ShieldIcon, StoreIcon } from "lucide-react";
+import { ChevronDownIcon, LogOutIcon, ReceiptTextIcon, ShieldIcon, StoreIcon, UserRoundIcon } from "lucide-react";
 import Link from "next/link";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -40,24 +40,35 @@ export function UserMenu({ user, onLogout }: { user: UserProfile; onLogout: () =
           <span className="truncate text-xs text-muted-foreground">{user.email}</span>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
+        <DropdownMenuItem asChild className="min-h-10">
+          <Link href="/admin">
+            <StoreIcon aria-hidden />
+            Mis restaurantes
+          </Link>
+        </DropdownMenuItem>
+        {/* Any account is also a customer (phase 6). */}
+        <DropdownMenuItem asChild className="min-h-10">
+          <Link href="/mis-pedidos">
+            <ReceiptTextIcon aria-hidden />
+            Mis pedidos
+          </Link>
+        </DropdownMenuItem>
+        <DropdownMenuItem asChild className="min-h-10">
+          <Link href="/mi-cuenta">
+            <UserRoundIcon aria-hidden />
+            Mi cuenta
+          </Link>
+        </DropdownMenuItem>
         {/* Only platform admins see it; the api answers 404 to everyone else anyway. */}
         {user.platformRole === "admin" ? (
-          <>
-            <DropdownMenuItem asChild className="min-h-10">
-              <Link href="/admin">
-                <StoreIcon aria-hidden />
-                Mis restaurantes
-              </Link>
-            </DropdownMenuItem>
-            <DropdownMenuItem asChild className="min-h-10">
-              <Link href="/plataforma">
-                <ShieldIcon aria-hidden />
-                Plataforma
-              </Link>
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-          </>
+          <DropdownMenuItem asChild className="min-h-10">
+            <Link href="/plataforma">
+              <ShieldIcon aria-hidden />
+              Plataforma
+            </Link>
+          </DropdownMenuItem>
         ) : null}
+        <DropdownMenuSeparator />
         <DropdownMenuItem className="min-h-10" onSelect={() => void onLogout()}>
           <LogOutIcon aria-hidden />
           Cerrar sesión

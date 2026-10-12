@@ -1,7 +1,25 @@
-import { DeleteObjectsCommand, GetObjectCommand, NoSuchKey, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import {
+  DeleteObjectsCommand,
+  GetObjectCommand,
+  HeadObjectCommand,
+  NoSuchKey,
+  NotFound,
+  PutObjectCommand,
+  S3Client,
+} from "@aws-sdk/client-s3";
 import { Injectable, type OnApplicationShutdown } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import type { ApiEnv } from "../../config/env.validation";
+
+/** A (partial) object read from the private bucket, ready to pipe to an HTTP response. */
+export interface PrivateObjectStream {
+  body: NodeJS.ReadableStream;
+  contentType: string;
+  contentLength: number | null;
+  /** Set for range reads ("bytes 0-1023/52428800"). */
+  contentRange: string | null;
+  etag: string | null;
+}
 
 /**
  * Object storage on Garage through the S3 API.
@@ -66,6 +84,40 @@ export class StorageService implements OnApplicationShutdown {
       return Buffer.from(await result.Body!.transformToByteArray());
     } catch (error) {
       if (error instanceof NoSuchKey) return null;
+      throw error;
+    }
+  }
+
+  /**
+   * Streams (part of) an object of the private bucket: map data read with HTTP range requests.
+   * @param range An HTTP Range header ("bytes=0-1023"), passed through to Garage.
+   * @returns null when the object does not exist.
+   */
+  async getPrivateStream(key: string, range?: string): Promise<PrivateObjectStream | null> {
+    try {
+      const result = await this.client.send(
+        new GetObjectCommand({ Bucket: this.privateBucket, Key: key, ...(range ? { Range: range } : {}) }),
+      );
+      return {
+        body: result.Body as NodeJS.ReadableStream,
+        contentType: result.ContentType ?? "application/octet-stream",
+        contentLength: result.ContentLength ?? null,
+        contentRange: result.ContentRange ?? null,
+        etag: result.ETag ?? null,
+      };
+    } catch (error) {
+      if (error instanceof NoSuchKey) return null;
+      throw error;
+    }
+  }
+
+  /** Whether an object exists in the private bucket. */
+  async existsPrivate(key: string): Promise<boolean> {
+    try {
+      await this.client.send(new HeadObjectCommand({ Bucket: this.privateBucket, Key: key }));
+      return true;
+    } catch (error) {
+      if (error instanceof NotFound || error instanceof NoSuchKey) return false;
       throw error;
     }
   }

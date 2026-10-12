@@ -1,4 +1,4 @@
-import { type APIRequestContext, devices, expect, request } from "@playwright/test";
+import { type APIRequestContext, type Page, devices, expect, request } from "@playwright/test";
 /** Same default as playwright.config.ts (kept separate: test files should not import the config). */
 export const BASE_URL = process.env.E2E_BASE_URL ?? "https://localhost";
 
@@ -12,6 +12,15 @@ export const CONTEXT_OPTIONS = { ...devices["Pixel 7"], baseURL: BASE_URL, ignor
 
 /** The api rejects state-changing requests without a matching Origin (CSRF); browsers send it, scripts must. */
 export const ORIGIN_HEADER = { Origin: new URL(BASE_URL).origin };
+
+/**
+ * Waits until React has hydrated the current page (`data-hydrated` on <html>, set by HydrationMarker).
+ * Call it after `page.goto()` before typing or clicking: on a full page load, input typed into the server
+ * HTML or a link clicked before hydration (a full reload instead of a client navigation) makes tests flaky.
+ */
+export async function waitForHydration(page: Page): Promise<void> {
+  await page.locator("html[data-hydrated]").waitFor({ state: "attached" });
+}
 
 /** Short random suffix so every run uses fresh emails and slugs. */
 export function runId(): string {

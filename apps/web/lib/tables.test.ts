@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bulkLabels, newLabels, tableUrl } from "./tables";
+import { bulkLabels, createInOrder, namedTables, tableUrl } from "./tables";
 
 describe("bulkLabels", () => {
   it("numbers a prefix over a range", () => {
@@ -18,14 +18,53 @@ describe("bulkLabels", () => {
   });
 });
 
-describe("newLabels", () => {
-  it("skips labels already in use, ignoring case and extra spaces", () => {
-    expect(newLabels(["Mesa 1", "Mesa 2", "Mesa 3"], ["mesa  1", " MESA 3"])).toEqual(["Mesa 2"]);
-  });
-});
-
 describe("tableUrl", () => {
   it("builds the customer URL printed in the QR", () => {
     expect(tableUrl("https://munchmate.cl/", "abcd234567")).toBe("https://munchmate.cl/m/abcd234567");
+  });
+});
+
+describe("createInOrder", () => {
+  const taken = (error: unknown) => error instanceof Error && error.message === "taken";
+
+  it("creates in order and skips labels the api says are taken, without stopping", async () => {
+    const calls: string[] = [];
+    const progress: number[] = [];
+    const result = await createInOrder(
+      ["Mesa 1", "Mesa 2", "Mesa 3"],
+      async (label) => {
+        calls.push(label);
+        if (label === "Mesa 2") throw new Error("taken");
+        return label.toUpperCase();
+      },
+      taken,
+      undefined,
+      (done) => progress.push(done),
+    );
+    expect(calls).toEqual(["Mesa 1", "Mesa 2", "Mesa 3"]);
+    expect(result).toEqual({ created: ["MESA 1", "MESA 3"], taken: ["Mesa 2"], error: null });
+    expect(progress).toEqual([1, 2, 3]);
+  });
+
+  it("stops at the first other error and reports what was created before it", async () => {
+    const failure = new Error("red");
+    const created: string[] = [];
+    const result = await createInOrder(
+      ["Mesa 1", "Mesa 2", "Mesa 3"],
+      async (label) => {
+        if (label === "Mesa 2") throw failure;
+        return label;
+      },
+      taken,
+      (item) => created.push(item),
+    );
+    expect(result).toEqual({ created: ["Mesa 1"], taken: [], error: failure });
+    expect(created).toEqual(["Mesa 1"]);
+  });
+});
+
+describe("namedTables", () => {
+  it("maps labels to the name the shared rules use", () => {
+    expect(namedTables([{ id: "t1", label: "Mesa 1" }])).toEqual([{ id: "t1", name: "Mesa 1" }]);
   });
 });

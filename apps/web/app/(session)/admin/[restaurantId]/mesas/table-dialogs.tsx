@@ -4,6 +4,7 @@ import type { TableView } from "@app/types";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
+import { toast } from "sonner";
 import { FormError } from "@/components/form-error";
 import { FormField } from "@/components/form-field";
 import { SubmitButton } from "@/components/submit-button";
@@ -12,19 +13,23 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { tablesApi } from "@/lib/endpoints";
 import { errorMessage } from "@/lib/errors";
-import { bulkLabels, newLabels, TABLE_LABEL_MAX } from "@/lib/tables";
+import { bulkLabels, createInOrder, namedTables, TABLE_LABEL_MAX } from "@/lib/tables";
+import { listPreview, nameTakenFromError, nameTakenMessage, planBulkTables } from "@/lib/unique-names";
 import { type BulkTablesValues, bulkTablesSchema, type TableValues, tableSchema } from "@/lib/validation";
 
 /** Rename a table. */
 export function RenameTableDialog({
   restaurantId,
   table,
+  tables,
   onOpenChange,
   onSaved,
 }: {
   restaurantId: string;
   /** null = closed. */
   table: TableView | null;
+  /** Tables already listed, to catch a repeated name before sending it. */
+  tables: readonly TableView[];
   onOpenChange(open: boolean): void;
   onSaved(table: TableView): void;
 }) {
@@ -32,7 +37,14 @@ export function RenameTableDialog({
     <Dialog open={table !== null} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-sm">
         {table ? (
-          <RenameForm key={table.id} restaurantId={restaurantId} table={table} onClose={() => onOpenChange(false)} onSaved={onSaved} />
+          <RenameForm
+            key={table.id}
+            restaurantId={restaurantId}
+            table={table}
+            tables={tables}
+            onClose={() => onOpenChange(false)}
+            onSaved={onSaved}
+          />
         ) : null}
       </DialogContent>
     </Dialog>
@@ -42,11 +54,13 @@ export function RenameTableDialog({
 function RenameForm({
   restaurantId,
   table,
+  tables,
   onClose,
   onSaved,
 }: {
   restaurantId: string;
   table: TableView;
+  tables: readonly TableView[];
   onClose(): void;
   onSaved(table: TableView): void;
 }) {
@@ -56,6 +70,11 @@ function RenameForm({
 
   async function submit(values: TableValues) {
     if (values.label === table.label) return onClose();
+    const taken = nameTakenMessage("table", values.label, namedTables(tables), table.id);
+    if (taken) {
+      form.setError("label", { message: taken }, { shouldFocus: true });
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -63,7 +82,10 @@ function RenameForm({
       onClose();
     } catch (failure) {
       setSaving(false);
-      setError(failure);
+      // Taken from another tab meanwhile: the api's message, on the field.
+      const takenByApi = nameTakenFromError("table", failure);
+      if (takenByApi) form.setError("label", { message: takenByApi }, { shouldFocus: true });
+      else setError(failure);
     }
   }
 
@@ -87,7 +109,10 @@ function RenameForm({
   );
 }
 
-/** "Agregar varias": prefix + range, created one by one (labels already in use are skipped). */
+/**
+ * "Agregar varias": prefix + range, created one by one. Labels already in use (or repeated in the range) are
+ * listed before creating and never sent; the button then says it creates only the new ones.
+ */
 export function BulkTablesDialog({
   restaurantId,
   open,
@@ -134,7 +159,7 @@ function BulkForm({
 
   const values = form.watch();
   const preview = bulkLabels(values.prefix ?? "", Number(values.from), Number(values.to));
-  const toCreate = preview.ok ? newLabels(preview.labels, existing) : [];
+  const plan = preview.ok ? planBulkTables(preview.labels, existing) : { create: [], skipped: [] };
 
   async function submit(input: BulkTablesValues) {
     const result = bulkLabels(input.prefix, input.from, input.to);
@@ -142,30 +167,44 @@ function BulkForm({
       setMessage(result.message);
       return;
     }
-    const labels = newLabels(result.labels, existing);
-    if (labels.length === 0) {
+    const { create, skipped } = planBulkTables(result.labels, existing);
+    if (create.length === 0) {
       setMessage("Esas mesas ya existen.");
       return;
     }
     setError(null);
     setMessage(null);
-    setProgress({ done: 0, total: labels.length });
-    // One at a time, in order: the list keeps a natural order and a failure stops cleanly.
-    for (const [index, label] of labels.entries()) {
-      try {
-        onCreated(await tablesApi.create(restaurantId, label));
-        setProgress({ done: index + 1, total: labels.length });
-      } catch (failure) {
-        setProgress(null);
-        setError(failure);
-        if (index > 0) setMessage(`${errorMessage(failure)} Se crearon ${index} de ${labels.length} mesas antes del error.`);
-        return;
+    setProgress({ done: 0, total: create.length });
+    const outcome = await createInOrder(
+      create,
+      (label) => tablesApi.create(restaurantId, label),
+      // Created from another tab meanwhile: skipped, the rest go on.
+      (failure) => nameTakenFromError("table", failure) !== null,
+      onCreated,
+      (done) => setProgress({ done, total: create.length }),
+    );
+    if (outcome.error) {
+      setProgress(null);
+      setError(outcome.error);
+      if (outcome.created.length > 0) {
+        setMessage(`${errorMessage(outcome.error)} Se crearon ${outcome.created.length} de ${create.length} mesas antes del error.`);
       }
+      return;
+    }
+    const omitted = skipped.length + outcome.taken.length;
+    if (outcome.created.length === 0) {
+      toast.info("No se creó ninguna mesa: todas ya existían.");
+    } else {
+      const created = outcome.created.length === 1 ? "Se creó 1 mesa" : `Se crearon ${outcome.created.length} mesas`;
+      const skippedText =
+        omitted === 0 ? "" : omitted === 1 ? "; se omitió 1 que ya existía" : `; se omitieron ${omitted} que ya existían`;
+      toast.success(`${created}${skippedText}.`);
     }
     onClose();
   }
 
   const working = progress !== null;
+  const someTaken = preview.ok && plan.skipped.length > 0 && plan.create.length > 0;
   return (
     <form noValidate onSubmit={form.handleSubmit(submit)} className="flex flex-col gap-4">
       <DialogHeader>
@@ -183,23 +222,35 @@ function BulkForm({
           {(control) => <Input {...control} type="number" inputMode="numeric" min={0} {...form.register("to", { valueAsNumber: true })} />}
         </FormField>
       </div>
-      <p className="text-sm text-muted-foreground" aria-live="polite">
-        {preview.ok
-          ? toCreate.length === 0
-            ? "Todas esas mesas ya existen."
-            : `Se crearán ${toCreate.length}: ${toCreate[0]}${toCreate.length > 1 ? ` … ${toCreate[toCreate.length - 1]}` : ""}`
-          : null}
-        {preview.ok && toCreate.length < preview.labels.length && toCreate.length > 0
-          ? ` (${preview.labels.length - toCreate.length} ya existen)`
-          : null}
-      </p>
+      <div aria-live="polite" className="flex flex-col gap-2 text-sm">
+        {preview.ok ? (
+          <p className="text-muted-foreground">
+            {plan.create.length === 0
+              ? "Todas esas mesas ya existen."
+              : `Se crearán ${plan.create.length}: ${plan.create[0]}${plan.create.length > 1 ? ` … ${plan.create[plan.create.length - 1]}` : ""}`}
+          </p>
+        ) : null}
+        {/* Shown before creating; the button below then creates only the new ones (that click confirms). */}
+        {someTaken ? (
+          <p className="rounded-lg bg-warning px-3 py-2 text-warning-foreground" data-testid="bulk-skipped">
+            {plan.skipped.length === 1 ? "Ya existe" : `Ya existen ${plan.skipped.length}`}: {listPreview(plan.skipped)}. No se
+            crearán de nuevo.
+          </p>
+        ) : null}
+      </div>
       <FormError error={error} message={message} />
       <DialogFooter>
         <Button type="button" variant="outline" onClick={onClose} disabled={working}>
           Cancelar
         </Button>
-        <SubmitButton pending={working} disabled={toCreate.length === 0}>
-          {progress ? `Creando ${progress.done} de ${progress.total}…` : "Crear mesas"}
+        <SubmitButton pending={working} disabled={plan.create.length === 0}>
+          {progress
+            ? `Creando ${progress.done} de ${progress.total}…`
+            : someTaken
+              ? plan.create.length === 1
+                ? "Crear solo la nueva"
+                : `Crear solo las ${plan.create.length} nuevas`
+              : "Crear mesas"}
         </SubmitButton>
       </DialogFooter>
     </form>

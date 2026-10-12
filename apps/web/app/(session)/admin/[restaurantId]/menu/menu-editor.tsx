@@ -244,6 +244,7 @@ function OwnerMenuEditor({ restaurantId, slug, currency }: { restaurantId: strin
       <CategoryDialog
         restaurantId={restaurantId}
         category={categoryDialog?.category ?? null}
+        categories={data.categories}
         open={categoryDialog !== null}
         onOpenChange={(open) => !open && setCategoryDialog(null)}
         onSaved={saveCategory}
@@ -252,6 +253,7 @@ function OwnerMenuEditor({ restaurantId, slug, currency }: { restaurantId: strin
       <ProductSheet
         restaurantId={restaurantId}
         categories={data.categories}
+        products={data.products}
         groups={data.modifierGroups}
         state={productSheet}
         onClose={() => setProductSheet(null)}

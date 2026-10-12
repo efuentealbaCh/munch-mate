@@ -1,6 +1,7 @@
 "use client";
 
 import { type OrderStatus, type OrderView, PAYMENT_METHOD_LABELS } from "@app/types";
+import { formatPhone } from "@app/utils";
 import {
   AlarmClockIcon,
   BikeIcon,
@@ -9,6 +10,7 @@ import {
   MailIcon,
   MapPinIcon,
   MessageSquareTextIcon,
+  NavigationIcon,
   PhoneIcon,
   ShoppingBagIcon,
   UserIcon,
@@ -17,7 +19,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
-import { formatClockTime, formatPhone, telHref } from "@/lib/format";
+import { formatClockTime, telHref } from "@/lib/format";
 import { formatPrice, formatPriceDelta } from "@/lib/money";
 import { addressLine, expectedPaymentLabel, mapsSearchUrl } from "@/lib/delivery";
 import { estimateLabel, showsReadyEstimate } from "@/lib/order-tracking";
@@ -53,6 +55,8 @@ interface OrderCardProps {
   /** Owner/cashier: may assign a rider to delivery orders. */
   canAssignRider: boolean;
   onAssignRider(): void;
+  /** Delivery on its way with a rider, and the base map is available: "Seguir al repartidor". */
+  onTrackRider?(): void;
 }
 
 /**
@@ -72,6 +76,7 @@ export function OrderCard({
   onReceipt,
   canAssignRider,
   onAssignRider,
+  onTrackRider,
 }: OrderCardProps) {
   const minutes = now ? minutesSince(order.createdAt, now) : 0;
   const forward = actions.filter((status) => status !== "rejected" && status !== "cancelled");
@@ -158,7 +163,13 @@ export function OrderCard({
       ) : null}
 
       {order.delivery ? (
-        <DeliveryBlock order={order} canAssignRider={canAssignRider} disabled={disabled} onAssignRider={onAssignRider} />
+        <DeliveryBlock
+          order={order}
+          canAssignRider={canAssignRider}
+          disabled={disabled}
+          onAssignRider={onAssignRider}
+          onTrackRider={order.status === "out_for_delivery" && order.rider ? onTrackRider : undefined}
+        />
       ) : null}
 
       <ul className="flex flex-col gap-1.5 border-t pt-2" aria-label="Productos">
@@ -253,11 +264,13 @@ function DeliveryBlock({
   canAssignRider,
   disabled,
   onAssignRider,
+  onTrackRider,
 }: {
   order: OrderView;
   canAssignRider: boolean;
   disabled: boolean;
   onAssignRider(): void;
+  onTrackRider?(): void;
 }) {
   const delivery = order.delivery;
   if (!delivery) return null;
@@ -303,11 +316,19 @@ function DeliveryBlock({
             <span className="text-muted-foreground">Sin repartidor</span>
           )}
         </span>
-        {canAssignRider && !isFinalStatus(order.status) ? (
-          <Button size="sm" variant="outline" disabled={disabled} onClick={onAssignRider}>
-            {order.rider ? "Cambiar" : "Asignar repartidor"}
-          </Button>
-        ) : null}
+        <span className="flex flex-wrap items-center gap-1">
+          {onTrackRider ? (
+            <Button size="sm" variant="secondary" onClick={onTrackRider} data-testid="track-rider">
+              <NavigationIcon aria-hidden data-icon="inline-start" />
+              Seguir al repartidor
+            </Button>
+          ) : null}
+          {canAssignRider && !isFinalStatus(order.status) ? (
+            <Button size="sm" variant="outline" disabled={disabled} onClick={onAssignRider}>
+              {order.rider ? "Cambiar" : "Asignar repartidor"}
+            </Button>
+          ) : null}
+        </span>
       </div>
     </div>
   );

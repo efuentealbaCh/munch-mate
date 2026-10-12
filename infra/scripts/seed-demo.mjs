@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Creates the demo restaurants of infra/demo/demo-restaurants.json through the public api, exactly as a
 // user would: register (or log in), verify the email via Mailpit, create restaurants, profile, logo,
-// modifier groups, categories and products with photos, tables, pickup, delivery zones, and open the
-// restaurant for orders.
+// modifier groups, categories and products with photos, tables, pickup, delivery zones drawn on the map, the
+// restaurant location, and open the restaurant for orders.
 //
 // Usage (from the repo root, with the local stack or `pnpm dev` running):
 //   node infra/scripts/seed-demo.mjs
@@ -155,6 +155,7 @@ async function seedRestaurant(spec, existing) {
     phone: spec.phone,
     ...(spec.pickupEnabled !== undefined ? { pickupEnabled: spec.pickupEnabled } : {}),
     ...(spec.deliveryEnabled !== undefined ? { deliveryEnabled: spec.deliveryEnabled } : {}),
+    ...(spec.location ? { location: spec.location } : {}),
   });
   if (!restaurant.logo) await upload(`${base}/logo`, spec.logo);
 
@@ -214,10 +215,13 @@ async function seedRestaurant(spec, existing) {
   for (const label of spec.tables ?? []) {
     if (!tables.some((t) => t.label === label)) tables.push(await api("POST", `${base}/tables`, { label }));
   }
-  // Phase 5: delivery zones, matched by name.
+  // Phase 5/7: delivery zones, matched by name, with their (approximate) area on the map. Zones created by
+  // an earlier run without an area get it now.
   const zones = await api("GET", `${base}/delivery-zones`);
   for (const zone of spec.deliveryZones ?? []) {
-    if (!zones.some((z) => z.name === zone.name)) zones.push(await api("POST", `${base}/delivery-zones`, zone));
+    const existing = zones.find((z) => z.name === zone.name);
+    if (!existing) zones.push(await api("POST", `${base}/delivery-zones`, zone));
+    else if (zone.area && !existing.area) await api("PATCH", `${base}/delivery-zones/${existing.id}`, { area: zone.area });
   }
 
   if (spec.acceptingOrders !== undefined && restaurant.acceptingOrders !== spec.acceptingOrders) {

@@ -1,5 +1,6 @@
-import { RESTAURANT_ROLES, type RestaurantRole, type WeeklyHours } from "@app/types";
-import { Transform } from "class-transformer";
+import { ORDER_LIMITS, RESTAURANT_ROLES, type RestaurantRole, type WeeklyHours } from "@app/types";
+import { Transform, Type } from "class-transformer";
+import { GeoPointDto } from "../../../common/validation/geo-point.dto";
 import {
   ArrayMaxSize,
   ArrayMinSize,
@@ -8,15 +9,18 @@ import {
   IsBoolean,
   IsEmail,
   IsIn,
+  IsInt,
   IsOptional,
   IsString,
   Length,
-  Matches,
+  Max,
   MaxLength,
+  Min,
   ValidateIf,
+  ValidateNested,
 } from "class-validator";
+import { cleanLine, cleanText } from "../../../common/validation/clean-text";
 
-const trim = ({ value }: { value: unknown }) => (typeof value === "string" ? value.trim() : value);
 const normalizeEmail = ({ value }: { value: unknown }) =>
   typeof value === "string" ? value.trim().toLowerCase() : value;
 
@@ -25,7 +29,7 @@ const NAME_MESSAGE = { message: "name debe tener entre 2 y 100 caracteres" };
 const SLUG_BOUND = { message: "slug es demasiado largo" };
 
 export class CreateRestaurantDto {
-  @Transform(trim)
+  @Transform(cleanLine)
   @IsString()
   @Length(2, 100, NAME_MESSAGE)
   name!: string;
@@ -38,22 +42,23 @@ export class CreateRestaurantDto {
 
 export class UpdateRestaurantDto {
   @IsOptional()
-  @Transform(trim)
+  @Transform(cleanLine)
   @IsString()
   @Length(2, 100, NAME_MESSAGE)
   name?: string;
 
   @IsOptional()
-  @Transform(trim)
+  @Transform(cleanText)
   @IsString()
   @MaxLength(300, { message: "description no puede superar 300 caracteres" })
   description?: string;
 
   /** Empty string clears it. */
   @IsOptional()
-  @Transform(trim)
+  @Transform(cleanLine)
   @IsString()
-  @Matches(/^$|^\+?[0-9 ()-]{6,20}$/, { message: "phone debe ser un teléfono válido, ej. +56 9 1234 5678" })
+  // Format checked and normalized by the service with normalizePhone (same rules as customer phones).
+  @MaxLength(30, { message: "phone debe ser un teléfono válido, ej. +569 12345678" })
   phone?: string;
 
   @IsOptional()
@@ -70,6 +75,20 @@ export class UpdateRestaurantDto {
   @IsOptional()
   @IsBoolean()
   deliveryEnabled?: boolean;
+
+  /** Units (sum of quantities) allowed in one order. */
+  @IsOptional()
+  @IsInt({ message: "maxItemsPerOrder debe ser un número entero" })
+  @Min(ORDER_LIMITS.itemsPerOrderMin, { message: `El mínimo es ${ORDER_LIMITS.itemsPerOrderMin} producto por pedido` })
+  @Max(ORDER_LIMITS.itemsPerOrderMax, { message: `El máximo es ${ORDER_LIMITS.itemsPerOrderMax} productos por pedido` })
+  maxItemsPerOrder?: number;
+
+  /** The restaurant on the map; null removes it. */
+  @IsOptional()
+  @ValidateIf((_: unknown, value: unknown) => value !== null)
+  @ValidateNested()
+  @Type(() => GeoPointDto)
+  location?: GeoPointDto | null;
 }
 
 export class SlugQueryDto {

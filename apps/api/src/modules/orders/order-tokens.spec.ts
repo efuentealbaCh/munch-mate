@@ -1,4 +1,4 @@
-import { businessDate, deriveAccessToken, generateTableToken } from "./order-tokens";
+import { businessDate, deriveAccessToken, generateTableToken, isCalendarDate } from "./order-tokens";
 
 describe("businessDate", () => {
   it("uses the restaurant's timezone, not UTC", () => {
@@ -28,5 +28,15 @@ describe("generateTableToken", () => {
 
     expect(tokens.size).toBe(200);
     for (const token of tokens) expect(token).toMatch(/^[a-hj-km-np-z2-9]{10}$/);
+  });
+});
+
+describe("isCalendarDate", () => {
+  it.each(["2026-10-09", "2024-02-29", "2026-12-31"])("accepts %s", (value) => {
+    expect(isCalendarDate(value)).toBe(true);
+  });
+
+  it.each(["2026-02-31", "2025-02-29", "2026-13-01", "2026-00-10", "2026-1-5", "hoy"])("rejects %s", (value) => {
+    expect(isCalendarDate(value)).toBe(false);
   });
 });

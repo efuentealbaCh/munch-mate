@@ -18,6 +18,8 @@ export interface UserProfile {
   email: string;
   name: string;
   emailVerified: boolean;
+  /** Saved for checkout (normalized, e.g. +56912345678); "" when not set. */
+  phone: string;
   /** "admin" can manage every restaurant at /plataforma. */
   platformRole: "admin" | null;
 }

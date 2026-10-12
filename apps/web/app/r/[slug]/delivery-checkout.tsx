@@ -1,22 +1,27 @@
 "use client";
 
-import { ORDER_LIMITS, PAYMENT_METHOD_LABELS, PAYMENT_METHODS, type PublicDeliveryZone } from "@app/types";
+import { type GeoPoint, ORDER_LIMITS, PAYMENT_METHOD_LABELS, PAYMENT_METHODS, type PublicDeliveryZone } from "@app/types";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { CircleAlertIcon, CloudOffIcon, MapPinOffIcon } from "lucide-react";
+import { CircleAlertIcon, CloudOffIcon, MapPinIcon, MapPinOffIcon } from "lucide-react";
 import { useEffect, useMemo, useRef } from "react";
 import { type Resolver, useForm, useWatch } from "react-hook-form";
+import { AccountHint } from "@/components/account-hint";
 import { CartLines } from "@/components/cart-sheet";
 import { FormError } from "@/components/form-error";
 import { FormField } from "@/components/form-field";
 import { NativeSelect } from "@/components/native-select";
 import { PriceInput } from "@/components/price-input";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { cartTotal } from "@/lib/cart";
+import { cartCount, cartTotal } from "@/lib/cart";
+import { canOfferSaveAddress, findSavedAddress, savedAddressLine, savedAddressToCheckout } from "@/lib/customer";
 import { cashChange, defaultZoneId, deliveryTotals, zoneOptionLabel } from "@/lib/delivery";
+import { pinProblem, zoneAtPoint } from "@/lib/maps";
 import { formatPrice, parsePriceInput } from "@/lib/money";
 import { type DeliveryCheckoutValues, deliveryCheckoutSchema } from "@/lib/validation";
+import { DeliveryPinSection } from "./delivery-pin";
 import { CheckoutFooter, type CheckoutFormProps, ContactFields, NoteField } from "./pickup-checkout";
 
 /** Zones as the ordering page loaded them: null while loading. */
@@ -24,6 +29,19 @@ export interface ZonesState {
   zones: PublicDeliveryZone[] | null;
   error: unknown;
   retry(): void;
+}
+
+/** The customer's pin on the map (phase 7), kept by the ordering page while the sheet is closed. */
+export interface DeliveryPinProps {
+  slug: string;
+  /** The restaurant's location (where the map starts). */
+  center: GeoPoint | null;
+  value: GeoPoint | null;
+  /** null clears it (a saved address without a pin). */
+  onChange(pin: GeoPoint | null): void;
+  /** Pickup is on: offered when the pin falls outside the delivery area. */
+  canPickup: boolean;
+  onChoosePickup(): void;
 }
 
 /**
@@ -35,6 +53,7 @@ export function DeliveryCheckout({
   ...props
 }: CheckoutFormProps & {
   zones: ZonesState;
+  pin: DeliveryPinProps;
   checkout: DeliveryCheckoutValues;
   onCheckoutChange(values: DeliveryCheckoutValues): void;
   onSubmit(values: DeliveryCheckoutValues): void;
@@ -73,14 +92,17 @@ export function DeliveryCheckout({
 
 function DeliveryForm({
   zones,
+  account,
   lines,
   currency,
+  maxItems,
   canOrder,
   closedMessage,
   submitting,
   error,
   problem,
   checkout,
+  pin,
   onCheckoutChange,
   onQuantity,
   onRemove,
@@ -88,6 +110,7 @@ function DeliveryForm({
   onSubmit,
 }: CheckoutFormProps & {
   zones: PublicDeliveryZone[];
+  pin: DeliveryPinProps;
   checkout: DeliveryCheckoutValues;
   onCheckoutChange(values: DeliveryCheckoutValues): void;
   onSubmit(values: DeliveryCheckoutValues): void;
@@ -107,7 +130,10 @@ function DeliveryForm({
   const initialZone = zones.some((zone) => zone.id === checkout.zoneId) ? checkout.zoneId : defaultZoneId(zones);
   const form = useForm<DeliveryCheckoutValues>({ resolver, defaultValues: { ...checkout, zoneId: initialZone } });
   const { errors } = form.formState;
-  const [zoneId, paymentMethod, cashText] = useWatch({ control: form.control, name: ["zoneId", "paymentMethod", "cashAmount"] });
+  const [zoneId, paymentMethod, cashText, address, unit] = useWatch({
+    control: form.control,
+    name: ["zoneId", "paymentMethod", "cashAmount", "address", "unit"],
+  });
 
   // The zone list was refreshed and the chosen one is gone (deactivated): fall back to the default.
   useEffect(() => {
@@ -121,6 +147,29 @@ function DeliveryForm({
   const cashAmount = paymentMethod === "cash" ? parsePriceInput(cashText) : null;
   const change = cashChange(totals.total, cashAmount);
   const sync = () => onCheckoutChange(form.getValues());
+  // A zone drawn on the map needs the pin inside it (the api answers LOCATION_REQUIRED / OUTSIDE_ZONE).
+  const pinIssue = pinProblem(zone, pin.value);
+  const savedAddresses = account.addresses ?? [];
+  const chosenSaved = findSavedAddress(savedAddresses, { address, unit });
+  const offerSave = account.status === "customer" && account.addresses !== null && canOfferSaveAddress(savedAddresses, { address, unit });
+
+  /**
+   * "Mis direcciones": fills the address and moves the pin, whose zone gets selected (as when placed by hand).
+   * "Otra dirección" ("") empties the fields to type a new one.
+   */
+  function applySavedAddress(id: string) {
+    const saved = savedAddresses.find((a) => a.id === id);
+    if (id !== "" && !saved) return;
+    const fields = saved ? savedAddressToCheckout(saved) : { address: "", unit: "", reference: "", location: null };
+    const validate = { shouldValidate: form.formState.isSubmitted };
+    form.setValue("address", fields.address, validate);
+    form.setValue("unit", fields.unit, validate);
+    form.setValue("reference", fields.reference, validate);
+    pin.onChange(fields.location);
+    const pinZone = fields.location ? zoneAtPoint(fields.location, zones) : null;
+    if (pinZone) form.setValue("zoneId", pinZone.id, validate);
+    sync();
+  }
 
   return (
     <form noValidate onSubmit={form.handleSubmit(onSubmit)} onChange={sync} className="flex flex-col" aria-label="Pedir delivery">
@@ -129,6 +178,7 @@ function DeliveryForm({
         currency={currency}
         total={totals.total}
         fee={{ label: zone ? `Envío a ${zone.name}` : "Envío", amount: totals.fee }}
+        maxItems={maxItems}
         problem={problem}
         onQuantity={onQuantity}
         onRemove={onRemove}
@@ -139,6 +189,7 @@ function DeliveryForm({
       </p>
 
       <div className="flex flex-col gap-4 px-4 pt-4">
+        <AccountHint account={account} />
         <ContactFields
           idPrefix="delivery"
           nameDescription="Para quien recibe el pedido."
@@ -156,6 +207,46 @@ function DeliveryForm({
 
         <fieldset className="flex flex-col gap-4 border-t pt-4">
           <legend className="float-left font-semibold">¿Dónde lo llevamos?</legend>
+          {savedAddresses.length > 0 ? (
+            <div className="clear-left">
+              <FormField
+                id="delivery-saved-address"
+                label="Mis direcciones"
+                description={chosenSaved ? undefined : "Elige una para rellenar la dirección."}
+              >
+                {(control) => (
+                  <NativeSelect
+                    {...control}
+                    value={chosenSaved?.id ?? ""}
+                    onChange={(event) => applySavedAddress(event.target.value)}
+                    data-testid="saved-address-select"
+                  >
+                    <option value="">{chosenSaved ? "Otra dirección" : "Elige una dirección guardada"}</option>
+                    {savedAddresses.map((saved) => (
+                      <option key={saved.id} value={saved.id}>
+                        {saved.label} · {savedAddressLine(saved)}
+                      </option>
+                    ))}
+                  </NativeSelect>
+                )}
+              </FormField>
+            </div>
+          ) : null}
+          <DeliveryPinSection
+            slug={pin.slug}
+            zones={zones}
+            selectedZone={zone}
+            center={pin.center}
+            pin={pin.value}
+            canPickup={pin.canPickup}
+            onPinChange={pin.onChange}
+            onZoneFromPin={(id) => {
+              if (form.getValues("zoneId") === id) return;
+              form.setValue("zoneId", id, { shouldValidate: form.formState.isSubmitted });
+              sync();
+            }}
+            onChoosePickup={pin.onChoosePickup}
+          />
           <FormField
             id="delivery-zone"
             label="Comuna o zona"
@@ -178,6 +269,20 @@ function DeliveryForm({
               </NativeSelect>
             )}
           </FormField>
+          {zone && pinIssue ? (
+            <p
+              className="flex items-start gap-2 rounded-lg bg-warning px-3 py-2 text-sm text-warning-foreground"
+              role="status"
+              data-testid="pin-required"
+            >
+              <MapPinIcon className="mt-0.5 size-4 shrink-0" aria-hidden />
+              <span>
+                {pinIssue === "missing"
+                  ? `Para ${zone.name} necesitamos tu ubicación: marca en el mapa dónde entregamos o usa tu ubicación.`
+                  : `El punto marcado está fuera de ${zone.name}. Mueve el pin o elige otra zona.`}
+              </span>
+            </p>
+          ) : null}
           {zone && totals.missing > 0 ? (
             <p
               className="flex items-start gap-2 rounded-lg bg-warning px-3 py-2 text-sm text-warning-foreground"
@@ -230,6 +335,19 @@ function DeliveryForm({
               />
             )}
           </FormField>
+          {offerSave ? (
+            <label
+              htmlFor="delivery-save-address"
+              className="flex min-h-10 cursor-pointer items-center gap-2 text-sm select-none"
+            >
+              <Checkbox
+                id="delivery-save-address"
+                checked={account.saveAddress}
+                onCheckedChange={(state) => account.onSaveAddressChange(state === true)}
+              />
+              Guardar esta dirección en mi cuenta
+            </label>
+          ) : null}
         </fieldset>
 
         <fieldset
@@ -289,7 +407,7 @@ function DeliveryForm({
       <CheckoutFooter
         error={error}
         pending={submitting}
-        disabled={!canOrder || problem !== null || !zone || totals.missing > 0}
+        disabled={!canOrder || problem !== null || !zone || totals.missing > 0 || pinIssue !== null || cartCount(lines) > maxItems}
         closedMessage={canOrder ? null : closedMessage}
       >
         Pedir delivery · {formatPrice(totals.total, currency)}

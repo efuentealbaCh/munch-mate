@@ -15,6 +15,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/lib/auth-context";
 import { authApi } from "@/lib/endpoints";
+import { typedDefaults } from "@/lib/form-defaults";
 import { safeNextPath, withQuery } from "@/lib/safe-next";
 import { type LoginValues, loginSchema } from "@/lib/validation";
 
@@ -26,7 +27,10 @@ export function LoginForm() {
   const { status, setUser } = useAuth();
   const [error, setError] = useState<unknown>(null);
 
-  const form = useForm<LoginValues>({ resolver: zodResolver(loginSchema), defaultValues: { email: "", password: "" } });
+  const form = useForm<LoginValues>({
+    resolver: zodResolver(loginSchema),
+    defaultValues: typedDefaults("login", { email: "", password: "" }),
+  });
   const { errors, isSubmitting } = form.formState;
 
   // Already logged in (or just logged in): go where the user was heading.
@@ -66,7 +70,7 @@ export function LoginForm() {
           </AlertDescription>
         </Alert>
       ) : null}
-      <form noValidate onSubmit={form.handleSubmit(onSubmit)} className="flex flex-col gap-5">
+      <form data-form="login" noValidate onSubmit={form.handleSubmit(onSubmit)} className="flex flex-col gap-5">
         <FormField id="email" label="Correo" error={errors.email?.message}>
           {(control) => (
             <Input {...control} type="email" autoComplete="email" inputMode="email" {...form.register("email")} />

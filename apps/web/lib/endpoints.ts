@@ -5,11 +5,14 @@ import type {
   CreateDeliveryOrderInput,
   CreateDineInOrderInput,
   CreatePickupOrderInput,
+  CustomerOrdersPage,
   DailySummary,
   DeliveryZoneInput,
   DeliveryZoneView,
+  GeoPoint,
   InvitationPreview,
   InvitationView,
+  MapConfig,
   MemberView,
   MenuCategoryView,
   ModifierGroupView,
@@ -18,13 +21,19 @@ import type {
   PaymentMethod,
   PlatformRestaurantPage,
   ProductView,
+  ProfileInput,
   PublicDeliveryZone,
   PublicMenu,
   PublicOrderView,
+  PushConfig,
+  PushSubscriptionInput,
   RestaurantRole,
   RestaurantStatus,
   RestaurantView,
+  RiderPosition,
   RiderView,
+  SavedAddressInput,
+  SavedAddressView,
   SlugAvailability,
   TableContext,
   TableView,
@@ -64,7 +73,10 @@ export const restaurantsApi = {
   get: (id: string, signal?: AbortSignal) => api.request<RestaurantView>(restaurantPath(id), { signal }),
   create: (body: { name: string; slug: string }) =>
     api.request<RestaurantView>("/restaurants", { method: "POST", body }),
-  /** pickupEnabled / deliveryEnabled: let customers order for pickup / delivery from the public menu (owner). */
+  /**
+   * pickupEnabled / deliveryEnabled: let customers order for pickup / delivery from the public menu (owner).
+   * maxItemsPerOrder: cap on units per order (owner).
+   */
   update: (
     id: string,
     body: {
@@ -74,6 +86,10 @@ export const restaurantsApi = {
       phone?: string;
       pickupEnabled?: boolean;
       deliveryEnabled?: boolean;
+      /** Units (sum of quantities) allowed in one order, ORDER_LIMITS.itemsPerOrderMin…Max. */
+      maxItemsPerOrder?: number;
+      /** The restaurant on the map (centers the maps); null removes it. */
+      location?: GeoPoint | null;
     },
   ) =>
     api.request<RestaurantView>(restaurantPath(id), { method: "PATCH", body }),
@@ -251,6 +267,11 @@ export const ordersApi = {
    */
   receipt: (restaurantId: string, orderId: string) =>
     readReceipt(api.requestResponse(`${restaurantPath(restaurantId)}/orders/${segment(orderId)}/receipt`)),
+  /** Last position of the rider of a delivery on its way (null: not on its way, or no report yet). */
+  riderLocation: (restaurantId: string, orderId: string, signal?: AbortSignal) =>
+    api.request<{ position: RiderPosition | null }>(`${restaurantPath(restaurantId)}/orders/${segment(orderId)}/rider-location`, {
+      signal,
+    }),
 };
 
 async function readReceipt(pending: Promise<Response>): Promise<DownloadedFile | null> {
@@ -371,6 +392,23 @@ export const publicOrdersApi = {
     api.request<CreatedOrder>(`/public/restaurants/${segment(slug)}/delivery-orders`, { method: "POST", body }),
   /** Active zones, the restaurant's own first. @throws ApiError (404) when delivery is off. */
   deliveryZones: (slug: string) => api.request<PublicDeliveryZone[]>(`/public/restaurants/${segment(slug)}/delivery-zones`),
+  /**
+   * The zone whose area contains the pin (first in display order when areas overlap).
+   * @throws ApiError OUT_OF_DELIVERY_AREA (404) when no drawn zone contains it.
+   */
+  locateZone: (slug: string, point: GeoPoint, signal?: AbortSignal) =>
+    api.request<PublicDeliveryZone>(`/public/restaurants/${segment(slug)}/delivery-zones/locate`, {
+      method: "POST",
+      body: { lat: point.lat, lng: point.lng },
+      signal,
+    }),
+  /** Last position of the rider (token in the body). null = not on its way yet, or no report yet. */
+  riderLocation: (accessToken: string, signal?: AbortSignal) =>
+    api.request<{ position: RiderPosition | null }>("/public/orders/rider-location", {
+      method: "POST",
+      body: { accessToken },
+      signal,
+    }),
   lookup: (accessToken: string) =>
     api.request<PublicOrderView>("/public/orders/lookup", { method: "POST", body: { accessToken } }),
   /** @throws ApiError ORDER_NOT_CANCELLABLE once the restaurant took the order. */
@@ -382,4 +420,42 @@ export const publicOrdersApi = {
   /** Receipt PDF (POST: the token stays out of the URL). @returns null while it is being generated (202). */
   receipt: (accessToken: string) =>
     readReceipt(api.requestResponse("/public/orders/receipt", { method: "POST", body: { accessToken } })),
+};
+
+/** Self-hosted base map (phase 7). */
+export const mapsApi = {
+  /** `available: false` until the map data is uploaded (`pnpm maps:init`): the pages work without a map. */
+  config: () => api.request<MapConfig>("/public/map-config"),
+};
+
+/** The signed-in person as a customer (phase 6): profile, saved addresses and order history. */
+export const customersApi = {
+  /** @throws ApiError INVALID_PHONE (400). The phone is stored normalized; "" clears it. */
+  updateProfile: (body: ProfileInput) => api.request<UserProfile>("/me", { method: "PATCH", body }),
+  addresses: () => api.request<SavedAddressView[]>("/me/addresses"),
+  /** @throws ApiError ADDRESSES_LIMIT / ADDRESS_LABEL_TAKEN (409). */
+  createAddress: (body: SavedAddressInput) => api.request<SavedAddressView>("/me/addresses", { method: "POST", body }),
+  /** Full replacement. @throws ApiError ADDRESS_LABEL_TAKEN (409). */
+  updateAddress: (addressId: string, body: SavedAddressInput) =>
+    api.request<SavedAddressView>(`/me/addresses/${segment(addressId)}`, { method: "PUT", body }),
+  deleteAddress: (addressId: string) => api.request<void>(`/me/addresses/${segment(addressId)}`, { method: "DELETE" }),
+  /** Newest first, CUSTOMER_LIMITS.ordersPageSize per page. @param before `nextBefore` of the previous page. */
+  orders: (before?: string | null, signal?: AbortSignal) =>
+    api.request<CustomerOrdersPage>(`/me/orders${before ? `?before=${encodeURIComponent(before)}` : ""}`, { signal }),
+};
+
+/**
+ * Web push (phase 6). Every subscribe call can answer 400 PUSH_NOT_CONFIGURED (no VAPID keys on the server)
+ * or 400 INVALID_PUSH_ENDPOINT (a browser whose push service is not supported).
+ */
+export const pushApi = {
+  /** publicKey null = push is off on this server: hide everything about notifications. */
+  config: () => api.request<PushConfig>("/public/push-config"),
+  /** This device gets the account notifications (staff: new orders; riders: assigned deliveries). */
+  subscribeDevice: (subscription: PushSubscriptionInput) =>
+    api.request<void>("/me/push-subscriptions", { method: "POST", body: subscription }),
+  unsubscribeDevice: (endpoint: string) => api.request<void>("/me/push-subscriptions", { method: "DELETE", body: { endpoint } }),
+  /** "Avísame": this browser follows one order (guests too). @throws ApiError ORDER_FINISHED (409). */
+  followOrder: (accessToken: string, subscription: PushSubscriptionInput) =>
+    api.request<void>("/public/orders/push-subscription", { method: "POST", body: { accessToken, subscription } }),
 };

@@ -1,5 +1,6 @@
 import {
   type ExpectedPaymentView,
+  type GeoPoint,
   type OrderDeliveryView,
   PAYMENT_METHOD_LABELS,
   type PaymentMethod,
@@ -91,12 +92,25 @@ export function addressLine(delivery: Pick<OrderDeliveryView, "address" | "unit"
   return delivery.unit ? `${delivery.address}, ${delivery.unit}` : delivery.address;
 }
 
+type MapsTarget = Pick<OrderDeliveryView, "address" | "zoneName"> & { location?: GeoPoint | null };
+
+/** "lat,lng" of the customer's pin, or the address and zone as text (orders without a pin). */
+function mapsQuery(delivery: MapsTarget): string {
+  if (delivery.location) return `${delivery.location.lat},${delivery.location.lng}`;
+  return [delivery.address, delivery.zoneName].filter(Boolean).join(", ");
+}
+
 /**
- * Google Maps search for the address (no coordinates: zones are plain names). Opening it is up to the rider.
+ * Google Maps search for the delivery: the customer's pin when there is one (phase 7), else the address and
+ * zone as text. Opening it is up to the staff.
  */
-export function mapsSearchUrl(delivery: Pick<OrderDeliveryView, "address" | "zoneName">): string {
-  const query = [delivery.address, delivery.zoneName].filter(Boolean).join(", ");
-  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
+export function mapsSearchUrl(delivery: MapsTarget): string {
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(mapsQuery(delivery))}`;
+}
+
+/** Google Maps navigation to the delivery (the rider's "Navegar"): to the pin when there is one. */
+export function mapsDirectionsUrl(delivery: MapsTarget): string {
+  return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(mapsQuery(delivery))}`;
 }
 
 /**

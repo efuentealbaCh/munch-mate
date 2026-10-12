@@ -107,10 +107,10 @@ pending ──► accepted ──► preparing ──► ready ──┬──�
 | `modifier_groups` | ✔ | `name`, `minSelect`, `maxSelect`, `options[]` (`name`, `priceDelta`, `available`) — biblioteca reutilizable entre productos ✅ |
 | `tables` | ✔ | `label`, `token` (único, va en el QR `/m/{token}`, regenerable), `active` ✅ |
 | `delivery_zones` | ✔ | `name`, `fee`, `minOrder`, `active`, `isHome` (zona del local, preseleccionada), `position` ✅ |
-| `orders` | ✔ | `number` (global), `ticketNumber` (diario), `businessDate`, `channel`, `status`, `statusHistory[]` (con quién y motivo), `paymentStatus`, `paymentMethod`, `items[]` (snapshot de precios y modificadores), `subtotal`, `total`, `currency`, `customerName`, `customerPhone` (normalizado), `customerEmail`, `estimatedReadyAt`, `note`, `tableId`, `tableLabel` (snapshot), `deliveryFee`, `delivery` (zona, dirección, depto, referencia), `expectedPayment` (medio y monto en efectivo), `riderId`, `riderName`, `accessTokenHash`, `clientOrderId` ✅ · pendiente: `customerId` (fase 6) |
+| `orders` | ✔ | `number` (global), `ticketNumber` (diario), `businessDate`, `channel`, `status`, `statusHistory[]` (con quién y motivo), `paymentStatus`, `paymentMethod`, `items[]` (snapshot de precios y modificadores), `subtotal`, `total`, `currency`, `customerName`, `customerPhone` (normalizado), `customerEmail`, `estimatedReadyAt`, `note`, `tableId`, `tableLabel` (snapshot), `deliveryFee`, `delivery` (zona, dirección, depto, referencia), `expectedPayment` (medio y monto en efectivo), `riderId`, `riderName`, `accessTokenHash`, `clientOrderId` ✅, `customerId` ✅ |
 | `counters` | ✔ | `_id` (`order:{restaurantId}` / `ticket:{restaurantId}:{businessDate}`), `seq` ✅ |
-| `customer_addresses` | — | `userId`, `label`, `address`, `reference`, `zoneHint` |
-| `push_subscriptions` | — | `userId`, `endpoint`, `keys` |
+| `customer_addresses` | — | `userId`, `label` (única por usuario), `address`, `unit`, `reference`, `location` (pin) ✅ |
+| `push_subscriptions` | — | `endpoint` (único), `keys`, `userId` (dispositivo de una cuenta) u `orderId` + `expiresAt` (seguidor de un pedido) ✅ |
 
 "Tenant ✔" significa que el documento lleva `restaurantId` y que toda consulta lo filtra. ✅ = implementado.
 
@@ -164,6 +164,18 @@ Cada fase termina con sus tests, `smoke` actualizado y despliegue al VPS.
 - **Horario de atención:** hasta 2 tramos por día (un tramo puede pasar la medianoche, ej. 19:00–01:00). Se puede pedir solo con el interruptor encendido **y** dentro del horario; el interruptor sirve para cerrar antes. Sin horario configurado, decide solo el interruptor. El menú muestra cuándo abre.
 - **Resumen del día:** ventas por canal y por medio de pago, pagado vs. pendiente, ticket promedio y productos más vendidos, para cualquier fecha. Lo ven el dueño y caja. Los pedidos rechazados o cancelados se cuentan, pero no suman.
 - **Platform admin:** ve todos los restaurantes (búsqueda por nombre o dirección, filtro por estado) y los suspende o reactiva. Suspender saca el local del menú público, cierra los pedidos y deja el panel en solo lectura. El primer admin se crea con `pnpm platform:admin <email>`.
+- **Clientes y push (fase 6):**
+  - No hay registro aparte para clientes: cualquier cuenta puede pedir. Se puede seguir pidiendo como invitado.
+  - Con sesión, el pedido queda en "Mis pedidos" (de todos los locales) y el checkout se rellena con nombre, teléfono y direcciones guardadas (hasta 10, con pin del mapa).
+  - Notificaciones push: el personal del tablero recibe "Pedido nuevo"; el repartidor, "Te asignaron el pedido"; el cliente que pulsa "Avísame" en su seguimiento (también invitado), "Listo para retirar" o "Va en camino". Cada uno las activa en su dispositivo.
+  - El push es opcional por servidor (claves VAPID). En iPhone requiere instalar la app en la pantalla de inicio (iOS 16.4+).
+- **Mapas y seguimiento (fase 7):**
+  - Mapa propio, sin proveedor externo ni costo por uso: datos de OpenStreetMap (recorte de Chile de Protomaps) guardados en Garage y dibujados con MapLibre.
+  - El dueño puede dibujar cada zona de reparto en el mapa; las zonas sin dibujo siguen funcionando por nombre. Si dos zonas dibujadas se superponen, gana la primera de la lista.
+  - El cliente marca dónde entregar con "Usar mi ubicación" y ajusta el pin; la zona se elige sola y el servidor valida que el pin caiga dentro.
+  - El restaurante tiene su ubicación en el mapa (la fija el dueño).
+  - Seguimiento del repartidor: solo con repartidor asignado y mientras el pedido está "En reparto". El teléfono del repartidor envía su posición cada pocos segundos; el cliente lo ve moverse. Solo se guarda la última posición y se borra al entregar: no hay historial de ubicaciones.
+  - Limitación conocida: desde el navegador, el GPS se pausa con la pantalla bloqueada (sobre todo en iPhone); la página pide mantener la pantalla encendida mientras se reparte.
 - **Delivery (fase 5):**
   - El dueño activa el delivery y define sus zonas (comunas o sectores) con costo de envío y pedido mínimo. Una zona se marca como **zona del local**: el checkout la trae elegida y el cliente puede cambiarla. Sin mapas ni geocodificación.
   - El cliente escribe calle y número, y opcionalmente depto y una referencia.

@@ -1,5 +1,5 @@
 import { type EmailJob, QUEUES, type QrSheetJob, type ReceiptJob } from "@app/types";
-import { formatMoney } from "@app/utils";
+import { formatMoney, formatPhone } from "@app/utils";
 import { InjectQueue, Processor, WorkerHost } from "@nestjs/bullmq";
 import type { Job, Queue } from "bullmq";
 import { InjectPinoLogger, PinoLogger } from "nestjs-pino";
@@ -62,7 +62,7 @@ export class PdfProcessor extends WorkerHost {
             channel: receipt.channel === "delivery" ? "delivery" : "pickup",
             customerName: receipt.customerName,
             restaurantName: receipt.restaurant.name,
-            restaurantPhone: receipt.restaurant.phone,
+            restaurantPhone: formatPhone(receipt.restaurant.phone),
             ticketNumber: receipt.ticketNumber,
             readyAt: receipt.estimatedReadyAt ? formatTime(receipt.estimatedReadyAt, receipt.timezone) : null,
             total: formatMoney(receipt.total, receipt.currency),

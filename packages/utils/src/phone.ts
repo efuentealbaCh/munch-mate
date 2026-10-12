@@ -18,3 +18,40 @@ export function normalizePhone(input: string, defaultCountryCode = "56"): string
 
   return digits.length >= 8 && digits.length <= 15 ? `+${digits}` : null;
 }
+
+/** Placeholder and example shown in phone fields: the usual Chilean mobile format. */
+export const PHONE_EXAMPLE = "+569 12345678";
+
+/**
+ * Formats a phone for display, Chilean style: mobiles as "+569 12345678", other Chilean numbers as
+ * "+56 2 23456789", anything else as stored. Accepts normalized or raw input.
+ * @returns "" for an empty value; the input unchanged when it is not a plausible phone.
+ */
+export function formatPhone(phone: string): string {
+  if (phone.trim() === "") return "";
+  const normalized = normalizePhone(phone);
+  if (!normalized) return phone.trim();
+  const mobile = normalized.match(/^\+569(\d{8})$/);
+  if (mobile) return `+569 ${mobile[1]}`;
+  const chilean = normalized.match(/^\+56(\d)(\d{8})$/);
+  if (chilean) return `+56 ${chilean[1]} ${chilean[2]}`;
+  return normalized;
+}
+
+/**
+ * Formats what the customer is typing in a phone field, so it reads "+569 12345678" as they go. Digits
+ * typed without a prefix are taken as a Chilean mobile; a typed "+" keeps an international number.
+ * Never removes digits the user typed (only spaces and separators).
+ */
+export function formatPhoneInput(raw: string): string {
+  const digits = raw.replace(/\D/g, "");
+  if (digits === "") return raw.trim().startsWith("+") ? "+" : "";
+  if (raw.trim().startsWith("+") && !digits.startsWith("56")) return `+${digits}`;
+  const national = digits.startsWith("56") ? digits.slice(2) : digits;
+  if (national.startsWith("9")) {
+    const rest = national.slice(1);
+    return rest ? `+569 ${rest}` : "+569";
+  }
+  if (national === "") return "+56";
+  return national.length > 1 ? `+56 ${national[0]} ${national.slice(1)}` : `+56 ${national}`;
+}

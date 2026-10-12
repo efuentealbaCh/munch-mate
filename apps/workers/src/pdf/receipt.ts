@@ -1,5 +1,5 @@
 import { ORDER_CHANNEL_LABELS, PAYMENT_METHOD_LABELS, type ReceiptJob } from "@app/types";
-import { formatMoney } from "@app/utils";
+import { formatMoney, formatPhone } from "@app/utils";
 import PDFDocument from "pdfkit";
 
 // A5 in PDF points: compact enough for an email attachment, prints well on any home printer.
@@ -51,7 +51,7 @@ export async function renderReceipt(receipt: ReceiptJob["receipt"]): Promise<Buf
 
   // Header: restaurant and document type.
   doc.font("Helvetica-Bold").fontSize(16).fillColor(INK).text(receipt.restaurant.name, x, PAGE.margin, { width: CONTENT });
-  if (receipt.restaurant.phone) doc.font("Helvetica").fontSize(9).fillColor(MUTED).text(`Tel. ${receipt.restaurant.phone}`);
+  if (receipt.restaurant.phone) doc.font("Helvetica").fontSize(9).fillColor(MUTED).text(`Tel. ${formatPhone(receipt.restaurant.phone)}`);
   doc.moveDown(0.6);
   doc.font("Helvetica-Bold").fontSize(10).fillColor(BRAND).text("COMPROBANTE DE PEDIDO");
   doc.font("Helvetica").fontSize(8).fillColor(MUTED).text("Documento interno. No válido como boleta ni factura.");
@@ -82,7 +82,7 @@ export async function renderReceipt(receipt: ReceiptJob["receipt"]): Promise<Buf
       .font("Helvetica")
       .fontSize(9)
       .fillColor(INK)
-      .text(`Cliente: ${[receipt.customerName, receipt.customerPhone].filter(Boolean).join(" · ")}`, x);
+      .text(`Cliente: ${[receipt.customerName, formatPhone(receipt.customerPhone)].filter(Boolean).join(" · ")}`, x);
   }
   if (receipt.delivery) {
     const { address, unit, reference, zoneName } = receipt.delivery;

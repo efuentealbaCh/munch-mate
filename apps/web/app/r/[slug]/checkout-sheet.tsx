@@ -5,7 +5,7 @@ import { CartSheet } from "@/components/cart-sheet";
 import { Button } from "@/components/ui/button";
 import { ONLINE_CHANNEL_LABELS, type OnlineChannel } from "@/lib/delivery";
 import type { DeliveryCheckoutValues } from "@/lib/validation";
-import { DeliveryCheckout, type ZonesState } from "./delivery-checkout";
+import { DeliveryCheckout, type DeliveryPinProps, type ZonesState } from "./delivery-checkout";
 import { type CheckoutFormProps, PickupCheckout } from "./pickup-checkout";
 
 const CHANNEL_ICONS: Record<OnlineChannel, typeof BikeIcon> = { pickup: ShoppingBagIcon, delivery: BikeIcon };
@@ -19,8 +19,16 @@ interface CheckoutSheetProps extends CheckoutFormProps {
   channel: OnlineChannel;
   onChannelChange(channel: OnlineChannel): void;
   zones: ZonesState;
+  /** The delivery pin on the map (phase 7). */
+  pin: DeliveryPinProps;
   /** Contact and address typed so far: shared by both forms, kept while the sheet is closed. */
   checkout: DeliveryCheckoutValues;
+  /**
+   * Changes when `checkout` was filled from outside the form (the account's name and phone arrived): the forms
+   * read `checkout` only when they mount, so a new key remounts them with it. Nothing typed is lost: every
+   * edit is already copied to `checkout`.
+   */
+  prefillKey: number;
   onCheckoutChange(values: DeliveryCheckoutValues): void;
   onSubmitPickup(values: DeliveryCheckoutValues): void;
   onSubmitDelivery(values: DeliveryCheckoutValues): void;
@@ -35,7 +43,9 @@ export function CheckoutSheet({
   channel,
   onChannelChange,
   zones,
+  pin,
   checkout,
+  prefillKey,
   onCheckoutChange,
   onSubmitPickup,
   onSubmitDelivery,
@@ -71,9 +81,18 @@ export function CheckoutSheet({
         </div>
       ) : null}
       {channel === "delivery" ? (
-        <DeliveryCheckout {...form} zones={zones} checkout={checkout} onCheckoutChange={onCheckoutChange} onSubmit={onSubmitDelivery} />
+        <DeliveryCheckout
+          key={prefillKey}
+          {...form}
+          zones={zones}
+          pin={pin}
+          checkout={checkout}
+          onCheckoutChange={onCheckoutChange}
+          onSubmit={onSubmitDelivery}
+        />
       ) : (
         <PickupCheckout
+          key={prefillKey}
           {...form}
           checkout={checkout}
           onCheckoutChange={(values) => onCheckoutChange({ ...checkout, ...values })}
