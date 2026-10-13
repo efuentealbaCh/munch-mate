@@ -31,9 +31,14 @@ export function hasReceipt(order: OrderRecord): boolean {
   return order.channel !== "dine_in" && order.statusHistory.some((change) => change.status === "accepted");
 }
 
-/** Private-bucket key of an order's receipt (deterministic, so retries overwrite the same object). */
-export function receiptKey(order: { restaurantId: string; id: string }): string {
-  return `restaurants/${order.restaurantId}/receipts/${order.id}.pdf`;
+/**
+ * Private-bucket key of an order's receipt (deterministic, so retries overwrite the same object). Each item
+ * edit gets its own key: a late job of an older revision can never overwrite the current receipt. Revision 0
+ * keeps the original key, so receipts stored before edits existed are still found.
+ */
+export function receiptKey(order: { restaurantId: string; id: string; revision: number }): string {
+  const suffix = order.revision > 0 ? `-r${order.revision}` : "";
+  return `restaurants/${order.restaurantId}/receipts/${order.id}${suffix}.pdf`;
 }
 
 /** Staff view: everything, including who changed each status. */
@@ -70,6 +75,13 @@ export function toOrderView(order: OrderRecord): OrderView {
     rider: order.riderId ? { id: order.riderId, name: order.riderName ?? "" } : null,
     tableSessionId: order.tableSessionId,
     notifyBy: order.notifyBy,
+    revision: order.revision,
+    edits: order.edits.map((edit) => ({
+      at: edit.at.toISOString(),
+      byName: edit.byName,
+      reason: edit.reason,
+      changes: [...edit.changes],
+    })),
     createdAt: order.createdAt.toISOString(),
     updatedAt: order.updatedAt.toISOString(),
   };
@@ -107,5 +119,7 @@ export function toPublicOrderView(
     updatedAt: order.updatedAt.toISOString(),
     cancellable: checkTransition(order.channel, order.status, "cancelled", { kind: "customer" }).ok,
     notifyBy: order.notifyBy,
+    // When only: who edited it and why stays with the staff.
+    editedAt: order.edits.at(-1)?.at.toISOString() ?? null,
   };
 }

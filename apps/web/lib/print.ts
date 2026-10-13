@@ -71,6 +71,24 @@ export function shouldAutoPrint(
   return false;
 }
 
+/**
+ * Whether this device prints the kitchen ticket again because the staff edited the order's items: only a
+ * device that prints by itself (any mode but "off") and already printed this order (the kitchen has the old
+ * ticket), and only when the order is at a newer revision than that ticket.
+ * @param printedBefore This device printed the order earlier (manually or by itself).
+ * @param previousRevision `revision` of the last ticket printed here (null: unknown). Comparing with the printed
+ *   ticket, rather than with the board's previous copy, prints each edit once even when the socket echo of an
+ *   edit made on this device arrives before the api's answer.
+ */
+export function shouldReprintEdited(
+  mode: AutoPrintMode,
+  printedBefore: boolean,
+  previousRevision: number | null,
+  order: Pick<OrderView, "revision">,
+): boolean {
+  return mode !== "off" && printedBefore && previousRevision !== null && order.revision > previousRevision;
+}
+
 // ── What a ticket says ──────────────────────────────────────────────────────
 
 export interface TicketLine {
@@ -83,6 +101,8 @@ export interface TicketLine {
 }
 
 export interface Ticket {
+  /** Framed word above everything, for the kitchen to notice ("MODIFICADO"). */
+  banner?: string;
   /** Big text at the top: "#12" or "Mesa 4". */
   headline: string;
   title: string;
@@ -90,13 +110,19 @@ export interface Ticket {
   meta: string[];
   lines: TicketLine[];
   totals: { label: string; amount: string; strong?: boolean }[];
+  /** What changed in the last edit, under the lines (edited kitchen tickets). */
+  changes?: { title: string; rows: string[] };
   footer: string[];
 }
 
 const time = (iso: string, timeZone?: string) =>
   new Date(iso).toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone });
 
-/** Kitchen ticket: what to prepare, without prices. */
+/**
+ * Kitchen ticket: what to prepare, without prices. An order whose items the staff edited says "MODIFICADO"
+ * in a frame at the top, lists the whole updated order and, under it, the changes of the last edit (with its
+ * reason), so the kitchen can swap the old ticket.
+ */
 export function kitchenTicket(order: OrderView, restaurantName: string, timeZone?: string): Ticket {
   const where =
     order.channel === "dine_in"
@@ -108,7 +134,9 @@ export function kitchenTicket(order: OrderView, restaurantName: string, timeZone
   if (order.estimatedReadyAt) {
     meta.push(`${order.channel === "delivery" ? "Llega" : "Listo"} aprox. ${time(order.estimatedReadyAt, timeZone)}`);
   }
+  const lastEdit = order.edits.at(-1);
   return {
+    ...(lastEdit ? { banner: "MODIFICADO" } : {}),
     headline: `#${order.ticketNumber}`,
     title: restaurantName,
     meta,
@@ -121,6 +149,14 @@ export function kitchenTicket(order: OrderView, restaurantName: string, timeZone
       ],
     })),
     totals: [],
+    ...(lastEdit
+      ? {
+          changes: {
+            title: `Cambios ${time(lastEdit.at, timeZone)}${lastEdit.byName ? ` · ${lastEdit.byName}` : ""}:`,
+            rows: [...lastEdit.changes, ...(lastEdit.reason ? [`Motivo: ${lastEdit.reason}`] : [])],
+          },
+        }
+      : {}),
     footer: order.note ? [`Comentario: ${order.note}`] : [],
   };
 }

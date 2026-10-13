@@ -38,14 +38,17 @@ Hechas en la fase 8:
 - ✅ **Exportar ventas** a Excel (CSV) por pedido, producto o día, para cualquier rango, y versión imprimible.
 - ✅ **Avisos por WhatsApp o SMS** con número de envío por local y celular validado del cliente.
 
-Siguen pendientes, ordenadas por impacto estimado:
+Aprobadas para implementar (decisiones del 13-10-2026):
 
-1. **Pedidos programados** («para las 20:30»). Hoy todo es para ahora.
-2. **Editar un pedido ya aceptado** (agregar o quitar un producto) en vez de cancelarlo y crearlo de nuevo.
-3. **Dividir la cuenta** de una mesa entre varias personas o medios de pago (hoy se cobra completa con un medio).
-4. **Impresión directa ESC/POS** (sin diálogo y sin `--kiosk-printing`) con un pequeño agente local o impresoras de red.
-5. **Calificación del pedido** al entregarlo.
-6. Fuera del MVP según [PRODUCT.md](PRODUCT.md): varias sucursales, inventario, reservas e idiomas.
+1. **Editar un pedido** (agregar o quitar productos) **solo por el personal** y **solo antes de que la cocina empiece** (estados pendiente o aceptado): después de «Empezar» ya se gastó material.
+2. **Dividir la cuenta de mesa** por productos, en partes iguales o en montos libres, cada parte con su medio de pago. **La arma el garzón en «Salón»**; el teléfono de la mesa ve cuánto se pagó y cuánto falta.
+3. **Impresión directa ESC/POS** con un **agente local** en el computador de cocina (impresoras USB y de red), vinculado al local con un código. La impresión desde el navegador queda como alternativa.
+
+Descartadas por ahora:
+
+- **Pedidos programados** («para las 20:30»): todo sigue siendo para ahora.
+- **Calificación del pedido** al entregarlo.
+- Fuera del MVP según [PRODUCT.md](PRODUCT.md): varias sucursales, inventario, reservas e idiomas.
 
 ## Limitaciones conocidas (ya documentadas)
 

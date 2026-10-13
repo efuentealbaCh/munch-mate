@@ -41,6 +41,7 @@ import {
   CreateDineInOrderDto,
   CreatePickupOrderDto,
   CustomerOrdersQueryDto,
+  EditOrderItemsDto,
   FollowOrderDto,
   DailySummaryQueryDto,
   OrdersQueryDto,
@@ -77,6 +78,20 @@ export class OrdersController {
     @Body() dto: ChangeStatusDto,
   ): Promise<OrderView> {
     return this.orders.changeStatus(tenant, user.id, orderId, dto.status, dto.reason, dto.readyInMinutes);
+  }
+
+  /**
+   * Edits the items before the kitchen starts the order (pending or accepted, unpaid). The service checks
+   * the roles of the order's channel, like the state machine (waiters only table orders).
+   */
+  @Put(":orderId/items")
+  editItems(
+    @CurrentTenant() tenant: TenantContext,
+    @CurrentUser() user: AuthUser,
+    @Param("orderId") orderId: string,
+    @Body() dto: EditOrderItemsDto,
+  ): Promise<OrderView> {
+    return this.orders.editItems(tenant, user.id, orderId, dto);
   }
 
   /** Last position of the rider (null when not on its way or no report yet). */

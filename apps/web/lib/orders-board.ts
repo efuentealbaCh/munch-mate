@@ -248,10 +248,11 @@ export function groupByColumn(orders: readonly OrderView[]): Record<BoardStatus,
 /**
  * Rough version of an order, to tell which of two copies is newer: events and REST responses can arrive
  * in any order (a list fetched before a change may land after its event). Every status change appends to
- * the history; payment only goes unpaid → paid.
+ * the history, every edit of the items bumps `revision`, and payment only goes unpaid → paid; all three only
+ * grow, so their sum does too.
  */
 function revision(order: OrderView): number {
-  return order.statusHistory.length * 2 + (order.paymentStatus === "paid" ? 1 : 0);
+  return (order.statusHistory.length + order.revision) * 2 + (order.paymentStatus === "paid" ? 1 : 0);
 }
 
 /**

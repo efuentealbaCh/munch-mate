@@ -8,6 +8,7 @@ import {
   type CreateDineInOrderInput,
   type CreatedOrder,
   type CreatePickupOrderInput,
+  type EditOrderItemsInput,
   type OrderItemInput,
   ORDER_LIMITS,
   type OrderStatus,
@@ -24,8 +25,10 @@ import {
   type OrderMessageEvent,
 } from "@app/types";
 import {
+  canEditOrder,
   checkTransition,
   formatMoney,
+  isOrderEditable,
   MESSAGING_PHONE_MESSAGES,
   messagingPhoneProblem,
   normalizePhone,
@@ -44,6 +47,7 @@ import {
 import { ConfigService } from "@nestjs/config";
 import { InjectConnection } from "@nestjs/mongoose";
 import type { Connection } from "mongoose";
+import { InjectPinoLogger, PinoLogger } from "nestjs-pino";
 import { hashToken } from "../../common/crypto/tokens";
 import { apiError } from "../../common/errors/api-error";
 import type { ApiEnv } from "../../config/env.validation";
@@ -59,7 +63,8 @@ import { MembershipsRepository } from "../restaurants/memberships.repository";
 import { openState } from "../restaurants/restaurant.views";
 import { UsersRepository } from "../users/users.repository";
 import { DeliveryZonesRepository } from "./delivery-zones.repository";
-import { OrderValidationError, type PricingMenu, priceOrder } from "./order-pricing";
+import { applyEdit, checkEdit, OrderEditError } from "./order-edit";
+import { OrderValidationError, type PricedItem, type PricingMenu, priceOrder } from "./order-pricing";
 import { businessDate, deriveAccessToken, isCalendarDate } from "./order-tokens";
 import { MapsService } from "../maps/maps.service";
 import { MessagingService } from "../messaging/messaging.service";
@@ -80,6 +85,40 @@ const tableNotFound = () =>
 const menuNotFound = () => new NotFoundException(apiError("MENU_NOT_FOUND", "No encontramos ese restaurante"));
 const notAccepting = () =>
   new ConflictException(apiError("NOT_ACCEPTING_ORDERS", "El local no está recibiendo pedidos en este momento"));
+const orderChanged = () =>
+  new ConflictException(apiError("ORDER_CHANGED", "Alguien actualizó este pedido; revisa su estado"));
+
+/**
+ * The restaurant's cap on units (sum of quantities) per order: new carts and edited orders alike.
+ * @throws ConflictException TOO_MANY_ITEMS with `meta.max`.
+ */
+function checkItemCount(restaurant: Pick<RestaurantRecord, "maxItemsPerOrder">, items: { quantity: number }[]): void {
+  const units = items.reduce((sum, item) => sum + item.quantity, 0);
+  const max = restaurant.maxItemsPerOrder;
+  if (units > max) {
+    throw new ConflictException(
+      apiError(
+        "TOO_MANY_ITEMS",
+        `Este local acepta hasta ${max} ${max === 1 ? "producto" : "productos"} por pedido; quita algunos o haz otro pedido`,
+        { max: String(max) },
+      ),
+    );
+  }
+}
+
+/**
+ * A delivery zone's minimum subtotal: new delivery orders and edited ones alike.
+ * @throws ConflictException BELOW_MINIMUM_ORDER with `meta.minOrder`.
+ */
+function checkMinimumOrder(zone: { name: string; minOrder: number }, subtotal: number, currency: string): void {
+  if (subtotal < zone.minOrder) {
+    throw new ConflictException(
+      apiError("BELOW_MINIMUM_ORDER", `El pedido mínimo para ${zone.name} es ${formatMoney(zone.minOrder, currency)}`, {
+        minOrder: String(zone.minOrder),
+      }),
+    );
+  }
+}
 
 /** The customer's side of a new order, common to every channel. */
 interface OrderRequest {
@@ -173,6 +212,7 @@ export class OrdersService {
     private readonly messaging: MessagingService,
     private readonly tableSessions: TableSessionsService,
     private readonly tableAccounts: TableSessionsRepository,
+    @InjectPinoLogger(OrdersService.name) private readonly logger: PinoLogger,
   ) {
     this.tokenSecret = config.get("ORDER_TOKEN_SECRET", { infer: true });
     this.appUrl = config.get("APP_URL", { infer: true });
@@ -276,15 +316,7 @@ export class OrdersService {
           expectedPayment: { method: input.payment.method, cashAmount: cash },
         },
         deliveryFee: (subtotal) => {
-          if (subtotal < zone.minOrder) {
-            throw new ConflictException(
-              apiError(
-                "BELOW_MINIMUM_ORDER",
-                `El pedido mínimo para ${zone.name} es ${formatMoney(zone.minOrder, restaurant.currency)}`,
-                { minOrder: String(zone.minOrder) },
-              ),
-            );
-          }
+          checkMinimumOrder(zone, subtotal, restaurant.currency);
           if (cash !== null && cash < subtotal + zone.fee) {
             throw new BadRequestException(
               apiError("CASH_AMOUNT_TOO_LOW", "El monto con que pagas debe cubrir el total del pedido"),
@@ -322,30 +354,10 @@ export class OrdersService {
         ),
       );
     }
-    const units = input.items.reduce((sum, item) => sum + item.quantity, 0);
-    if (units > restaurant.maxItemsPerOrder) {
-      throw new ConflictException(
-        apiError(
-          "TOO_MANY_ITEMS",
-          `Este local acepta hasta ${restaurant.maxItemsPerOrder} ${restaurant.maxItemsPerOrder === 1 ? "producto" : "productos"} por pedido; quita algunos o haz otro pedido`,
-          { max: String(restaurant.maxItemsPerOrder) },
-        ),
-      );
-    }
+    checkItemCount(restaurant, input.items);
     const { fields, deliveryFee: feeFor } = await prepare();
 
-    let priced;
-    try {
-      priced = priceOrder(input.items, await this.loadPricingMenu(restaurant.id), {
-        at: new Date(),
-        timeZone: restaurant.timezone,
-      });
-    } catch (error) {
-      if (error instanceof OrderValidationError) {
-        throw new ConflictException(apiError(error.code, error.message, { productId: error.productId }));
-      }
-      throw error;
-    }
+    const priced = await this.priceItems(restaurant, input.items);
     const deliveryFee = feeFor?.(priced.subtotal) ?? 0;
 
     const day = businessDate(new Date(), restaurant.timezone);
@@ -610,10 +622,8 @@ export class OrdersService {
         : {}),
     });
     // Someone else moved the order between our read and our write.
-    if (!updated) {
-      throw new ConflictException(apiError("ORDER_CHANGED", "Alguien actualizó este pedido; revisa su estado"));
-    }
-    if (to === "accepted" && hasReceipt(updated)) await this.requestReceipt(updated);
+    if (!updated) throw orderChanged();
+    if (to === "accepted" && hasReceipt(updated)) await this.requestReceipt(updated, { email: true });
     // Push to the customers following the order: ready to pick up, or on its way.
     if ((to === "ready" && updated.channel === "pickup") || to === "out_for_delivery") {
       await this.push.customerUpdate(updated, to === "ready" ? "ready" : "on_the_way", this.trackingUrl(updated));
@@ -642,6 +652,104 @@ export class OrdersService {
     });
   }
 
+  /**
+   * The staff change the items of an order before the kitchen starts it (the customer changed their mind, a
+   * mistake). Kept lines keep their price snapshot; added lines are priced against the current menu like a
+   * new order. The open switch and the schedule are not checked: the restaurant already took this order.
+   * @throws NotFoundException ORDER_NOT_FOUND; ForbiddenException FORBIDDEN_ROLE; ConflictException
+   *   ORDER_NOT_EDITABLE, ORDER_ALREADY_PAID, ORDER_CHANGED, TOO_MANY_ITEMS, BELOW_MINIMUM_ORDER and the pricing
+   *   errors; BadRequestException INVALID_EDIT, ORDER_EMPTY, NOTHING_CHANGED.
+   */
+  async editItems(
+    tenant: TenantContext,
+    userId: string,
+    orderId: string,
+    input: EditOrderItemsInput,
+  ): Promise<OrderView> {
+    const order = await this.orders.findOne(tenant.restaurantId, orderId);
+    if (!order) throw orderNotFound();
+    if (!canEditOrder(order.channel, tenant.roles)) {
+      throw new ForbiddenException(apiError("FORBIDDEN_ROLE", "Tu rol no permite esta acción"));
+    }
+    if (!isOrderEditable(order.status)) {
+      throw new ConflictException(
+        apiError(
+          "ORDER_NOT_EDITABLE",
+          FINAL_ORDER_STATUSES.includes(order.status)
+            ? "Este pedido ya terminó; ya no se puede modificar"
+            : "Este pedido ya se empezó a preparar; ya no se puede modificar",
+        ),
+      );
+    }
+    if (order.paymentStatus === "paid") {
+      throw new ConflictException(apiError("ORDER_ALREADY_PAID", "Este pedido ya está pagado; ya no se puede modificar"));
+    }
+    if (input.revision !== order.revision) throw orderChanged();
+    try {
+      checkEdit(order.items, input.keep, input.add.length);
+    } catch (error) {
+      if (error instanceof OrderEditError) throw new BadRequestException(apiError(error.code, error.message));
+      throw error;
+    }
+
+    const restaurant = await this.restaurant(order.restaurantId);
+    const added = input.add.length ? (await this.priceItems(restaurant, input.add)).items : [];
+    const edited = applyEdit(order.items, input.keep, added);
+    checkItemCount(restaurant, edited.items);
+    if (order.channel === "delivery" && order.delivery) {
+      // The fee stays as charged; the minimum is checked only while the zone still exists.
+      const zone = await this.deliveryZones.findOne(restaurant.id, order.delivery.zoneId);
+      if (zone) checkMinimumOrder(zone, edited.subtotal, restaurant.currency);
+    }
+    const total = edited.subtotal + order.deliveryFee;
+    // The bill the customer said they would pay with no longer covers the total: it is dropped, so the board
+    // asks again how they pay instead of rejecting the edit.
+    const cash = order.expectedPayment?.cashAmount ?? null;
+
+    const user = await this.users.findById(userId);
+    const updated = await this.orders.editItems(
+      tenant.restaurantId,
+      order.id,
+      { status: order.status, revision: order.revision },
+      {
+        items: edited.items,
+        subtotal: edited.subtotal,
+        total,
+        clearCashAmount: cash !== null && cash < total,
+        edit: {
+          at: new Date(),
+          byUserId: userId,
+          byName: user?.name ?? null,
+          reason: input.reason?.trim() || null,
+          changes: edited.changes,
+        },
+      },
+    );
+    // Started, paid or edited by someone else between our read and our write.
+    if (!updated) throw orderChanged();
+
+    if (hasReceipt(updated)) {
+      await this.discardReceipt(order);
+      await this.requestReceipt(updated, { email: false });
+    }
+    await this.broadcast(updated);
+    return toOrderView(updated);
+  }
+
+  /**
+   * Deletes the receipt of the revision just edited (best effort, logged): it no longer shows what was
+   * ordered, and the new revision has its own key, so meanwhile the customer gets "pending". Kept when the
+   * customer left an email: it may still be the attachment of the confirmation email waiting to be sent.
+   */
+  private async discardReceipt(previous: OrderRecord): Promise<void> {
+    if (previous.customerEmail) return;
+    try {
+      await this.storage.deletePrivate([receiptKey(previous)]);
+    } catch (error) {
+      this.logger.warn({ err: error, orderId: previous.id, revision: previous.revision }, "could not delete old receipt");
+    }
+  }
+
   /** Staff download of an order's receipt. */
   async getReceipt(tenant: TenantContext, orderId: string): Promise<ReceiptResult> {
     const order = await this.orders.findOne(tenant.restaurantId, orderId);
@@ -666,7 +774,7 @@ export class OrdersService {
     }
     const pdf = await this.storage.getPrivate(receiptKey(order));
     if (!pdf) {
-      if (await this.pdfQueue.receiptFailed(order.id)) {
+      if (await this.pdfQueue.receiptFailed(order.id, order.revision)) {
         throw new UnprocessableEntityException(
           apiError("RECEIPT_FAILED", "No pudimos generar el comprobante; pídelo en el local"),
         );
@@ -678,16 +786,18 @@ export class OrdersService {
   }
 
   /**
-   * Asks the workers for the PDF receipt and, when the customer left an email, the confirmation email.
-   * The job carries the data to print (an immutable snapshot) and the tracking link, whose token is
-   * re-derived from `clientOrderId`: only its hash is stored.
+   * Asks the workers for the PDF receipt of the order's current revision and, when the customer left an
+   * email, the confirmation email. The job carries the data to print (an immutable snapshot) and the
+   * tracking link, whose token is re-derived from `clientOrderId`: only its hash is stored.
+   * @param options.email false for a receipt regenerated after an edit: the confirmation is sent only once.
    */
-  private async requestReceipt(order: OrderRecord): Promise<void> {
+  private async requestReceipt(order: OrderRecord, options: { email: boolean }): Promise<void> {
     const restaurant = await this.restaurant(order.restaurantId);
     const accessToken = deriveAccessToken(this.tokenSecret, restaurant.id, order.clientOrderId);
     await this.pdfQueue.enqueueReceipt({
       restaurantId: restaurant.id,
       orderId: order.id,
+      revision: order.revision,
       outputKey: receiptKey(order),
       receipt: {
         restaurant: { name: restaurant.name, phone: restaurant.phone },
@@ -708,7 +818,7 @@ export class OrdersService {
         delivery: order.delivery ? { ...order.delivery } : null,
         expectedPayment: toExpectedPaymentView(order),
       },
-      email: order.customerEmail
+      email: options.email && order.customerEmail
         ? { to: order.customerEmail, trackingUrl: `${this.appUrl}/pedido#t=${accessToken}` }
         : null,
     });
@@ -864,6 +974,28 @@ export class OrdersService {
     const restaurant = await this.restaurants.findById(id);
     if (!restaurant) throw orderNotFound();
     return restaurant;
+  }
+
+  /**
+   * Prices cart lines against the current menu, in the restaurant's timezone (discounts by day and date).
+   * @throws ConflictException PRODUCT_NOT_AVAILABLE, PRODUCT_SOLD_OUT, OPTION_SOLD_OUT, INVALID_MODIFIERS with
+   *   `meta.productId`.
+   */
+  private async priceItems(
+    restaurant: RestaurantRecord,
+    items: OrderItemInput[],
+  ): Promise<{ items: PricedItem[]; subtotal: number }> {
+    try {
+      return priceOrder(items, await this.loadPricingMenu(restaurant.id), {
+        at: new Date(),
+        timeZone: restaurant.timezone,
+      });
+    } catch (error) {
+      if (error instanceof OrderValidationError) {
+        throw new ConflictException(apiError(error.code, error.message, { productId: error.productId }));
+      }
+      throw error;
+    }
   }
 
   /** Whole menu of the restaurant (small) in the shape the pricing needs. */

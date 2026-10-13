@@ -31,6 +31,8 @@ function order(overrides: Partial<OrderRecord>): OrderRecord {
     riderName: null,
     customerId: null,
     clientOrderId: "c",
+    revision: 0,
+    edits: [],
     tableSessionId: null,
     notifyBy: null,
     createdAt: new Date(),
