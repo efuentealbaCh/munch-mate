@@ -111,6 +111,17 @@ export class StorageService implements OnApplicationShutdown {
     }
   }
 
+  /** Deletes objects of the private bucket (missing keys are not an error). */
+  async deletePrivate(keys: string[]): Promise<void> {
+    if (keys.length === 0) return;
+    await this.client.send(
+      new DeleteObjectsCommand({
+        Bucket: this.privateBucket,
+        Delete: { Objects: keys.map((Key) => ({ Key })), Quiet: true },
+      }),
+    );
+  }
+
   /** Whether an object exists in the private bucket. */
   async existsPrivate(key: string): Promise<boolean> {
     try {

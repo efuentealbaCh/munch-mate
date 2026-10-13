@@ -324,6 +324,44 @@ export class ChangeStatusDto {
   readyInMinutes?: number;
 }
 
+/** A current line the staff keep when editing an order (index in `items`; the service checks the range). */
+export class KeptLineDto {
+  @IsInt()
+  @Min(0)
+  @Max(999)
+  line!: number;
+
+  @IsInt()
+  @Min(1)
+  @Max(ORDER_LIMITS.quantityMax, { message: `quantity no puede superar ${ORDER_LIMITS.quantityMax}` })
+  quantity!: number;
+}
+
+/** Body of `PUT /restaurants/:id/orders/:orderId/items`: lines not kept are removed; `add` is priced anew. */
+export class EditOrderItemsDto {
+  @IsInt()
+  @Min(0)
+  revision!: number;
+
+  @IsArray()
+  @ArrayMaxSize(ORDER_LIMITS.itemsMax)
+  @ValidateNested({ each: true })
+  @Type(() => KeptLineDto)
+  keep!: KeptLineDto[];
+
+  @IsArray()
+  @ArrayMaxSize(ORDER_LIMITS.itemsMax)
+  @ValidateNested({ each: true })
+  @Type(() => OrderItemDto)
+  add!: OrderItemDto[];
+
+  @IsOptional()
+  @Transform(cleanText)
+  @IsString()
+  @MaxLength(ORDER_LIMITS.editReasonMax)
+  reason?: string;
+}
+
 export class PaymentDto {
   @IsIn(PAYMENT_METHODS, { message: `method debe ser uno de: ${PAYMENT_METHODS.join(", ")}` })
   method!: PaymentMethod;

@@ -48,6 +48,8 @@ function order(over: Partial<OrderRecord> = {}): OrderRecord {
     expectedPayment: null,
     riderId: null,
     riderName: null,
+    revision: 0,
+    edits: [],
     ...over,
   } as unknown as OrderRecord;
 }

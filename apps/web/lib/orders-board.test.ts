@@ -59,6 +59,8 @@ function order(id: string, status: OrderStatus, overrides: Partial<OrderView> = 
     tableLabel: "Mesa 1",
     tableSessionId: null,
     notifyBy: null,
+    revision: 0,
+    edits: [],
     estimatedReadyAt: null,
     receiptAvailable: false,
     deliveryFee: 0,
@@ -117,6 +119,19 @@ describe("merging events and REST data", () => {
     const paid = { ...accepted, paymentStatus: "paid" as const };
     expect(newerOrder(paid, accepted)).toBe(paid);
     expect(newerOrder(undefined, pending)).toBe(pending);
+  });
+
+  it("counts an edit of the items as newer, also against a paid copy of the previous revision", () => {
+    const accepted = order("o1", "accepted");
+    const edited = { ...accepted, revision: 1 };
+    expect(newerOrder(edited, accepted)).toBe(edited);
+    expect(newerOrder(accepted, edited)).toBe(edited);
+    const editedTwice = { ...accepted, revision: 2 };
+    const paidAfterOneEdit = { ...edited, paymentStatus: "paid" as const };
+    expect(newerOrder(paidAfterOneEdit, editedTwice)).toBe(editedTwice);
+    // Same revision: the status history still decides.
+    const preparing = order("o1", "preparing", { revision: 1 });
+    expect(newerOrder(preparing, edited)).toBe(preparing);
   });
 
   it("upserts and drops orders that reached a final status from the active board", () => {

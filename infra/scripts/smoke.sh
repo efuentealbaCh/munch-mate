@@ -361,6 +361,26 @@ if [ "$LOCAL" = true ]; then
   done
   if [ "$delivered" = true ]; then pass "confirmation email with the receipt delivered (Mailpit)"; else fail "confirmation email not delivered within 15s"; fi
 
+  # Order edits: before the kitchen starts it, the staff add one unit; the server reprices the order, bumps
+  # its revision and the workers generate the receipt again (without a second email).
+  body=$($CURL -b "$jar" -H "Origin: $BASE" $json -X PUT \
+    -d "{\"revision\":0,\"keep\":[{\"line\":0,\"quantity\":2}],\"add\":[{\"productId\":\"$product_id\",\"quantity\":1,\"modifiers\":[]}]}" \
+    "$orders_url/items" || true)
+  case "$body" in
+    *'"total":11970'*'"revision":1'*) pass "accepted pickup order edited: one more unit, total repriced, revision 1" ;;
+    *) fail "edit pickup order: $body" ;;
+  esac
+  receipt_ready=false
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    content_type=$($CURL -b "$jar" -o /dev/null -w '%{http_code} %{content_type}' "$orders_url/receipt" || true)
+    if [ "$content_type" = "200 application/pdf" ]; then
+      receipt_ready=true
+      break
+    fi
+    sleep 1
+  done
+  if [ "$receipt_ready" = true ]; then pass "receipt regenerated after the edit"; else fail "edited receipt not ready: $content_type"; fi
+
   for next in preparing ready picked_up; do
     code=$(status -b "$jar" -H "Origin: $BASE" $json -d "{\"status\":\"$next\"}" "$orders_url/status")
     [ "$code" = "200" ] || break

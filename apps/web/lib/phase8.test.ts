@@ -9,6 +9,7 @@ import {
   preBillTicket,
   savePrintSettings,
   shouldAutoPrint,
+  shouldReprintEdited,
 } from "./print";
 import { promoFormValues, promoFromForm, savingsPercent, withPromos } from "./promo";
 import { rangeDays, rangePresets, rangeProblem, shortDate } from "./sales-range";
@@ -188,6 +189,8 @@ describe("printing", () => {
     createdAt: "2026-10-13T23:45:00.000Z",
     estimatedReadyAt: null,
     note: "Sin apuro",
+    revision: 0,
+    edits: [],
     items: [
       {
         productId: "p1",
@@ -210,6 +213,38 @@ describe("printing", () => {
     expect(ticket.lines).toEqual([{ quantity: 2, name: "Margarita", details: ["Tamaño: Familiar", "Nota: Sin albahaca"] }]);
     expect(ticket.totals).toEqual([]);
     expect(ticket.footer).toEqual(["Comentario: Sin apuro"]);
+  });
+
+  it("marks an edited order MODIFICADO, with the whole order and the last edit's changes", () => {
+    const edited = {
+      ...order,
+      revision: 2,
+      edits: [
+        { at: "2026-10-13T23:47:00.000Z", byName: "Ana", reason: null, changes: ["+1 Bebida"] },
+        { at: "2026-10-13T23:50:00.000Z", byName: "Ana", reason: "El cliente cambió de idea", changes: ["Margarita (Familiar): 3 → 2"] },
+      ],
+    } as OrderView;
+    const ticket = kitchenTicket(edited, "Forno Rosso", "America/Santiago");
+    expect(ticket.banner).toBe("MODIFICADO");
+    expect(ticket.headline).toBe("#12");
+    expect(ticket.lines).toHaveLength(1);
+    expect(ticket.changes).toEqual({ title: "Cambios 20:50 · Ana:", rows: ["Margarita (Familiar): 3 → 2", "Motivo: El cliente cambió de idea"] });
+    // A never-edited order prints as always.
+    const plain = kitchenTicket(order, "Forno Rosso", "America/Santiago");
+    expect(plain.banner).toBeUndefined();
+    expect(plain.changes).toBeUndefined();
+  });
+
+  it("reprints an edited order only on devices that print by themselves and already printed it", () => {
+    const edited = { revision: 1 };
+    expect(shouldReprintEdited("new", true, 0, edited)).toBe(true);
+    expect(shouldReprintEdited("accepted", true, 0, edited)).toBe(true);
+    expect(shouldReprintEdited("off", true, 0, edited)).toBe(false);
+    // Never printed here: the first ticket (when it prints) already shows the current order.
+    expect(shouldReprintEdited("new", false, 0, edited)).toBe(false);
+    // That revision is already on paper (the socket echo of an edit made here), or unknown.
+    expect(shouldReprintEdited("new", true, 1, edited)).toBe(false);
+    expect(shouldReprintEdited("new", true, null, edited)).toBe(false);
   });
 
   it("states the suggested tip as voluntary on the pre-bill, with and without it", () => {

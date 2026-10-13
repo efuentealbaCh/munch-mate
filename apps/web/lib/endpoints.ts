@@ -9,6 +9,7 @@ import type {
   DailySummary,
   DeliveryZoneInput,
   DeliveryZoneView,
+  EditOrderItemsInput,
   GeoPoint,
   InvitationPreview,
   InvitationView,
@@ -274,8 +275,17 @@ export const ordersApi = {
       method: "PUT",
       body: { riderId },
     }),
+  /**
+   * Changes the items of an order before the kitchen starts it (lines not in `keep` are removed; `add` is
+   * priced against the current menu). Staff with the roles of the order's channel.
+   * @throws ApiError ORDER_NOT_EDITABLE / ORDER_ALREADY_PAID / ORDER_CHANGED / TOO_MANY_ITEMS (`meta.max`) /
+   *   BELOW_MINIMUM_ORDER / sold-out codes (`meta.productId`) (409), INVALID_EDIT / ORDER_EMPTY / NOTHING_CHANGED
+   *   (400), FORBIDDEN_ROLE (403), ORDER_NOT_FOUND (404).
+   */
+  editItems: (restaurantId: string, orderId: string, body: EditOrderItemsInput) =>
+    api.request<OrderView>(`${restaurantPath(restaurantId)}/orders/${segment(orderId)}/items`, { method: "PUT", body }),
   /** Members with the rider role (owner, cashier). */
-  riders: (restaurantId: string) => api.request<RiderView[]>(`${restaurantPath(restaurantId)}/riders`),
+  riders:(restaurantId: string) => api.request<RiderView[]>(`${restaurantPath(restaurantId)}/riders`),
   /**
    * Receipt PDF of a pickup or delivery order.
    * @returns The file, or null while the workers are still generating it (202).

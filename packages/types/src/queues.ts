@@ -34,6 +34,8 @@ export interface QrSheetJob {
 export interface ReceiptJob {
   restaurantId: string;
   orderId: string;
+  /** Order revision printed: an edited order gets a new receipt (job id and key per revision). */
+  revision: number;
   /** Private-bucket key where the worker stores the PDF. */
   outputKey: string;
   receipt: {

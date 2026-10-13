@@ -35,6 +35,8 @@ function order(overrides: Partial<OrderRecord>): OrderRecord {
     riderName: null,
     customerId: null,
     clientOrderId: `c${seq}`,
+    revision: 0,
+    edits: [],
     createdAt: new Date("2026-10-12T23:30:00Z"),
     updatedAt: new Date(),
     ...overrides,

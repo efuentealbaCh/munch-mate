@@ -8,6 +8,7 @@ import { PdfProcessor } from "./pdf.processor";
 const receiptJob: ReceiptJob = {
   restaurantId: "r1",
   orderId: "o1",
+  revision: 0,
   outputKey: "restaurants/r1/receipts/o1.pdf",
   receipt: {
     restaurant: { name: "Don Pepe", phone: "" },

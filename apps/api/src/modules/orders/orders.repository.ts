@@ -34,6 +34,14 @@ export interface StatusChangeRecord {
   reason: string | null;
 }
 
+export interface OrderEditRecord {
+  at: Date;
+  byUserId: string;
+  byName: string | null;
+  reason: string | null;
+  changes: string[];
+}
+
 export interface OrderRecord {
   id: string;
   restaurantId: string;
@@ -50,6 +58,9 @@ export interface OrderRecord {
   deliveryFee: number;
   total: number;
   currency: string;
+  /** 0 until the staff edit the items; each edit bumps it. */
+  revision: number;
+  edits: OrderEditRecord[];
   customerName: string;
   customerPhone: string;
   customerEmail: string;
@@ -98,6 +109,14 @@ export interface NewOrder {
 const oid = (id: string) => new Types.ObjectId(id);
 export const DUPLICATE_KEY = 11000;
 
+/** Priced lines as stored (ids as ObjectIds). */
+const toItemDocs = (items: PricedItem[]) =>
+  items.map((item) => ({
+    ...item,
+    productId: oid(item.productId),
+    modifiers: item.modifiers.map((m) => ({ ...m, groupId: oid(m.groupId), optionId: oid(m.optionId) })),
+  }));
+
 /** Tenant-scoped, except the lookup by access token used by the customer's tracking page. */
 @Injectable()
 export class OrdersRepository {
@@ -120,11 +139,7 @@ export class OrdersRepository {
                 location: input.delivery.location ?? undefined,
               }
             : null,
-          items: input.items.map((item) => ({
-            ...item,
-            productId: oid(item.productId),
-            modifiers: item.modifiers.map((m) => ({ ...m, groupId: oid(m.groupId), optionId: oid(m.optionId) })),
-          })),
+          items: toItemDocs(input.items),
           status: "pending",
           statusHistory: [{ status: "pending", at: new Date(), byUserId: null, byName: null, reason: null }],
         },
@@ -295,6 +310,52 @@ export class OrdersRepository {
     return doc ? toRecord(doc) : null;
   }
 
+  /**
+   * Replaces the items of an order the staff edited, only if nothing happened to it since it was read: same
+   * status, same revision and still unpaid. Two staff members editing at once, or someone pressing "Empezar"
+   * or registering the payment meanwhile, make the second write miss instead of overwriting.
+   * @param clearCashAmount The new total exceeds the bill the customer said they would pay with.
+   * @returns The updated order, or null when it changed in between (or does not exist).
+   */
+  async editItems(
+    restaurantId: string,
+    orderId: string,
+    expected: { status: OrderStatus; revision: number },
+    change: {
+      items: PricedItem[];
+      subtotal: number;
+      total: number;
+      clearCashAmount: boolean;
+      edit: OrderEditRecord;
+    },
+  ): Promise<OrderRecord | null> {
+    if (!Types.ObjectId.isValid(orderId)) return null;
+    const doc = await this.orders
+      .findOneAndUpdate(
+        {
+          _id: oid(orderId),
+          restaurantId: oid(restaurantId),
+          status: expected.status,
+          // Orders older than item edits have no revision field: it reads as 0.
+          revision: expected.revision === 0 ? { $in: [0, null] } : expected.revision,
+          paymentStatus: "unpaid",
+        },
+        {
+          $set: {
+            items: toItemDocs(change.items),
+            subtotal: change.subtotal,
+            total: change.total,
+            ...(change.clearCashAmount ? { "expectedPayment.cashAmount": null } : {}),
+          },
+          $inc: { revision: 1 },
+          $push: { edits: { ...change.edit, byUserId: oid(change.edit.byUserId) } },
+        },
+        { returnDocument: "after" },
+      )
+      .lean();
+    return doc ? toRecord(doc) : null;
+  }
+
   /** The orders of a table account, oldest first. */
   async listByTableSession(restaurantId: string, tableSessionId: string): Promise<OrderRecord[]> {
     if (!Types.ObjectId.isValid(tableSessionId)) return [];
@@ -399,6 +460,14 @@ function toRecord(doc: OrderDoc): OrderRecord {
     deliveryFee: doc.deliveryFee ?? 0,
     total: doc.total,
     currency: doc.currency,
+    revision: doc.revision ?? 0,
+    edits: (doc.edits ?? []).map((edit) => ({
+      at: edit.at,
+      byUserId: edit.byUserId.toString(),
+      byName: edit.byName ?? null,
+      reason: edit.reason ?? null,
+      changes: [...(edit.changes ?? [])],
+    })),
     customerName: doc.customerName ?? "",
     customerPhone: doc.customerPhone ?? "",
     customerEmail: doc.customerEmail ?? "",

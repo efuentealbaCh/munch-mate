@@ -1,4 +1,4 @@
-import { checkTransition, nextStatuses } from "./order-state";
+import { canEditOrder, checkTransition, isOrderEditable, nextStatuses } from "./order-state";
 
 const kitchen = { kind: "staff" as const, roles: ["kitchen" as const] };
 const rider = { kind: "staff" as const, roles: ["rider" as const] };
@@ -117,5 +117,28 @@ describe("waiters (phase 8)", () => {
     expect(checkTransition("pickup", "pending", "accepted", waiter)).toEqual({ ok: false, reason: "forbidden" });
     expect(checkTransition("delivery", "ready", "out_for_delivery", waiter)).toEqual({ ok: false, reason: "forbidden" });
     expect(nextStatuses("pickup", "ready", waiter)).toEqual([]);
+  });
+});
+
+describe("editing an order's items", () => {
+  it("is possible only before the kitchen starts it", () => {
+    expect(isOrderEditable("pending")).toBe(true);
+    expect(isOrderEditable("accepted")).toBe(true);
+    for (const status of ["preparing", "ready", "served", "picked_up", "out_for_delivery", "delivered", "rejected", "cancelled"] as const) {
+      expect(isOrderEditable(status)).toBe(false);
+    }
+  });
+
+  it("is allowed to the roles that work the channel", () => {
+    for (const channel of ["dine_in", "pickup", "delivery"] as const) {
+      expect(canEditOrder(channel, ["owner"])).toBe(true);
+      expect(canEditOrder(channel, ["cashier"])).toBe(true);
+      expect(canEditOrder(channel, ["kitchen"])).toBe(true);
+      expect(canEditOrder(channel, ["rider"])).toBe(false);
+    }
+    expect(canEditOrder("dine_in", ["waiter"])).toBe(true);
+    expect(canEditOrder("pickup", ["waiter"])).toBe(false);
+    expect(canEditOrder("delivery", ["waiter", "rider"])).toBe(false);
+    expect(canEditOrder("delivery", ["rider", "cashier"])).toBe(true);
   });
 });

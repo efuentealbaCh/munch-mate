@@ -49,13 +49,22 @@ import {
   sortNewestFirst,
   upsertOrder,
 } from "@/lib/orders-board";
-import { kitchenTicket, loadPrintSettings, type PrintSettings, savePrintSettings, shouldAutoPrint } from "@/lib/print";
+import { canModifyOrder } from "@/lib/order-edit";
+import {
+  kitchenTicket,
+  loadPrintSettings,
+  type PrintSettings,
+  savePrintSettings,
+  shouldAutoPrint,
+  shouldReprintEdited,
+} from "@/lib/print";
 import { cn } from "@/lib/utils";
 import { useRestaurant } from "../restaurant-context";
 import { useRestaurantRealtime } from "../restaurant-realtime";
 import { OrderCard, PaymentBadge } from "./order-card";
 import { RiderMapDialog } from "./rider-map-dialog";
 import { HandOverDialog, PaymentDialog, ReadyTimeDialog, ReasonDialog, RiderDialog } from "./order-dialogs";
+import { OrderEditDialog } from "./order-edit-dialog";
 import { PrintSettingsDialog } from "./print-settings-dialog";
 
 /** How long a new order stays highlighted. */
@@ -144,6 +153,8 @@ function OrdersBoard() {
   const [paying, setPaying] = useState<OrderView | null>(null);
   const [payMethod, setPayMethod] = useState<PaymentMethod | null>(null);
   const [acceptingWithTime, setAcceptingWithTime] = useState<OrderView | null>(null);
+  // "Modificar": the copy the dialog was opened on (the live one comes from the board's list).
+  const [editing, setEditing] = useState<OrderView | null>(null);
   // Phase 7: follow the rider of a delivery on its way (only with the base map).
   const map = useMapConfig();
   const [trackingRider, setTrackingRider] = useState<OrderView | null>(null);
@@ -158,13 +169,21 @@ function OrdersBoard() {
   // Receipt printer of this device (phase 8): paper and automatic printing, kept on the device.
   const [printSettings, setPrintSettings] = useState<PrintSettings>(() => loadPrintSettings(localStore(), restaurant.id));
   const printer = useTicketPrinter(printSettings.paper);
-  const printed = useRef(new Set<string>());
+  // Order id → revision of the last ticket this device printed for it (an edit later prints the new one).
+  const printed = useRef(new Map<string, number>());
   const printOrder = (order: OrderView) => {
-    printed.current.add(order.id);
+    printed.current.set(order.id, order.revision);
     printer.print(kitchenTicket(order, restaurant.name, restaurant.timezone));
   };
   const autoPrint = (event: "created" | "updated", order: OrderView, previous?: OrderView | null) => {
-    if (printed.current.has(order.id)) return;
+    const printedRevision = printed.current.get(order.id);
+    if (printedRevision !== undefined) {
+      // The kitchen has an older ticket: an edit prints the new one, marked "MODIFICADO" (kitchenTicket).
+      // Compared with what was printed, not with the board's copy, so the socket echo of an edit made here
+      // (it may arrive before or after the api's answer) never prints twice.
+      if (shouldReprintEdited(printSettings.auto, true, printedRevision, order)) printOrder(order);
+      return;
+    }
     if (shouldAutoPrint(printSettings.auto, event, order, previous)) printOrder(order);
   };
   function changePrintSettings(next: PrintSettings) {
@@ -464,6 +483,7 @@ function OrdersBoard() {
                 canPay={canPay(order)}
                 now={now}
                 onPrint={() => printOrder(order)}
+                onEdit={canModifyOrder(order, roles) ? () => setEditing(order) : undefined}
                 fresh={fresh.has(order.id)}
                 busy={busy[order.id] ?? null}
                 onAction={(to) => onAction(order, to)}
@@ -502,6 +522,26 @@ function OrdersBoard() {
             setWithReason(null);
             if (ok) toast.success(`Pedido #${order.ticketNumber} ${REASON_DIALOG_TEXTS[status].done}`);
           });
+        }}
+      />
+      <OrderEditDialog
+        restaurantId={restaurant.id}
+        restaurantSlug={restaurant.slug}
+        maxItems={restaurant.maxItemsPerOrder}
+        order={editing}
+        live={editing ? active.orders?.find((o) => o.id === editing.id) : undefined}
+        onOpenChange={(open) => !open && setEditing(null)}
+        onSaved={(updated, previous) => {
+          // Edited on this device: it reprints now if set to (the socket echo is then skipped as already printed).
+          autoPrint("updated", updated, previous);
+          applyEverywhere(updated);
+          setEditing(null);
+        }}
+        onReload={setEditing}
+        onRefresh={refetchAll}
+        onForbidden={() => {
+          setEditing(null);
+          reloadRestaurant();
         }}
       />
       <ReadyTimeDialog

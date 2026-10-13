@@ -159,6 +159,7 @@ describe("workers (integration)", () => {
       const data: ReceiptJob = {
         restaurantId,
         orderId,
+        revision: 0,
         outputKey,
         receipt: {
           restaurant: { name: "Sanguchería", phone: "+56 2 2345 6789" },

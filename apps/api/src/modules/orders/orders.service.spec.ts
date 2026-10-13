@@ -5,6 +5,7 @@ import type { TableSessionsService } from "./table-sessions.service";
 import type { PdfQueue } from "../../infra/queue/pdf.queue";
 import type { StorageService } from "../../infra/storage/storage.service";
 import type { Connection } from "mongoose";
+import type { PinoLogger } from "nestjs-pino";
 import { hashToken } from "../../common/crypto/tokens";
 import type { ApiEnv } from "../../config/env.validation";
 import type { CategoriesRepository } from "../menu/categories.repository";
@@ -75,6 +76,8 @@ function order(overrides: Partial<OrderRecord> = {}): OrderRecord {
     riderName: null,
     customerId: null,
     clientOrderId: "c-1",
+    revision: 0,
+    edits: [],
     tableSessionId: null,
     notifyBy: null,
     createdAt: new Date(),
@@ -120,7 +123,10 @@ function setup(
     enqueueReceipt: jest.fn(async () => undefined),
     receiptFailed: jest.fn(async () => false),
   };
-  const storage = { getPrivate: jest.fn(async () => options.receipt ?? null) };
+  const storage = {
+    getPrivate: jest.fn(async () => options.receipt ?? null),
+    deletePrivate: jest.fn(async () => undefined),
+  };
   const restaurantRecord = () => ({
     ...restaurant,
     acceptingOrders: options.accepting ?? true,
@@ -159,6 +165,28 @@ function setup(
     listActive: jest.fn(async () => [order()]),
     listByBusinessDate: jest.fn(async () => []),
     markPaid: jest.fn(async () => order({ paymentStatus: "paid", paymentMethod: "cash" })),
+    editItems: jest.fn(
+      async (
+        _r: string,
+        _o: string,
+        _expected: { status: string; revision: number },
+        change: { items: OrderRecord["items"]; subtotal: number; total: number; clearCashAmount: boolean; edit: OrderRecord["edits"][number] },
+      ): Promise<OrderRecord | null> => {
+        const current = options.current ?? order();
+        return order({
+          ...current,
+          items: change.items,
+          subtotal: change.subtotal,
+          total: change.total,
+          revision: current.revision + 1,
+          edits: [...current.edits, change.edit],
+          expectedPayment:
+            change.clearCashAmount && current.expectedPayment
+              ? { ...current.expectedPayment, cashAmount: null }
+              : current.expectedPayment,
+        });
+      },
+    ),
   };
   const service = new OrdersService(
     orders as unknown as OrdersRepository,
@@ -207,6 +235,7 @@ function setup(
     messaging as unknown as MessagingService,
     tableSessions as unknown as TableSessionsService,
     { getOrOpen: jest.fn(async () => ({ id: "s1" })) } as unknown as TableSessionsRepository,
+    { warn: jest.fn() } as unknown as PinoLogger,
   );
   return { service, orders, emitted, pdfQueue, storage, tracking, push, messaging, tableSessions };
 }
@@ -460,7 +489,7 @@ describe("OrdersService pickup acceptance and receipts", () => {
     pdfQueue.receiptFailed.mockResolvedValueOnce(true);
 
     await expect(service.getReceiptForCustomer("tok")).rejects.toMatchObject({ response: { code: "RECEIPT_FAILED" } });
-    expect(pdfQueue.receiptFailed).toHaveBeenCalledWith("o1");
+    expect(pdfQueue.receiptFailed).toHaveBeenCalledWith("o1", 0);
   });
 
   it("has no receipt before acceptance or for dine-in orders", async () => {
@@ -863,5 +892,199 @@ describe("OrdersService phase 8: table accounts, notices and waiters", () => {
     const { service, tableSessions } = setup({ current: order({ tableSessionId: "s1" }) });
     await service.changeStatus(tenant, "u1", "o1", "accepted");
     expect(tableSessions.notifyChange).toHaveBeenCalledWith("r1", "s1");
+  });
+});
+
+describe("OrdersService.editItems", () => {
+  const completo = (quantity: number) => ({
+    productId: "p1",
+    name: "Completo",
+    unitPrice: 1000,
+    regularUnitPrice: 1000,
+    promoLabel: "",
+    quantity,
+    modifiers: [],
+    note: "",
+    lineTotal: 1000 * quantity,
+  });
+  const acceptedHistory = [
+    { status: "pending" as const, at: new Date(), byUserId: null, byName: null, reason: null },
+    { status: "accepted" as const, at: new Date(), byUserId: "u1", byName: "Ana", reason: null },
+  ];
+  const acceptedPickup = (overrides: Partial<OrderRecord> = {}) =>
+    pickupOrder({
+      status: "accepted",
+      statusHistory: acceptedHistory,
+      items: [completo(2)],
+      subtotal: 2000,
+      total: 2000,
+      customerEmail: "",
+      ...overrides,
+    });
+  const edit = (overrides: object = {}) => ({
+    revision: 0,
+    keep: [{ line: 0, quantity: 3 }],
+    add: [{ productId: "p1", quantity: 1, modifiers: [] }],
+    ...overrides,
+  });
+
+  it("keeps the snapshot of kept lines, prices added ones and records who changed what", async () => {
+    const { service, orders, emitted } = setup({ current: acceptedPickup() });
+
+    const view = await service.editItems(tenant, "u1", "o1", edit({ reason: "Llamó la clienta" }));
+
+    expect(orders.editItems).toHaveBeenCalledWith(
+      "r1",
+      "o1",
+      { status: "accepted", revision: 0 },
+      expect.objectContaining({
+        items: [completo(3), completo(1)],
+        subtotal: 4000,
+        total: 4000,
+        clearCashAmount: false,
+        edit: expect.objectContaining({
+          byUserId: "u1",
+          byName: "Ana",
+          reason: "Llamó la clienta",
+          changes: ["Completo: 2 → 3", "+1 Completo"],
+        }),
+      }),
+    );
+    expect(view).toMatchObject({ revision: 1, total: 4000, edits: [{ byName: "Ana", changes: ["Completo: 2 → 3", "+1 Completo"] }] });
+    expect(emitted).toEqual(["restaurant:order.updated", "order:order.status"]);
+  });
+
+  it("regenerates the receipt of an accepted order without emailing it again", async () => {
+    const { service, pdfQueue, storage } = setup({ current: acceptedPickup() });
+
+    await service.editItems(tenant, "u1", "o1", edit());
+
+    expect(storage.deletePrivate).toHaveBeenCalledWith(["restaurants/r1/receipts/o1.pdf"]);
+    expect(pdfQueue.enqueueReceipt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        revision: 1,
+        outputKey: "restaurants/r1/receipts/o1-r1.pdf",
+        receipt: expect.objectContaining({ total: 4000 }),
+        email: null,
+      }),
+    );
+  });
+
+  it("keeps the old receipt when it may still be the confirmation email's attachment", async () => {
+    const { service, pdfQueue, storage } = setup({ current: acceptedPickup({ customerEmail: "ana@example.com" }) });
+
+    await service.editItems(tenant, "u1", "o1", edit());
+
+    expect(storage.deletePrivate).not.toHaveBeenCalled();
+    expect(pdfQueue.enqueueReceipt).toHaveBeenCalledWith(expect.objectContaining({ email: null }));
+  });
+
+  it("does not ask for a receipt for pending or table orders, and refreshes the table account", async () => {
+    const pending = setup({ current: pickupOrder({ items: [completo(2)] }) });
+    await pending.service.editItems(tenant, "u1", "o1", edit());
+    expect(pending.pdfQueue.enqueueReceipt).not.toHaveBeenCalled();
+
+    const table = setup({ current: order({ status: "accepted", items: [completo(2)], tableSessionId: "s1" }) });
+    await table.service.editItems(tenant, "u1", "o1", edit());
+    expect(table.pdfQueue.enqueueReceipt).not.toHaveBeenCalled();
+    expect(table.tableSessions.notifyChange).toHaveBeenCalledWith("r1", "s1");
+  });
+
+  it.each([
+    ["once the kitchen started it", { status: "preparing" as const }, "ORDER_NOT_EDITABLE"],
+    ["once finished", { status: "cancelled" as const }, "ORDER_NOT_EDITABLE"],
+    ["once paid", { paymentStatus: "paid" as const, paymentMethod: "cash" as const }, "ORDER_ALREADY_PAID"],
+  ])("refuses edits %s", async (_, overrides, code) => {
+    const { service, orders } = setup({ current: acceptedPickup(overrides) });
+
+    await expect(service.editItems(tenant, "u1", "o1", edit())).rejects.toMatchObject({ status: 409, response: { code } });
+    expect(orders.editItems).not.toHaveBeenCalled();
+  });
+
+  it("allows only the roles that work the order's channel", async () => {
+    const rider: TenantContext = { ...tenant, roles: ["rider"] };
+    const waiter: TenantContext = { ...tenant, roles: ["waiter"] };
+    const tableOrder = order({ items: [completo(2)] });
+
+    await expect(setup({ current: tableOrder }).service.editItems(rider, "u1", "o1", edit())).rejects.toMatchObject({
+      status: 403,
+      response: { code: "FORBIDDEN_ROLE" },
+    });
+    await expect(setup({ current: acceptedPickup() }).service.editItems(waiter, "u1", "o1", edit())).rejects.toMatchObject({
+      response: { code: "FORBIDDEN_ROLE" },
+    });
+    await expect(setup({ current: tableOrder }).service.editItems(waiter, "u1", "o1", edit())).resolves.toMatchObject({
+      revision: 1,
+    });
+  });
+
+  it("reports a stale revision or a concurrent change instead of overwriting it", async () => {
+    const stale = setup({ current: acceptedPickup({ revision: 2 }) });
+    await expect(stale.service.editItems(tenant, "u1", "o1", edit({ revision: 1 }))).rejects.toMatchObject({
+      response: { code: "ORDER_CHANGED" },
+    });
+    expect(stale.orders.editItems).not.toHaveBeenCalled();
+
+    const raced = setup({ current: acceptedPickup() });
+    raced.orders.editItems.mockResolvedValueOnce(null);
+    await expect(raced.service.editItems(tenant, "u1", "o1", edit())).rejects.toMatchObject({
+      response: { code: "ORDER_CHANGED" },
+    });
+    expect(raced.pdfQueue.enqueueReceipt).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["an empty order", { keep: [], add: [] }, "ORDER_EMPTY"],
+    ["no changes", { keep: [{ line: 0, quantity: 2 }], add: [] }, "NOTHING_CHANGED"],
+    ["an unknown line", { keep: [{ line: 1, quantity: 1 }] }, "INVALID_EDIT"],
+    ["a repeated line", { keep: [{ line: 0, quantity: 1 }, { line: 0, quantity: 1 }] }, "INVALID_EDIT"],
+  ])("rejects %s with 400", async (_, overrides, code) => {
+    await expect(
+      setup({ current: acceptedPickup() }).service.editItems(tenant, "u1", "o1", edit(overrides)),
+    ).rejects.toMatchObject({ status: 400, response: { code } });
+  });
+
+  it("applies the same limits and menu checks as a new order", async () => {
+    const tooMany = edit({ keep: [{ line: 0, quantity: 6 }], add: [{ productId: "p1", quantity: 5, modifiers: [] }] });
+    await expect(setup({ current: acceptedPickup() }).service.editItems(tenant, "u1", "o1", tooMany)).rejects.toMatchObject({
+      response: { code: "TOO_MANY_ITEMS", meta: { max: "10" } },
+    });
+
+    const gone = edit({ add: [{ productId: "p9", quantity: 1, modifiers: [] }] });
+    await expect(setup({ current: acceptedPickup() }).service.editItems(tenant, "u1", "o1", gone)).rejects.toMatchObject({
+      status: 409,
+      response: { code: "PRODUCT_NOT_AVAILABLE", meta: { productId: "p9" } },
+    });
+  });
+
+  it("keeps a delivery above its zone minimum while the zone exists", async () => {
+    const delivery = deliveryOrder({ status: "accepted", statusHistory: acceptedHistory, items: [completo(6)], subtotal: 6000 });
+    const smaller = edit({ keep: [{ line: 0, quantity: 2 }], add: [] });
+
+    await expect(setup({ current: delivery }).service.editItems(tenant, "u1", "o1", smaller)).rejects.toMatchObject({
+      response: { code: "BELOW_MINIMUM_ORDER", meta: { minOrder: "5000" } },
+    });
+    await expect(setup({ current: delivery, zone: null }).service.editItems(tenant, "u1", "o1", smaller)).resolves.toMatchObject({
+      subtotal: 2000,
+      total: 3500,
+    });
+  });
+
+  it("drops the cash amount when the new total exceeds it, and keeps it otherwise", async () => {
+    const delivery = deliveryOrder({ items: [completo(6)], subtotal: 6000 });
+
+    const bigger = setup({ current: delivery });
+    const view = await bigger.service.editItems(
+      tenant,
+      "u1",
+      "o1",
+      edit({ keep: [{ line: 0, quantity: 6 }], add: [{ productId: "p1", quantity: 3, modifiers: [] }] }),
+    );
+    expect(bigger.orders.editItems.mock.calls[0]![3]).toMatchObject({ total: 10500, clearCashAmount: true });
+    expect(view.expectedPayment).toEqual({ method: "cash", cashAmount: null, change: null });
+
+    const smaller = setup({ current: delivery });
+    await smaller.service.editItems(tenant, "u1", "o1", edit({ keep: [{ line: 0, quantity: 5 }], add: [] }));
+    expect(smaller.orders.editItems.mock.calls[0]![3]).toMatchObject({ total: 6500, clearCashAmount: false });
   });
 });

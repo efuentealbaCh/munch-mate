@@ -64,6 +64,15 @@ export function useTicketPrinter(paper: PaperWidth): { print(ticket: Ticket): vo
 export function TicketView({ ticket }: { ticket: Ticket }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "2mm" }} data-testid="ticket">
+      {ticket.banner ? (
+        // A thick frame instead of a black background: browsers skip backgrounds when printing by default.
+        <div
+          style={{ border: "0.8mm solid #000", padding: "1mm", textAlign: "center", fontSize: "1.5em", fontWeight: 900, letterSpacing: "0.1em" }}
+          data-testid="ticket-banner"
+        >
+          {ticket.banner}
+        </div>
+      ) : null}
       <div style={{ textAlign: "center" }}>
         <div style={{ fontSize: "1.9em", fontWeight: 900, lineHeight: 1.1 }}>{ticket.headline}</div>
         <div style={{ fontWeight: 700 }}>{ticket.title}</div>
@@ -96,6 +105,19 @@ export function TicketView({ ticket }: { ticket: Ticket }) {
               <span>{total.amount}</span>
             </div>
           ))}
+        </>
+      ) : null}
+      {ticket.changes ? (
+        <>
+          <hr style={{ border: 0, borderTop: "1px dashed #000", margin: 0 }} />
+          <div>
+            <div style={{ fontWeight: 700 }}>{ticket.changes.title}</div>
+            {ticket.changes.rows.map((row, index) => (
+              <div key={`${row}-${index}`} style={{ paddingLeft: "3mm" }}>
+                {row}
+              </div>
+            ))}
+          </div>
         </>
       ) : null}
       {ticket.footer.length > 0 ? (
