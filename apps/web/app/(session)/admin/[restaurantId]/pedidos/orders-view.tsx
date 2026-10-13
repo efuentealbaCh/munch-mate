@@ -2,7 +2,7 @@
 
 import { ORDER_STATUS_LABELS, type OrderStatus, type OrderView, type PaymentMethod } from "@app/types";
 import { nextStatuses } from "@app/utils";
-import { BellOffIcon, BellRingIcon, InboxIcon, WifiOffIcon } from "lucide-react";
+import { BellOffIcon, BellRingIcon, InboxIcon, PrinterIcon, TriangleAlertIcon, WifiOffIcon } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useId, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AccessDenied } from "@/components/access-denied";
@@ -17,11 +17,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useChime } from "@/hooks/use-chime";
 import { useMapConfig } from "@/hooks/use-map-config";
 import { useNow } from "@/hooks/use-now";
+import { usePrintSummary } from "@/hooks/use-print-summary";
 import { useSocketEvent } from "@/hooks/use-realtime";
 import { useReceiptDownload } from "@/hooks/use-receipt-download";
+import { ApiError, NETWORK_ERROR } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { localStore } from "@/lib/browser-storage";
-import { ordersApi, restaurantsApi } from "@/lib/endpoints";
+import { ordersApi, printAgentsApi, restaurantsApi } from "@/lib/endpoints";
 import { errorMessage, hasCode } from "@/lib/errors";
 import { formatPrice } from "@/lib/money";
 import { liveOpenState, nextOpeningLabel } from "@/lib/opening-hours";
@@ -58,6 +60,7 @@ import {
   shouldAutoPrint,
   shouldReprintEdited,
 } from "@/lib/print";
+import { canSeePrintJobs, jobFailedMessage, kitchenPrintTarget, type PrintBanners, printBanners, queuedMessage } from "@/lib/printers";
 import { cn } from "@/lib/utils";
 import { useRestaurant } from "../restaurant-context";
 import { useRestaurantRealtime } from "../restaurant-realtime";
@@ -190,6 +193,61 @@ function OrdersBoard() {
     setPrintSettings(next);
     savePrintSettings(localStore(), restaurant.id, next);
   }
+  // Print agent (phase 8): whether a computer of the restaurant prints the tickets by itself.
+  const printAgents = usePrintSummary(restaurant.id, socket, syncCount);
+  const banners = printBanners(printAgents.summary, printSettings.auto);
+  const toAgent = kitchenPrintTarget(printAgents.summary) === "agent";
+  const [sendingPrint, setSendingPrint] = useState<ReadonlySet<string>>(new Set());
+  function setSending(orderId: string, sending: boolean) {
+    setSendingPrint((current) => {
+      const next = new Set(current);
+      if (sending) next.add(orderId);
+      else next.delete(orderId);
+      return next;
+    });
+  }
+
+  /**
+   * «Comanda»: on the print agent's kitchen printers when there are any, else (none took it, or the api could
+   * not be reached) through this browser, so a ticket is never lost.
+   */
+  async function printKitchen(order: OrderView) {
+    if (kitchenPrintTarget(printAgents.summary) === "browser") return printOrder(order);
+    setSending(order.id, true);
+    try {
+      const { queued } = await ordersApi.printKitchen(restaurant.id, order.id);
+      if (queued > 0) toast.success(queuedMessage(queued));
+      else {
+        printOrder(order);
+        printAgents.reload();
+      }
+    } catch (failure) {
+      if (!(failure instanceof ApiError) || failure.code === NETWORK_ERROR || failure.status >= 500) {
+        toast.info("No pudimos enviarla a la impresora de cocina: se imprime en este dispositivo.");
+        printOrder(order);
+      } else handleFailure(failure);
+    } finally {
+      setSending(order.id, false);
+    }
+  }
+
+  async function retryPrintJob(jobId: string) {
+    try {
+      await printAgentsApi.retryJob(restaurant.id, jobId);
+      toast.success("Enviado otra vez a la impresora");
+    } catch (failure) {
+      toast.error(errorMessage(failure));
+    }
+  }
+
+  useSocketEvent(socket, "print.job-failed", (job) => {
+    // The kitchen cannot retry (403): the owner and the cashier get the notice with the action.
+    if (!canSeePrintJobs(roles)) return;
+    toast.error(jobFailedMessage(job), {
+      duration: 15_000,
+      action: { label: "Reintentar", onClick: () => void retryPrintJob(job.id) },
+    });
+  });
 
   const applyEverywhere = useCallback(
     (order: OrderView) => {
@@ -434,6 +492,7 @@ function OrdersBoard() {
           {user ? <PushDeviceButton userId={user.id} label="Activar avisos en este dispositivo" /> : null}
           <PrintSettingsDialog
             settings={printSettings}
+            agentPrints={banners.agentPrints}
             onChange={changePrintSettings}
             onTest={() =>
               printer.print({
@@ -449,6 +508,7 @@ function OrdersBoard() {
           <LiveBadge status={live} />
         </div>
       </section>
+      <PrintAgentBanners banners={banners} onBrowserOff={() => changePrintSettings({ ...printSettings, auto: "off" })} />
       {chime.enabled && chime.blocked ? (
         <p className="-mt-3 text-sm text-muted-foreground" role="status">
           Toca la pantalla una vez para que el navegador permita el sonido.
@@ -482,7 +542,9 @@ function OrdersBoard() {
                 actions={actionsFor(order)}
                 canPay={canPay(order)}
                 now={now}
-                onPrint={() => printOrder(order)}
+                onPrint={() => void printKitchen(order)}
+                onPrintHere={toAgent ? () => printOrder(order) : undefined}
+                printBusy={sendingPrint.has(order.id)}
                 onEdit={canModifyOrder(order, roles) ? () => setEditing(order) : undefined}
                 fresh={fresh.has(order.id)}
                 busy={busy[order.id] ?? null}
@@ -591,6 +653,46 @@ function OrdersBoard() {
         onOpenChange={(open) => !open && setPaying(null)}
         onPay={(method) => paying && void pay(paying, method)}
       />
+    </div>
+  );
+}
+
+/**
+ * Notices about the print agent (phase 8): its computer is offline (tickets wait in the queue), or it prints
+ * the tickets while this device prints them too.
+ */
+function PrintAgentBanners({ banners, onBrowserOff }: { banners: PrintBanners; onBrowserOff(): void }) {
+  if (!banners.agentPrints) return null;
+  return (
+    <div className="-mt-2 flex flex-col gap-2">
+      {banners.offline ? (
+        <p
+          className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"
+          role="alert"
+          data-testid="print-agent-offline"
+        >
+          <TriangleAlertIcon className="mt-0.5 size-4 shrink-0" aria-hidden />
+          La impresora de cocina está desconectada: las comandas esperan hasta que vuelva.
+        </p>
+      ) : null}
+      <div
+        className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-muted-foreground"
+        role="status"
+        data-testid="print-agent-banner"
+      >
+        <span className="flex items-center gap-2">
+          <PrinterIcon className="size-4 shrink-0" aria-hidden />
+          Las comandas salen por la impresora de cocina.
+        </span>
+        {banners.duplicateBrowser ? (
+          <span className="flex flex-wrap items-center gap-2 text-warning-foreground">
+            Este dispositivo también las imprime solo: desactívala aquí para no imprimir dos veces.
+            <Button size="sm" variant="outline" onClick={onBrowserOff}>
+              Desactivar aquí
+            </Button>
+          </span>
+        ) : null}
+      </div>
     </div>
   );
 }

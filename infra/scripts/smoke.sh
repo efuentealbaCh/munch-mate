@@ -160,6 +160,16 @@ if [ "$code" = "401" ]; then pass "the floor requires a session (401)"; else fai
 code=$(status "$BASE/api/restaurants/000000000000000000000000/reports/sales.csv?from=2026-01-01&to=2026-01-01&kind=orders")
 if [ "$code" = "401" ]; then pass "sales export requires a session (401)"; else fail "anonymous sales export returned $code"; fi
 
+# Print agents (phase 8), safe everywhere: an unknown pairing code is refused (it creates nothing) and the
+# owner's printer settings need a session.
+body=$($CURL -X POST -H 'Content-Type: application/json'   -d '{"code":"ZZZZ-ZZZZ","name":"smoke","appVersion":"smoke"}' "$BASE/api/print-agents/pair" || true)
+case "$body" in
+  *'"INVALID_PAIRING_CODE"'*) pass "print agent pairing with an unknown code → 400" ;;
+  *) fail "print agent pairing with an unknown code: $body" ;;
+esac
+code=$(status "$BASE/api/restaurants/000000000000000000000000/print-agents")
+if [ "$code" = "401" ]; then pass "print agents require a session (401)"; else fail "anonymous print agents returned $code"; fi
+
 # Platform admin, safe everywhere: requires a session.
 code=$(status "$BASE/api/platform/restaurants")
 if [ "$code" = "401" ]; then pass "platform admin requires a session (401)"; else fail "anonymous platform admin returned $code"; fi

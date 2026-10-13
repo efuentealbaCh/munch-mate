@@ -4,5 +4,6 @@ export * from "./email";
 export * from "./geo";
 export * from "./menu";
 export * from "./orders";
+export * from "./printing";
 export * from "./queues";
 export * from "./restaurants";

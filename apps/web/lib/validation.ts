@@ -4,6 +4,7 @@ import {
   MENU_LIMITS,
   ORDER_LIMITS,
   PAYMENT_METHODS,
+  PRINT_LIMITS,
   type PublicDeliveryZone,
   RESTAURANT_ROLES,
 } from "@app/types";
@@ -323,6 +324,15 @@ const tableLabel = z
 /** TableDto / UpdateTableDto. */
 export const tableSchema = z.object({ label: tableLabel });
 
+/** RenamePrintAgentDto: the name of a paired computer ("Cocina"). */
+export const printAgentNameSchema = z.object({
+  name: z
+    .string()
+    .overwrite(cleanLine)
+    .min(1, "Ingresa un nombre, ej. Cocina")
+    .max(PRINT_LIMITS.agentNameMax, `El nombre puede tener hasta ${PRINT_LIMITS.agentNameMax} caracteres`),
+});
+
 const tableNumber = z
   .number({ error: "Ingresa un número" })
   .int("Usa un número entero")
@@ -390,6 +400,7 @@ export type DeliveryCheckoutValues = z.infer<ReturnType<typeof deliveryCheckoutS
 export type DeliveryZoneValues = z.infer<typeof deliveryZoneSchema>;
 export type StatusReasonValues = z.infer<typeof statusReasonSchema>;
 export type TableValues = z.infer<typeof tableSchema>;
+export type PrintAgentNameValues = z.infer<typeof printAgentNameSchema>;
 export type BulkTablesValues = z.infer<typeof bulkTablesSchema>;
 export type CustomerProfileValues = z.infer<typeof customerProfileSchema>;
 export type SavedAddressValues = z.infer<typeof savedAddressSchema>;

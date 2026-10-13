@@ -19,6 +19,7 @@ import {
 import { InjectConnection } from "@nestjs/mongoose";
 import type { Connection } from "mongoose";
 import { apiError } from "../../common/errors/api-error";
+import { PrintJobsService } from "../printing/print-jobs.service";
 import { RealtimeService } from "../realtime/realtime.service";
 import type { TenantContext } from "../restaurants/restaurant-access.guard";
 import { type RestaurantRecord, RestaurantsRepository } from "../restaurants/restaurants.repository";
@@ -30,6 +31,7 @@ import { billTotals, toPublicTableBill, toTableSessionView } from "./table-bill"
 import {
   type CloseChange,
   type NewTablePayment,
+  type TablePaymentRecord,
   type TableSessionRecord,
   TableSessionsRepository,
 } from "./table-sessions.repository";
@@ -39,6 +41,7 @@ import {
   itemsAmount,
   mainMethod,
   methodsOf,
+  paidAmount,
   paidEqualParts,
   remaining,
   SplitError,
@@ -90,6 +93,7 @@ export class TableSessionsService {
     private readonly users: UsersRepository,
     private readonly realtime: RealtimeService,
     @InjectConnection() private readonly connection: Connection,
+    private readonly printing: PrintJobsService,
   ) {}
 
   // ── Customers (table QR) ────────────────────────────────────────────────
@@ -408,6 +412,9 @@ export class TableSessionsService {
       return result;
     });
 
+    // $push appends: the payment just recorded is the last one.
+    const recorded = payment ? updated.payments.at(-1) : undefined;
+    if (recorded) await this.printReceipt(tenant.restaurantId, updated, orders, recorded, closing !== null);
     if (!closing) {
       await this.notifyChange(tenant.restaurantId, updated.id);
       return toTableSessionView(updated, orders, restaurant);
@@ -417,6 +424,52 @@ export class TableSessionsService {
     for (const order of paidOrders) this.realtime.toRestaurant(tenant.restaurantId).emit("order.updated", toOrderView(order));
     await this.notifyChange(tenant.restaurantId, updated.id);
     return toTableSessionView(updated, paidOrders, restaurant);
+  }
+
+  /**
+   * The payment receipt of a payment just recorded, on the print agents' receipt printers (never fails the
+   * payment: `PrintJobsService` logs its errors).
+   * @param orders The account's orders as the payment was computed (before closing paid them).
+   */
+  private async printReceipt(
+    restaurantId: string,
+    session: TableSessionRecord,
+    orders: readonly OrderRecord[],
+    payment: TablePaymentRecord,
+    closed: boolean,
+  ): Promise<void> {
+    const paid = paidAmount(session.payments);
+    const left = closed ? 0 : Math.max(0, remaining(orders, session.payments));
+    const byId = new Map(orders.map((order) => [order.id, order]));
+    await this.printing.tablePayment(restaurantId, {
+      sessionId: session.id,
+      paymentId: payment.id,
+      tableLabel: session.tableLabel,
+      at: payment.at,
+      byName: payment.byName,
+      method: payment.method,
+      payment: {
+        kind: payment.kind,
+        part: payment.part,
+        parts: session.split?.mode === "equal" ? session.split.parts : null,
+        amount: payment.amount,
+        tip: payment.tip,
+        items: payment.items.flatMap((item) => {
+          const line = byId.get(item.orderId)?.items[item.line];
+          if (!line) return [];
+          return [
+            {
+              quantity: item.quantity,
+              name: line.name,
+              details: line.modifiers.map((m) => `${m.groupName}: ${m.optionName}`),
+              // lineTotal = unit (options included) × quantity, so the division is exact.
+              amount: (line.lineTotal / line.quantity) * item.quantity,
+            },
+          ];
+        }),
+      },
+      account: { total: paid + left, paid, remaining: left, closed },
+    });
   }
 
   /** Why a conditional write on an account missed: it is not open any more (404), or it changed (409). */

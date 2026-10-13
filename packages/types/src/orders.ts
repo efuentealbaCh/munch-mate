@@ -1,4 +1,5 @@
 import type { GeoArea, GeoPoint, RiderPosition } from "./geo";
+import type { PrintJobView } from "./printing";
 import type { MessageChannel, OpenState } from "./restaurants";
 
 /** Channels a customer can order through: dine_in (phase 3), pickup (phase 4), delivery (phase 5). */
@@ -658,6 +659,8 @@ export interface ServerToClientEvents {
   "table.updated": (session: TableSessionView) => void;
   /** The same, as the customers at the table see it (room `table:<tableId>`). */
   "table.bill": (bill: PublicTableBill) => void;
+  /** A job of a print agent failed or expired (staff): the web offers to retry it or print from the browser. */
+  "print.job-failed": (job: PrintJobView) => void;
 }
 
 /** Events the client emits. Acks return `{ ok: true }` or `{ ok: false, code }`. */

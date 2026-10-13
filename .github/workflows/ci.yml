@@ -65,3 +65,50 @@ jobs:
             NEXT_PUBLIC_APP_URL=${{ vars.PUBLIC_APP_URL }}
           cache-from: type=gha,scope=${{ matrix.app }}
           cache-to: type=gha,mode=max,scope=${{ matrix.app }}
+
+  print-agent-exe:
+    # The print agent ships as a Windows .exe (Node single executable, apps/print-agent): it is tested and built
+    # on Windows. On main, the .exe is published as a GitHub Release `print-agent-v<version>`; the api's
+    # PRINT_AGENT_DOWNLOAD_URL should point to that release asset.
+    runs-on: windows-latest
+    permissions:
+      contents: write # gh release create (main only)
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6 # version from package.json "packageManager"
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc # the .exe embeds this Node version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --filter "@app/print-agent..."
+      # @app/types and @app/utils resolve to their built dist.
+      - run: pnpm --filter "@app/print-agent^..." build
+      - run: pnpm --filter @app/print-agent typecheck
+      - run: pnpm --filter @app/print-agent test
+      - run: pnpm --filter @app/print-agent build:exe
+      - name: Version
+        id: version
+        shell: bash
+        run: echo "version=$(node -p "require('./apps/print-agent/package.json').version")" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: munchmate-impresora-${{ steps.version.outputs.version }}
+          path: apps/print-agent/dist/munchmate-impresora.exe
+          if-no-files-found: error
+      - name: Release (main)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          tag="print-agent-v${VERSION}"
+          # A published version is never replaced: bump "version" in apps/print-agent/package.json to release again.
+          if gh release view "$tag" > /dev/null 2>&1; then
+            echo "Release $tag already exists; nothing to publish."
+            exit 0
+          fi
+          gh release create "$tag" apps/print-agent/dist/munchmate-impresora.exe \
+            --target "$GITHUB_SHA" \
+            --title "Agente de impresión ${VERSION}" \
+            --notes "Agente de impresión de Munch Mate para Windows (${VERSION}). Descarga munchmate-impresora.exe y ábrelo con doble clic."

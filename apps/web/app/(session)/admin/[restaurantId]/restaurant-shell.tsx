@@ -9,6 +9,7 @@ import {
   ConciergeBellIcon,
   LayoutDashboardIcon,
   PackageCheckIcon,
+  PrinterIcon,
   QrCodeIcon,
   ReceiptIcon,
   SearchXIcon,
@@ -30,6 +31,7 @@ import { canManageAvailability } from "@/lib/menu";
 import { liveOpenState } from "@/lib/opening-hours";
 import { canViewSales } from "@/lib/daily-summary";
 import { canServeTables, canWorkOrders, isRider } from "@/lib/orders-board";
+import { canSeePrintJobs } from "@/lib/printers";
 import { cn } from "@/lib/utils";
 import { RestaurantContext, type RestaurantContextValue } from "./restaurant-context";
 import { RestaurantRealtimeProvider } from "./restaurant-realtime";
@@ -127,6 +129,8 @@ function SectionTabs({
     { href: `${base}/disponibilidad`, label: "Disponibilidad", icon: PackageCheckIcon, show: canManageAvailability(roles) },
     { href: `${base}/mesas`, label: "Mesas", icon: QrCodeIcon, show: isOwner },
     { href: `${base}/equipo`, label: "Equipo", icon: UsersIcon, show: isOwner },
+    // Owner: the print agents; cashier: only the failed print jobs (phase 8).
+    { href: `${base}/impresoras`, label: "Impresoras", icon: PrinterIcon, show: canSeePrintJobs(roles) },
   ].filter((tab) => tab.show);
 
   return (

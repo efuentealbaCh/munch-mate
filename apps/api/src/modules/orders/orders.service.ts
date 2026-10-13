@@ -71,6 +71,7 @@ import { MessagingService } from "../messaging/messaging.service";
 import { salesCsv, summarizeRange } from "./sales-report";
 import { TableSessionsRepository } from "./table-sessions.repository";
 import { TableSessionsService } from "./table-sessions.service";
+import { PrintJobsService } from "../printing/print-jobs.service";
 import { PushService } from "../push/push.service";
 import { summarizeDay } from "./daily-summary";
 import { RiderTrackingService } from "./rider-tracking.service";
@@ -216,6 +217,7 @@ export class OrdersService {
     private readonly tableSessions: TableSessionsService,
     private readonly tableAccounts: TableSessionsRepository,
     @InjectPinoLogger(OrdersService.name) private readonly logger: PinoLogger,
+    private readonly printing: PrintJobsService,
   ) {
     this.tokenSecret = config.get("ORDER_TOKEN_SECRET", { infer: true });
     this.appUrl = config.get("APP_URL", { infer: true });
@@ -408,6 +410,7 @@ export class OrdersService {
     this.realtime.toRestaurant(restaurant.id).emit("order.created", toOrderView(created));
     if (created.tableSessionId) await this.tableSessions.notifyChange(restaurant.id, created.tableSessionId);
     await this.push.newOrder(created);
+    await this.printing.orderCreated(restaurant.id, toOrderView(created));
     return { accessToken, order: this.publicView(created, restaurant) };
   }
 
@@ -627,6 +630,7 @@ export class OrdersService {
     // Someone else moved the order between our read and our write.
     if (!updated) throw orderChanged();
     if (to === "accepted" && hasReceipt(updated)) await this.requestReceipt(updated, { email: true });
+    if (to === "accepted") await this.printing.orderAccepted(tenant.restaurantId, toOrderView(updated));
     // Push to the customers following the order: ready to pick up, or on its way.
     if ((to === "ready" && updated.channel === "pickup") || to === "out_for_delivery") {
       await this.push.customerUpdate(updated, to === "ready" ? "ready" : "on_the_way", this.trackingUrl(updated));
@@ -742,6 +746,8 @@ export class OrdersService {
       await this.discardReceipt(order);
       await this.requestReceipt(updated, { email: false });
     }
+    // Printers that already have the old kitchen ticket get the "MODIFICADO" one.
+    await this.printing.orderEdited(tenant.restaurantId, toOrderView(updated));
     await this.broadcast(updated);
     return toOrderView(updated);
   }
@@ -863,6 +869,8 @@ export class OrdersService {
         )
       : await this.orders.markPaid(tenant.restaurantId, orderId, method);
     if (!updated) throw orderNotFound();
+    const payer = await this.users.findById(userId);
+    await this.printing.orderPaid(tenant.restaurantId, toOrderView(updated), method, payer?.name ?? null);
     this.realtime.toStaffOf(tenant.restaurantId, [updated.riderId]).emit("order.updated", toOrderView(updated));
     if (updated.tableSessionId) await this.tableSessions.notifyChange(tenant.restaurantId, updated.tableSessionId);
     return toOrderView(updated);
@@ -884,6 +892,17 @@ export class OrdersService {
       if (!(await this.tableAccounts.lockWithoutPayments(restaurantId, tableSessionId, tx))) throw tableHasPayments(message);
       return write(tx);
     });
+  }
+
+  /**
+   * "Imprimir" on the board, through the print agents: the kitchen ticket on every printer that prints
+   * kitchen tickets, again on purpose (a lost or stained ticket).
+   * @throws NotFoundException ORDER_NOT_FOUND.
+   */
+  async printKitchen(tenant: TenantContext, orderId: string): Promise<{ queued: number }> {
+    const order = await this.orders.findOne(tenant.restaurantId, orderId);
+    if (!order) throw orderNotFound();
+    return { queued: await this.printing.printOrder(tenant.restaurantId, toOrderView(order)) };
   }
 
   /** Members with the rider role, for the assignment picker. */

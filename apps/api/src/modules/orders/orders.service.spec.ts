@@ -22,6 +22,7 @@ import { deriveAccessToken } from "./order-tokens";
 import type { OrderRecord, OrdersRepository } from "./orders.repository";
 import { OrdersService } from "./orders.service";
 import type { MapsService } from "../maps/maps.service";
+import type { PrintJobsService } from "../printing/print-jobs.service";
 import type { PushService } from "../push/push.service";
 import type { RiderTrackingService } from "./rider-tracking.service";
 import type { TablesRepository } from "./tables.repository";
@@ -194,6 +195,13 @@ function setup(
       },
     ),
   };
+  const printing = {
+    orderCreated: jest.fn(async () => undefined),
+    orderAccepted: jest.fn(async () => undefined),
+    orderEdited: jest.fn(async () => undefined),
+    orderPaid: jest.fn(async () => undefined),
+    printOrder: jest.fn(async () => 2),
+  };
   const tableAccounts = {
     getOrOpen: jest.fn(async () => ({ id: "s1" })),
     findOne: jest.fn(async () => ({ id: "s1", payments: Array.from({ length: options.tablePayments ?? 0 }, (_, i) => ({ id: `pay${i}` })) })),
@@ -247,8 +255,9 @@ function setup(
     tableSessions as unknown as TableSessionsService,
     tableAccounts as unknown as TableSessionsRepository,
     { warn: jest.fn() } as unknown as PinoLogger,
+    printing as unknown as PrintJobsService,
   );
-  return { service, orders, emitted, pdfQueue, storage, tracking, push, messaging, tableSessions, tableAccounts };
+  return { service, orders, emitted, pdfQueue, storage, tracking, push, messaging, tableSessions, tableAccounts, printing };
 }
 
 const input = { clientOrderId: "c-1", items: [{ productId: "p1", quantity: 1, modifiers: [] }] };
@@ -1134,5 +1143,33 @@ describe("OrdersService.editItems", () => {
     const smaller = setup({ current: delivery });
     await smaller.service.editItems(tenant, "u1", "o1", edit({ keep: [{ line: 0, quantity: 5 }], add: [] }));
     expect(smaller.orders.editItems.mock.calls[0]![3]).toMatchObject({ total: 6500, clearCashAmount: false });
+  });
+});
+
+describe("OrdersService print agents", () => {
+  it("queues kitchen tickets for a new order and when it is accepted", async () => {
+    const { service, printing } = setup();
+    await service.createDineIn("abc", input);
+    expect(printing.orderCreated).toHaveBeenCalledWith("r1", expect.objectContaining({ id: "o1" }));
+    await service.changeStatus(tenant, "u1", "o1", "accepted");
+    expect(printing.orderAccepted).toHaveBeenCalledWith("r1", expect.objectContaining({ status: "accepted" }));
+  });
+
+  it("does not print again on other status changes", async () => {
+    const { service, printing } = setup();
+    await service.changeStatus(tenant, "u1", "o1", "rejected", "Sin stock");
+    expect(printing.orderAccepted).not.toHaveBeenCalled();
+  });
+
+  it("prints a payment receipt with who registered it", async () => {
+    const { service, printing } = setup();
+    await service.markPaid({ ...tenant, roles: ["cashier"] }, "u1", "o1", "cash");
+    expect(printing.orderPaid).toHaveBeenCalledWith("r1", expect.objectContaining({ paymentStatus: "paid" }), "cash", "Ana");
+  });
+
+  it("reprints the kitchen ticket on demand and tells how many printers got it", async () => {
+    const { service, printing } = setup();
+    await expect(service.printKitchen(tenant, "o1")).resolves.toEqual({ queued: 2 });
+    expect(printing.printOrder).toHaveBeenCalledWith("r1", expect.objectContaining({ id: "o1" }));
   });
 });

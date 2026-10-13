@@ -18,13 +18,17 @@ import { cn } from "@/lib/utils";
 /**
  * This device's receipt printer (phase 8): paper width and whether it prints orders by itself. Saved on the
  * device only, so the kitchen tablet can print every order while the cashier's phone does not.
+ * @param agentPrints The restaurant's print agent already prints kitchen tickets: automatic printing here
+ *   would print each ticket twice, so the dialog says so and offers to turn it off.
  */
 export function PrintSettingsDialog({
   settings,
+  agentPrints = false,
   onChange,
   onTest,
 }: {
   settings: PrintSettings;
+  agentPrints?: boolean;
   onChange(settings: PrintSettings): void;
   onTest(): void;
 }) {
@@ -44,6 +48,27 @@ export function PrintSettingsDialog({
             Usa la impresora térmica instalada en este dispositivo. La configuración se guarda solo aquí.
           </DialogDescription>
         </DialogHeader>
+
+        {agentPrints ? (
+          <div
+            className={cn(
+              "flex flex-col items-start gap-2 rounded-lg border px-3 py-2 text-sm",
+              settings.auto !== "off" && "border-warning-foreground/40 bg-warning text-warning-foreground",
+            )}
+            role="status"
+            data-testid="agent-prints-notice"
+          >
+            <p>
+              Las comandas ya salen solas por la impresora de cocina (Munch Mate Impresora).
+              {settings.auto !== "off" ? " Este dispositivo también las imprime: desactívala aquí para no imprimir dos veces." : ""}
+            </p>
+            {settings.auto !== "off" ? (
+              <Button type="button" size="sm" variant="outline" onClick={() => onChange({ ...settings, auto: "off" })}>
+                Desactivar impresión automática aquí
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
 
         <fieldset className="flex flex-col gap-2">
           <legend className="mb-2 text-sm font-medium">Ancho del papel</legend>

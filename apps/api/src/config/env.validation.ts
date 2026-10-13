@@ -35,6 +35,14 @@ export const envValidationSchema = z.object({
    * stacks only) delivers each message as an email to Mailpit. The workers hold the provider credentials.
    */
   MESSAGING_PROVIDER: z.enum(["off", "twilio", "mailpit"]).default("off"),
+  /**
+   * Print agent (phase 8, optional): where owners download the agent for the kitchen computer. Shown as a
+   * download button in "Impresoras" when set; empty = no button (the agent can still be paired).
+   */
+  PRINT_AGENT_DOWNLOAD_URL: z
+    .union([z.literal(""), z.url({ protocol: /^https?$/ })])
+    .optional()
+    .transform((value) => (value ? value : undefined)),
 });
 
 export type ApiEnv = z.infer<typeof envValidationSchema>;
