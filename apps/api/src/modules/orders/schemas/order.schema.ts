@@ -197,6 +197,10 @@ export class Order {
   @Prop({ required: true, unique: true })
   accessTokenHash!: string;
 
+  /** The signed-in customer who placed it (customer history); null for guests. */
+  @Prop({ type: Types.ObjectId, default: null })
+  customerId!: Types.ObjectId | null;
+
   /** Browser-generated id: a retried submission returns the existing order instead of a duplicate. */
   @Prop({ required: true })
   clientOrderId!: string;
@@ -207,6 +211,8 @@ export const OrderSchema = SchemaFactory.createForClass(Order);
 OrderSchema.index({ restaurantId: 1, clientOrderId: 1 }, { unique: true });
 OrderSchema.index({ restaurantId: 1, status: 1, createdAt: 1 });
 OrderSchema.index({ restaurantId: 1, businessDate: 1 });
+// "Mis pedidos": a customer's orders across restaurants, newest first (guests have no customerId).
+OrderSchema.index({ customerId: 1, createdAt: -1 }, { partialFilterExpression: { customerId: { $type: "objectId" } } });
 // A rider's deliveries in progress.
 OrderSchema.index({ restaurantId: 1, riderId: 1, status: 1 }, { partialFilterExpression: { channel: "delivery" } });
 // Per-phone limit on pickup orders in progress; partial so dine-in orders (no phone) stay out of it.

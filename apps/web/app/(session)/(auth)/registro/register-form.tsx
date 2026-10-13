@@ -13,6 +13,7 @@ import { SubmitButton } from "@/components/submit-button";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/lib/auth-context";
 import { authApi } from "@/lib/endpoints";
+import { typedDefaults } from "@/lib/form-defaults";
 import { hasCode } from "@/lib/errors";
 import { safeNextPath, withQuery } from "@/lib/safe-next";
 import { PASSWORD_MIN, type RegisterValues, registerSchema } from "@/lib/validation";
@@ -29,7 +30,7 @@ export function RegisterForm() {
 
   const form = useForm<RegisterValues>({
     resolver: zodResolver(registerSchema),
-    defaultValues: { name: "", email: prefilledEmail, password: "" },
+    defaultValues: typedDefaults("register", { name: "", email: prefilledEmail, password: "" }),
   });
   const { errors, isSubmitting } = form.formState;
 
@@ -61,7 +62,7 @@ export function RegisterForm() {
         </p>
       }
     >
-      <form noValidate onSubmit={form.handleSubmit(onSubmit)} className="flex flex-col gap-5">
+      <form data-form="register" noValidate onSubmit={form.handleSubmit(onSubmit)} className="flex flex-col gap-5">
         <FormField id="name" label="Nombre" error={errors.name?.message}>
           {(control) => <Input {...control} autoComplete="name" {...form.register("name")} />}
         </FormField>

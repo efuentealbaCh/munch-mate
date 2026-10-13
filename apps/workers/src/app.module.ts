@@ -7,6 +7,7 @@ import { LoggerModule } from "nestjs-pino";
 import { envValidationSchema, type WorkersEnv } from "./config/env.validation";
 import { EmailModule } from "./email/email.module";
 import { HealthModule } from "./health/health.module";
+import { NotifModule } from "./notif/notif.module";
 import { PdfModule } from "./pdf/pdf.module";
 import { SystemModule } from "./system/system.module";
 
@@ -52,6 +53,7 @@ import { SystemModule } from "./system/system.module";
     SystemModule,
     EmailModule,
     PdfModule,
+    NotifModule,
   ],
 })
 export class AppModule {}

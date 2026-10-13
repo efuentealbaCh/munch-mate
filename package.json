@@ -23,6 +23,7 @@
     "smoke": "sh infra/scripts/smoke.sh",
     "seed:demo": "node infra/scripts/seed-demo.mjs",
     "platform:admin": "sh infra/scripts/platform-admin.sh",
-    "maps:init": "node infra/scripts/maps-init.mjs"
+    "maps:init": "node infra/scripts/maps-init.mjs",
+    "push:keys": "node infra/scripts/push-keys.mjs"
   }
 }

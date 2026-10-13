@@ -1,3 +1,4 @@
+import type { PushNotification } from "./customers";
 import type { ExpectedPaymentView, OrderChannel, OrderDeliveryView, OrderItemView } from "./orders";
 
 /**
@@ -8,6 +9,7 @@ export const QUEUES = {
   SYSTEM: "system",
   EMAIL: "email",
   PDF: "pdf",
+  NOTIF: "notif",
 } as const;
 
 /**
@@ -54,6 +56,16 @@ export interface ReceiptJob {
     expectedPayment: ExpectedPaymentView | null;
   };
   email: { to: string; trackingUrl: string } | null;
+}
+
+/**
+ * `notif:push` — one web-push notification to a set of browser subscriptions. Carries the subscriptions
+ * (endpoint + keys) because the api already resolved the recipients; the worker deletes the ones the push
+ * service reports as gone (404/410).
+ */
+export interface NotifJob {
+  subscriptions: { endpoint: string; keys: { p256dh: string; auth: string } }[];
+  notification: PushNotification;
 }
 
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];

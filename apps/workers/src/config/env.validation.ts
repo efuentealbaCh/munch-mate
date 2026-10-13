@@ -31,6 +31,10 @@ export const envValidationSchema = z.object({
   S3_ACCESS_KEY_ID: z.string().min(1),
   S3_SECRET_ACCESS_KEY: z.string().min(1),
   S3_BUCKET: z.string().min(3),
+  /** Web push (optional, phase 6). Both keys from `pnpm push:keys`; the subject is a contact (mailto:/https:). */
+  VAPID_PUBLIC_KEY: z.string().optional().transform((value) => (value ? value : undefined)),
+  VAPID_PRIVATE_KEY: z.string().optional().transform((value) => (value ? value : undefined)),
+  VAPID_SUBJECT: z.string().optional().transform((value) => (value ? value : undefined)),
 });
 
 export type WorkersEnv = z.infer<typeof envValidationSchema>;

@@ -9,6 +9,8 @@ import { IS_PUBLIC } from "./decorators";
 /**
  * Global guard: every route needs a valid access-token cookie unless marked `@Public()`.
  * A 401 UNAUTHENTICATED tells the frontend to call POST /api/auth/refresh and retry once.
+ * On public routes a valid cookie still identifies the user (`@OptionalUser()`), e.g. a signed-in customer
+ * ordering from a public menu; a missing or expired one is simply ignored there.
  */
 @Injectable()
 export class AccessTokenGuard implements CanActivate {
@@ -19,13 +21,14 @@ export class AccessTokenGuard implements CanActivate {
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     if (context.getType() !== "http") return true;
-    if (this.reflector.getAllAndOverride<boolean>(IS_PUBLIC, [context.getHandler(), context.getClass()])) {
-      return true;
-    }
-
     const req = context.switchToHttp().getRequest<AuthenticatedRequest>();
     const token: unknown = req.cookies?.[ACCESS_COOKIE];
     const user = typeof token === "string" ? await this.accessTokens.verify(token) : null;
+
+    if (this.reflector.getAllAndOverride<boolean>(IS_PUBLIC, [context.getHandler(), context.getClass()])) {
+      if (user) req.user = user;
+      return true;
+    }
     if (!user) {
       throw new UnauthorizedException(apiError("UNAUTHENTICATED", "Debes iniciar sesión"));
     }

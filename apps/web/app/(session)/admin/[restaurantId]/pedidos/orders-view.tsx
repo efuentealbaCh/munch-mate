@@ -7,6 +7,7 @@ import { type ReactNode, useCallback, useEffect, useId, useRef, useState } from 
 import { toast } from "sonner";
 import { AccessDenied } from "@/components/access-denied";
 import { FormError } from "@/components/form-error";
+import { PushDeviceButton } from "@/components/push-device-button";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -17,6 +18,7 @@ import { useMapConfig } from "@/hooks/use-map-config";
 import { useNow } from "@/hooks/use-now";
 import { useSocketEvent } from "@/hooks/use-realtime";
 import { useReceiptDownload } from "@/hooks/use-receipt-download";
+import { useAuth } from "@/lib/auth-context";
 import { ordersApi, restaurantsApi } from "@/lib/endpoints";
 import { errorMessage, hasCode } from "@/lib/errors";
 import { formatPrice } from "@/lib/money";
@@ -128,6 +130,7 @@ function OrdersBoard() {
   const today = useOrderList(restaurant.id, "today", tab === "today", syncCount);
   const now = useNow(30_000);
   const chime = useChime();
+  const { user } = useAuth();
   const [fresh, setFresh] = useState<ReadonlySet<string>>(new Set());
   const [busy, setBusy] = useState<Record<string, Busy>>({});
   // Reject or cancel: both ask for a reason the customer will read.
@@ -380,6 +383,7 @@ function OrdersBoard() {
             {chime.enabled ? <BellRingIcon aria-hidden data-icon="inline-start" /> : <BellOffIcon aria-hidden data-icon="inline-start" />}
             {chime.enabled ? "Sonido activado" : "Activar sonido"}
           </Button>
+          {user ? <PushDeviceButton userId={user.id} label="Activar avisos en este dispositivo" /> : null}
           <LiveBadge status={live} />
         </div>
       </section>

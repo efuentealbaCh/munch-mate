@@ -18,6 +18,7 @@ import { deriveAccessToken } from "./order-tokens";
 import type { OrderRecord, OrdersRepository } from "./orders.repository";
 import { OrdersService } from "./orders.service";
 import type { MapsService } from "../maps/maps.service";
+import type { PushService } from "../push/push.service";
 import type { RiderTrackingService } from "./rider-tracking.service";
 import type { TablesRepository } from "./tables.repository";
 
@@ -69,6 +70,7 @@ function order(overrides: Partial<OrderRecord> = {}): OrderRecord {
     expectedPayment: null,
     riderId: null,
     riderName: null,
+    customerId: null,
     clientOrderId: "c-1",
     createdAt: new Date(),
     updatedAt: new Date(),
@@ -89,9 +91,16 @@ function setup(
     membershipRoles?: string[] | null;
     insideZone?: boolean;
     mapAvailable?: boolean;
+    customerOrders?: OrderRecord[];
   } = {},
 ) {
   const emitted: string[] = [];
+  const push = {
+    newOrder: jest.fn(async () => undefined),
+    customerUpdate: jest.fn(async () => undefined),
+    riderAssigned: jest.fn(async () => undefined),
+    followOrder: jest.fn(async () => undefined),
+  };
   const tracking = { clear: jest.fn(async () => undefined), lastPosition: jest.fn(async () => null) };
   const pdfQueue = {
     enqueueReceipt: jest.fn(async () => undefined),
@@ -132,6 +141,7 @@ function setup(
       order({ channel: "delivery", riderId: rider?.id ?? null, riderName: rider?.name ?? null }),
     ),
     listActiveForRider: jest.fn(async () => []),
+    listByCustomer: jest.fn(async () => options.customerOrders ?? []),
     listActive: jest.fn(async () => [order()]),
     listByBusinessDate: jest.fn(async () => []),
     markPaid: jest.fn(async () => order({ paymentStatus: "paid", paymentMethod: "cash" })),
@@ -143,6 +153,7 @@ function setup(
     {
       findById: jest.fn(async () => restaurantRecord()),
       findBySlug: jest.fn(async (slug: string) => (slug === "don-pepe" ? restaurantRecord() : null)),
+      findByIds: jest.fn(async () => [restaurantRecord()]),
     } as unknown as RestaurantsRepository,
     { list: jest.fn(async () => [{ id: "c1", name: "C", description: "", active: true, position: 0 }]) } as unknown as CategoriesRepository,
     {
@@ -178,8 +189,9 @@ function setup(
     } as unknown as ConfigService<ApiEnv, true>,
     tracking as unknown as RiderTrackingService,
     { isAvailable: jest.fn(async () => options.mapAvailable ?? true) } as unknown as MapsService,
+    push as unknown as PushService,
   );
-  return { service, orders, emitted, pdfQueue, storage, tracking };
+  return { service, orders, emitted, pdfQueue, storage, tracking, push };
 }
 
 const input = { clientOrderId: "c-1", items: [{ productId: "p1", quantity: 1, modifiers: [] }] };
@@ -675,5 +687,83 @@ describe("OrdersService rider position", () => {
 
     await expect(service.riderPositionForCustomer("tok")).resolves.toBeNull();
     expect(tracking.lastPosition).not.toHaveBeenCalled();
+  });
+});
+
+describe("OrdersService customers and push", () => {
+  it("links the order to the signed-in customer and tells the board by push", async () => {
+    const { service, orders, push } = setup();
+
+    await service.createDineIn("abc", { ...input, customerId: "cust1" });
+
+    expect(orders.create).toHaveBeenCalledWith("r1", expect.objectContaining({ customerId: "cust1" }), {});
+    expect(push.newOrder).toHaveBeenCalledTimes(1);
+  });
+
+  it("stores guests without a customer", async () => {
+    const { service, orders } = setup();
+
+    await service.createDineIn("abc", input);
+
+    expect(orders.create).toHaveBeenCalledWith("r1", expect.objectContaining({ customerId: null }), {});
+  });
+
+  it("pushes 'ready' to pickup customers and 'on the way' to delivery customers, with their tracking link", async () => {
+    const pickup = setup({ current: pickupOrder({ status: "preparing" }) });
+    await pickup.service.changeStatus(tenant, "u1", "o1", "ready");
+    const token = deriveAccessToken(SECRET, "r1", "c-1");
+    expect(pickup.push.customerUpdate).toHaveBeenCalledWith(expect.objectContaining({ id: "o1" }), "ready", `/pedido#t=${token}`);
+
+    const dineIn = setup({ current: order({ status: "preparing" }) });
+    await dineIn.service.changeStatus(tenant, "u1", "o1", "ready");
+    expect(dineIn.push.customerUpdate).not.toHaveBeenCalled();
+
+    const delivery = setup({ current: order({ channel: "delivery", status: "ready" }) });
+    await delivery.service.changeStatus(tenant, "u1", "o1", "out_for_delivery");
+    expect(delivery.push.customerUpdate).toHaveBeenCalledWith(expect.anything(), "on_the_way", expect.any(String));
+  });
+
+  it("tells a rider when a delivery is assigned to them, not when unassigned", async () => {
+    const { service, push } = setup();
+
+    await service.assignRider(tenant, "o1", "rider1");
+    await service.assignRider(tenant, "o1", null);
+
+    expect(push.riderAssigned).toHaveBeenCalledTimes(1);
+    expect(push.riderAssigned).toHaveBeenCalledWith(expect.anything(), "rider1");
+  });
+
+  it("lists the customer's orders with their tracking token and a cursor for the next page", async () => {
+    const many = Array.from({ length: 21 }, (_, i) =>
+      order({
+        id: `66f00000000000000000000${(i % 10).toString()}`.slice(0, 22) + String(i).padStart(2, "0"),
+        clientOrderId: `c-${i}`,
+        createdAt: new Date(Date.UTC(2026, 9, 9, 12, 0, 59 - i)),
+      }),
+    );
+    const { service } = setup({ customerOrders: many });
+
+    const page = await service.listForCustomer("cust1");
+
+    expect(page.items).toHaveLength(20);
+    expect(page.items[0]).toMatchObject({
+      trackingToken: deriveAccessToken(SECRET, "r1", "c-0"),
+      restaurant: { name: "Don Pepe", slug: "don-pepe" },
+    });
+    expect(page.nextBefore).toBe(`${many[19]!.createdAt.toISOString()}_${many[19]!.id}`);
+    await expect(service.listForCustomer("cust1", "no-es-fecha")).rejects.toMatchObject({
+      response: { code: "INVALID_CURSOR" },
+    });
+  });
+
+  it("lets a customer follow an order only while it is in progress", async () => {
+    const sub = { endpoint: "https://fcm.googleapis.com/fcm/send/x", keys: { p256dh: "p".repeat(20), auth: "a".repeat(16) } };
+    const live = setup();
+    await live.service.followOrder("tok", sub);
+    expect(live.push.followOrder).toHaveBeenCalledWith("o1", sub);
+
+    await expect(setup({ current: order({ status: "served" }) }).service.followOrder("tok", sub)).rejects.toMatchObject({
+      response: { code: "ORDER_FINISHED" },
+    });
   });
 });

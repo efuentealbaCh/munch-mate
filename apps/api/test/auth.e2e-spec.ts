@@ -53,7 +53,7 @@ describe("Auth (e2e)", () => {
     it("creates the account, logs it in with httpOnly cookies and emails a verification link", async () => {
       const { res, email, agent } = await registered();
 
-      expect(res.body).toEqual({ id: expect.any(String), email, name: "Ana", emailVerified: false, platformRole: null });
+      expect(res.body).toEqual({ id: expect.any(String), email, name: "Ana", emailVerified: false, platformRole: null, phone: "" });
       expect(JSON.stringify(res.body)).not.toMatch(/token|hash/i);
 
       const access = cookie(res, "mm_at");

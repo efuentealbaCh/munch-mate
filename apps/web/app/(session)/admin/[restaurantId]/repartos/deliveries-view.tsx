@@ -26,6 +26,7 @@ import { toast } from "sonner";
 import { AccessDenied } from "@/components/access-denied";
 import { TrackingMap } from "@/components/map";
 import { FormError } from "@/components/form-error";
+import { PushDeviceButton } from "@/components/push-device-button";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -218,7 +219,10 @@ function RiderDeliveries({ riderId }: { riderId: string }) {
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-xl font-bold tracking-tight">Mis repartos</h2>
-        <LiveBadge status={live} />
+        <div className="flex flex-wrap items-start gap-2">
+          <PushDeviceButton userId={riderId} label="Avísame cuando me asignen un pedido" />
+          <LiveBadge status={live} />
+        </div>
       </div>
 
       {sharing.active ? <SharingBanner sharing={sharing} online={live === "live"} /> : null}

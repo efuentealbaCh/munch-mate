@@ -5,11 +5,12 @@ import { formatPhone, normalizePhone } from "@app/utils";
 import { BikeIcon, ClockIcon, ReceiptTextIcon, ShoppingBagIcon } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { CartBar, type LineProblem } from "@/components/cart-sheet";
 import { OrderProductSheet } from "@/components/order-product-sheet";
 import { MenuSections } from "@/components/public-menu";
+import { useCustomerSession } from "@/hooks/use-customer-session";
 import { useNow } from "@/hooks/use-now";
 import { useOnVisible } from "@/hooks/use-realtime";
 import { useRefreshAt } from "@/hooks/use-refresh-at";
@@ -27,12 +28,14 @@ import {
   pickupCartScope,
   toOrderItems,
 } from "@/lib/cart";
+import { canOfferSaveAddress, prefillContact, suggestAddressLabel, toSavedAddressInput } from "@/lib/customer";
 import { loadDeliveryContact, type OnlineChannel, onlineChannels, resolveChannel, saveDeliveryContact } from "@/lib/delivery";
-import { publicOrdersApi } from "@/lib/endpoints";
-import { hasCode } from "@/lib/errors";
+import { customersApi, publicOrdersApi } from "@/lib/endpoints";
+import { errorMessage, hasCode } from "@/lib/errors";
 import { parsePriceInput } from "@/lib/money";
 import { closedByScheduleText, closedStateFromError } from "@/lib/opening-hours";
 import { loadMyOrders, rememberOrder, trackingHref } from "@/lib/order-tracking";
+import { safeNextPath, withQuery } from "@/lib/safe-next";
 import type { DeliveryCheckoutValues } from "@/lib/validation";
 import { CheckoutSheet } from "./checkout-sheet";
 
@@ -60,7 +63,8 @@ function bannerText(channels: readonly OnlineChannel[]): string {
 
 /**
  * Public menu with online ordering (rendered when the owner enabled pickup and/or delivery): cart, the
- * channel choice, the matching checkout, and the tracking page afterwards. Customers order without an account.
+ * channel choice, the matching checkout, and the tracking page afterwards. Customers order without an account; with one, the checkout uses its data and
+ * the api adds the order to "Mis pedidos".
  */
 export function OnlineOrdering({ initialMenu }: { initialMenu: PublicMenu }) {
   const router = useRouter();
@@ -79,6 +83,11 @@ export function OnlineOrdering({ initialMenu }: { initialMenu: PublicMenu }) {
   const [error, setError] = useState<unknown>(null);
   const [problem, setProblem] = useState<LineProblem | null>(null);
   const [myOrdersCount, setMyOrdersCount] = useState(0);
+  // Phase 6: the signed-in customer's name, phone and saved addresses (guests: a login link).
+  const session = useCustomerSession({ addresses: initialMenu.restaurant.deliveryEnabled });
+  const [prefillKey, setPrefillKey] = useState(0);
+  const [saveAddress, setSaveAddress] = useState(true);
+  const prefilled = useRef(false);
   const { restaurant, categories } = menu;
   const currency = restaurant.currency;
   // Units per order (owner setting): refreshed with the menu (every time the cart opens).
@@ -103,6 +112,15 @@ export function OnlineOrdering({ initialMenu }: { initialMenu: PublicMenu }) {
     // Older entries kept the phone as typed: shown in the current format ("+569 12345678").
     if (saved) setCheckout((current) => ({ ...current, ...saved, customerPhone: formatPhone(saved.customerPhone) }));
   }, []);
+
+  // The account fills only what is still empty: typed or device-remembered values win (that effect ran first).
+  const sessionUser = session.state.user;
+  useEffect(() => {
+    if (!sessionUser || prefilled.current) return;
+    prefilled.current = true;
+    setCheckout((current) => prefillContact(current, sessionUser));
+    setPrefillKey((key) => key + 1);
+  }, [sessionUser]);
 
   // The menu carries the open/closed state and the channel switches too: one request refreshes all.
   const refreshMenu = useCallback(async () => {
@@ -157,6 +175,8 @@ export function OnlineOrdering({ initialMenu }: { initialMenu: PublicMenu }) {
     setSubmitting(true);
     setError(null);
     setProblem(null);
+    // A fresh access cookie, so the api links the order to the account (never throws).
+    await session.ensureFresh();
     try {
       const created = await create(clientOrderId);
       rememberOrder(localStore(), {
@@ -239,7 +259,21 @@ export function OnlineOrdering({ initialMenu }: { initialMenu: PublicMenu }) {
         unit: values.unit,
         reference: values.reference,
       });
+      if (saveAddress) void saveAddressToAccount(values);
     });
+  }
+
+  /** "Guardar esta dirección en mi cuenta", after the order went through (never blocks or undoes it). */
+  async function saveAddressToAccount(values: DeliveryCheckoutValues) {
+    const addresses = session.addresses;
+    if (session.state.status !== "customer" || !addresses || !canOfferSaveAddress(addresses, values)) return;
+    const label = suggestAddressLabel(addresses);
+    try {
+      session.addAddress(await customersApi.createAddress(toSavedAddressInput({ ...values, label }, pin)));
+      toast.success(`Guardamos la dirección como «${label}» en tu cuenta`);
+    } catch (failure) {
+      toast.error(`No pudimos guardar la dirección: ${errorMessage(failure)}`);
+    }
   }
 
   const count = cartCount(lines);
@@ -328,6 +362,14 @@ export function OnlineOrdering({ initialMenu }: { initialMenu: PublicMenu }) {
         error={error}
         problem={activeProblem}
         checkout={checkout}
+        prefillKey={prefillKey}
+        account={{
+          status: session.state.status,
+          loginHref: withQuery("/ingresar", { next: safeNextPath(`/r/${slug}`, "/") }),
+          addresses: session.addresses,
+          saveAddress,
+          onSaveAddressChange: setSaveAddress,
+        }}
         onCheckoutChange={setCheckout}
         onQuantity={(key, quantity) => dispatch({ type: "setQuantity", key, quantity })}
         onRemove={(key) => dispatch({ type: "remove", key })}

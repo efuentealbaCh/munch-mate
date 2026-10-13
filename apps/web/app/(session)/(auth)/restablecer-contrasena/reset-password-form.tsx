@@ -13,6 +13,7 @@ import { SubmitButton } from "@/components/submit-button";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth-context";
 import { authApi } from "@/lib/endpoints";
+import { typedDefaults } from "@/lib/form-defaults";
 import { hasCode } from "@/lib/errors";
 import { PASSWORD_MIN, type ResetPasswordValues, resetPasswordSchema } from "@/lib/validation";
 
@@ -23,7 +24,7 @@ export function ResetPasswordForm() {
   const [error, setError] = useState<unknown>(null);
   const form = useForm<ResetPasswordValues>({
     resolver: zodResolver(resetPasswordSchema),
-    defaultValues: { password: "", confirm: "" },
+    defaultValues: typedDefaults("reset-password", { password: "", confirm: "" }),
   });
   const { errors, isSubmitting } = form.formState;
 
@@ -55,7 +56,7 @@ export function ResetPasswordForm() {
 
   return (
     <AuthCard title="Crea una nueva contraseña" description="Al guardarla se cerrarán tus sesiones en todos los dispositivos.">
-      <form noValidate onSubmit={form.handleSubmit(onSubmit)} className="flex flex-col gap-5">
+      <form data-form="reset-password" noValidate onSubmit={form.handleSubmit(onSubmit)} className="flex flex-col gap-5">
         <FormField
           id="password"
           label="Nueva contraseña"

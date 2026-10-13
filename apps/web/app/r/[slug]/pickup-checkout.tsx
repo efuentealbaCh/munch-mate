@@ -1,10 +1,11 @@
 "use client";
 
-import { ORDER_LIMITS } from "@app/types";
+import { ORDER_LIMITS, type SavedAddressView } from "@app/types";
 import { zodResolver } from "@hookform/resolvers/zod";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { type UseFormRegisterReturn, useForm } from "react-hook-form";
+import { AccountHint, type AccountHintProps } from "@/components/account-hint";
 import { CartLines, type LineProblem } from "@/components/cart-sheet";
 import { FormError } from "@/components/form-error";
 import { FormField } from "@/components/form-field";
@@ -18,8 +19,18 @@ import { hasCode } from "@/lib/errors";
 import { formatPrice } from "@/lib/money";
 import { type PickupCheckoutValues, pickupCheckoutSchema } from "@/lib/validation";
 
+/** The visitor's account at checkout (phase 6): guests get a login link, customers their saved data. */
+export interface CheckoutAccount extends AccountHintProps {
+  /** Delivery: the customer's saved addresses (null: guest, still loading, or failed to load). */
+  addresses: SavedAddressView[] | null;
+  /** Delivery: "Guardar esta dirección en mi cuenta" is checked (saved after the order goes through). */
+  saveAddress: boolean;
+  onSaveAddressChange(save: boolean): void;
+}
+
 /** What both checkout forms (pickup and delivery) receive from the ordering page. */
 export interface CheckoutFormProps {
+  account: CheckoutAccount;
   lines: CartLine[];
   currency: string;
   /** The restaurant's `maxItemsPerOrder`: a cart above it cannot be sent. */
@@ -38,6 +49,7 @@ export interface CheckoutFormProps {
 
 /** Pickup form: lines, name, phone, optional email and comment, "Pedir para retirar". */
 export function PickupCheckout({
+  account,
   lines,
   currency,
   maxItems,
@@ -85,6 +97,7 @@ export function PickupCheckout({
       </p>
 
       <div className="flex flex-col gap-4 px-4 pt-4">
+        <AccountHint account={account} />
         <ContactFields
           idPrefix="pickup"
           nameDescription="Lo dices al retirar."
