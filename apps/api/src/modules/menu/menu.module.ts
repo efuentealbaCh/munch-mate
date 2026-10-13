@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { MessagingModule } from "../messaging/messaging.module";
 import { MongooseModule } from "@nestjs/mongoose";
 import { RestaurantsModule } from "../restaurants/restaurants.module";
 import { CategoriesRepository } from "./categories.repository";
@@ -18,6 +19,7 @@ import { Product, ProductSchema } from "./schemas/product.schema";
 @Module({
   imports: [
     RestaurantsModule,
+    MessagingModule,
     MongooseModule.forFeature([
       { name: MenuCategory.name, schema: MenuCategorySchema },
       { name: Product.name, schema: ProductSchema },

@@ -19,7 +19,7 @@ const receiptJob: ReceiptJob = {
     timezone: "America/Santiago",
     customerName: "Berta",
     customerPhone: "+56912345678",
-    items: [{ productId: "p1", name: "Completo", unitPrice: 3490, quantity: 2, modifiers: [], note: "", lineTotal: 6980 }],
+    items: [{ productId: "p1", name: "Completo", unitPrice: 3490, regularUnitPrice: 3490, promoLabel: "", quantity: 2, modifiers: [], note: "", lineTotal: 6980 }],
     subtotal: 6980,
     deliveryFee: 0,
     total: 6980,

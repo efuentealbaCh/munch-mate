@@ -31,7 +31,7 @@ export class TablesController {
   constructor(private readonly tables: TablesService) {}
 
   @Get()
-  @RestaurantRoles("owner", "cashier", "kitchen")
+  @RestaurantRoles("owner", "cashier", "kitchen", "waiter")
   list(@CurrentTenant() tenant: TenantContext): Promise<TableView[]> {
     return this.tables.list(tenant.restaurantId);
   }

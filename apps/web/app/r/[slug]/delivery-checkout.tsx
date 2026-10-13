@@ -108,6 +108,7 @@ function DeliveryForm({
   onRemove,
   onRemoveProduct,
   onSubmit,
+  notify,
 }: CheckoutFormProps & {
   zones: PublicDeliveryZone[];
   pin: DeliveryPinProps;
@@ -118,7 +119,11 @@ function DeliveryForm({
   const subtotal = cartTotal(lines);
   // Amount rules (minimum, cash covers the total) depend on the cart and the zones: rebuilt when they change,
   // read through a ref because react-hook-form keeps the resolver it got first.
-  const schema = useMemo(() => deliveryCheckoutSchema({ subtotal, zones, currency }), [subtotal, zones, currency]);
+  const requireMobile = notify?.checked ?? false;
+  const schema = useMemo(
+    () => deliveryCheckoutSchema({ subtotal, zones, currency, requireMobile }),
+    [subtotal, zones, currency, requireMobile],
+  );
   const schemaRef = useRef(schema);
   useEffect(() => {
     schemaRef.current = schema;
@@ -203,6 +208,7 @@ function DeliveryForm({
             customerPhone: errors.customerPhone?.message,
             customerEmail: errors.customerEmail?.message,
           }}
+          notify={notify}
         />
 
         <fieldset className="flex flex-col gap-4 border-t pt-4">

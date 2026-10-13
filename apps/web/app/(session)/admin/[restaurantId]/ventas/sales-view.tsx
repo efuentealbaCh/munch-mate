@@ -11,6 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useApiQuery } from "@/hooks/use-api-query";
 import { useNow } from "@/hooks/use-now";
 import { useSocketEvent } from "@/hooks/use-realtime";
@@ -30,6 +31,7 @@ import { formatPrice } from "@/lib/money";
 import { cn } from "@/lib/utils";
 import { useRestaurant } from "../restaurant-context";
 import { useRestaurantRealtime } from "../restaurant-realtime";
+import { ExportButtons, SalesRangeView } from "./sales-export";
 
 /** Wait after a burst of order events before refetching (one request per burst, not per event). */
 const LIVE_REFRESH_DELAY_MS = 1500;
@@ -46,7 +48,32 @@ export function SalesView() {
       />
     );
   }
-  return <SalesReport />;
+  return <SalesTabs />;
+}
+
+/** "Día" (closing the register) and "Rango" (any dates, exports to Excel and printing, phase 8). */
+function SalesTabs() {
+  const { restaurant } = useRestaurant();
+  const now = useNow(60_000);
+  const today = todayIn(restaurant.timezone, now ? new Date(now) : new Date());
+  return (
+    <Tabs defaultValue="day" className="gap-4">
+      <TabsList className="h-10 w-full sm:w-fit print:hidden">
+        <TabsTrigger value="day" className="px-4">
+          Día
+        </TabsTrigger>
+        <TabsTrigger value="range" className="px-4">
+          Rango y exportar
+        </TabsTrigger>
+      </TabsList>
+      <TabsContent value="day">
+        <SalesReport />
+      </TabsContent>
+      <TabsContent value="range">
+        <SalesRangeView today={today} />
+      </TabsContent>
+    </Tabs>
+  );
 }
 
 function SalesReport() {
@@ -92,7 +119,7 @@ function SalesReport() {
 
   return (
     <div className="flex flex-col gap-5">
-      <section aria-label="Día del resumen" className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <section aria-label="Día del resumen" className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between print:hidden">
         <div className="flex items-center gap-2">
           <Button variant="outline" size="icon" aria-label="Día anterior" onClick={() => setDate((d) => shiftDate(d, -1))}>
             <ChevronLeftIcon aria-hidden />
@@ -150,7 +177,10 @@ function SalesReport() {
       ) : !summary ? (
         <SummarySkeleton />
       ) : (
-        <SummaryBody summary={summary} isToday={isToday} />
+        <>
+          <ExportButtons range={{ from: date, to: date }} compact />
+          <SummaryBody summary={summary} isToday={isToday} />
+        </>
       )}
     </div>
   );
@@ -222,6 +252,18 @@ function SummaryBody({ summary, isToday }: { summary: DailySummary; isToday: boo
       <p className="-mt-2 text-xs text-muted-foreground">
         El total incluye los pedidos completados y en curso; los rechazados y cancelados no suman.
       </p>
+      {summary.tips > 0 || sales.discounts > 0 ? (
+        <dl className="grid grid-cols-2 gap-3" data-testid="tips-discounts">
+          <div className="flex flex-col gap-0.5 rounded-xl bg-card px-3 py-2 ring-1 ring-foreground/10">
+            <dt className="text-xs text-muted-foreground">Propinas de mesas (aparte)</dt>
+            <dd className="text-lg font-bold tabular-nums" data-testid="kpi-tips">{money(summary.tips)}</dd>
+          </div>
+          <div className="flex flex-col gap-0.5 rounded-xl bg-card px-3 py-2 ring-1 ring-foreground/10">
+            <dt className="text-xs text-muted-foreground">Descuentos dados</dt>
+            <dd className="text-lg font-bold tabular-nums">{money(sales.discounts)}</dd>
+          </div>
+        </dl>
+      ) : null}
 
       <div className="grid gap-5 lg:grid-cols-2">
         <BreakdownCard

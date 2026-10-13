@@ -100,6 +100,13 @@ export async function renderReceipt(receipt: ReceiptJob["receipt"]): Promise<Buf
     doc.text(money(item.lineTotal), x + CONTENT - 80, lineTop, { width: 80, align: "right" });
     doc.y = afterName;
     doc.font("Helvetica").fontSize(8.5).fillColor(MUTED);
+    // Discounted product (phase 8): the regular price and what was saved, so the customer sees the deal.
+    const regular = item.regularUnitPrice ?? item.unitPrice;
+    if (regular > item.unitPrice) {
+      const label = item.promoLabel ? `${item.promoLabel}: ` : "Descuento: ";
+      // Plain ASCII: the built-in PDF fonts have no arrow.
+      doc.text(`${label}${money(item.unitPrice)} c/u (normal ${money(regular)})`, x + 12, doc.y, { width: CONTENT - 92 });
+    }
     for (const modifier of item.modifiers) {
       const extra = modifier.priceDelta ? ` (+${money(modifier.priceDelta)})` : "";
       doc.text(`${modifier.groupName}: ${modifier.optionName}${extra}`, x + 12, doc.y, { width: CONTENT - 92 });

@@ -55,3 +55,25 @@ export function formatPhoneInput(raw: string): string {
   if (national === "") return "+56";
   return national.length > 1 ? `+56 ${national[0]} ${national.slice(1)}` : `+56 ${national}`;
 }
+
+export type MessagingPhoneProblem = "invalid" | "not_mobile";
+
+/**
+ * Whether a phone can receive WhatsApp or SMS notices: a plausible number and, for Chile, a mobile
+ * (`+569` and 8 digits; landlines such as `+56 2 …` cannot get them). Numbers of other countries are accepted
+ * as E.164 with 10–15 digits.
+ * @returns null when usable, otherwise why not.
+ */
+export function messagingPhoneProblem(input: string): MessagingPhoneProblem | null {
+  const phone = normalizePhone(input);
+  if (!phone) return "invalid";
+  if (phone.startsWith("+56")) return /^\+569\d{8}$/.test(phone) ? null : "not_mobile";
+  const digits = phone.length - 1;
+  return digits >= 10 && digits <= 15 ? null : "invalid";
+}
+
+/** Spanish message for a phone that cannot receive notices (forms and api errors). */
+export const MESSAGING_PHONE_MESSAGES: Record<MessagingPhoneProblem, string> = {
+  invalid: `Revisa el número, ej. ${PHONE_EXAMPLE}`,
+  not_mobile: `Para recibir avisos usa un celular, ej. ${PHONE_EXAMPLE}`,
+};

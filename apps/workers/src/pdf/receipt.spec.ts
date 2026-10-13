@@ -23,6 +23,8 @@ describe("receipt", () => {
         productId: `p${i}`,
         name: `Churrasco italiano con un nombre bastante largo ${i}`,
         unitPrice: 6990,
+        regularUnitPrice: 6990,
+        promoLabel: "",
         quantity: 2,
         modifiers: [{ groupName: "Pan", optionName: "Frica", priceDelta: 500 }],
         note: "Sin mayo",

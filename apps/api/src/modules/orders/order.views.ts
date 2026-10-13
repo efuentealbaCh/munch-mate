@@ -7,6 +7,8 @@ function toItemViews(order: OrderRecord): OrderItemView[] {
     productId: item.productId,
     name: item.name,
     unitPrice: item.unitPrice,
+    regularUnitPrice: item.regularUnitPrice,
+    promoLabel: item.promoLabel,
     quantity: item.quantity,
     note: item.note,
     lineTotal: item.lineTotal,
@@ -66,6 +68,8 @@ export function toOrderView(order: OrderRecord): OrderView {
     delivery: toDeliveryView(order),
     expectedPayment: toExpectedPaymentView(order),
     rider: order.riderId ? { id: order.riderId, name: order.riderName ?? "" } : null,
+    tableSessionId: order.tableSessionId,
+    notifyBy: order.notifyBy,
     createdAt: order.createdAt.toISOString(),
     updatedAt: order.updatedAt.toISOString(),
   };
@@ -102,5 +106,6 @@ export function toPublicOrderView(
     createdAt: order.createdAt.toISOString(),
     updatedAt: order.updatedAt.toISOString(),
     cancellable: checkTransition(order.channel, order.status, "cancelled", { kind: "customer" }).ok,
+    notifyBy: order.notifyBy,
   };
 }

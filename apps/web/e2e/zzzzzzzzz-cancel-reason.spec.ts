@@ -60,8 +60,12 @@ async function setupRestaurant(owner: BrowserContext): Promise<void> {
   shared.productId = String(product.id);
 }
 
-/** A pickup order placed by the customer through the public api; returns what the tracking page needs. */
+/**
+ * A pickup order placed by the customer through the public api; returns what the tracking page needs.
+ * The public view carries no order id, so the owner looks it up on the board by its ticket.
+ */
 async function placePickupOrder(
+  owner: BrowserContext,
   customer: BrowserContext,
   customerName: string,
   customerPhone: string,
@@ -71,12 +75,13 @@ async function placePickupOrder(
     customerName,
     customerPhone,
     items: [{ productId: shared.productId, quantity: 1, modifiers: [] }],
-  })) as unknown as { accessToken: string; order: { id: string; ticketNumber: number } };
-  return {
-    orderId: created.order.id,
-    ticket: created.order.ticketNumber,
-    trackingPath: `/pedido#t=${encodeURIComponent(created.accessToken)}`,
-  };
+  })) as unknown as { accessToken: string; order: { ticketNumber: number } };
+  const ticket = created.order.ticketNumber;
+  const active = await owner.request.get(`/api/restaurants/${shared.restaurantId}/orders?scope=active`);
+  expect(active.status(), await active.text()).toBe(200);
+  const orderId = ((await active.json()) as Array<{ id: string; ticketNumber: number }>).find((o) => o.ticketNumber === ticket)?.id;
+  expect(orderId, `order #${ticket} on the board`).toBeTruthy();
+  return { orderId: orderId!, ticket, trackingPath: `/pedido#t=${encodeURIComponent(created.accessToken)}` };
 }
 
 /** Moves an order through the board's statuses via the api (accepting a pickup order needs a ready time). */
@@ -92,7 +97,7 @@ test("cancelling an accepted order asks for a reason, and the customer sees it l
   const customer = await browser.newContext(CONTEXT_OPTIONS);
   try {
     await setupRestaurant(owner);
-    const order = await placePickupOrder(customer, "Tere", "+56 9 4444 0001");
+    const order = await placePickupOrder(owner, customer, "Tere", "+56 9 4444 0001");
     await advance(owner, order.orderId, ["accepted"]);
 
     // The customer follows the order; the staff cancel it from the live board.
@@ -123,7 +128,7 @@ test("cancelling an accepted order asks for a reason, and the customer sees it l
       "No pudimos contactar al cliente",
     ]);
     await quick.getByRole("button", { name: "No pudimos contactar al cliente" }).click();
-    const reason = dialog.getByLabel("Motivo");
+    const reason = dialog.getByRole("textbox", { name: "Motivo" });
     await expect(reason).toHaveValue("No pudimos contactar al cliente");
     await expect(dialog.getByText("Indica el motivo: el cliente lo verá")).toHaveCount(0);
     await reason.fill("Se nos cortó la luz, disculpa");
@@ -158,7 +163,7 @@ test("the kitchen hands over an unpaid pickup order: warned, but not offered to 
     const token = new URL(await waitForEmailLink(cookEmail, "/invitacion"), "https://x").searchParams.get("token");
     await send(cook, "post", "/api/invitations/accept", { token }, 200);
 
-    const order = await placePickupOrder(customer, "Úrsula", "+56 9 4444 0002");
+    const order = await placePickupOrder(owner, customer, "Úrsula", "+56 9 4444 0002");
     await advance(owner, order.orderId, ["accepted", "preparing", "ready"]);
     const phone = await customer.newPage();
     await phone.goto(order.trackingPath);

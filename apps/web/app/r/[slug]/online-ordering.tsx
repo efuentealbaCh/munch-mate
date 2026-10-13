@@ -5,7 +5,7 @@ import { formatPhone, normalizePhone } from "@app/utils";
 import { BikeIcon, ClockIcon, ReceiptTextIcon, ShoppingBagIcon } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { CartBar, type LineProblem } from "@/components/cart-sheet";
 import { OrderProductSheet } from "@/components/order-product-sheet";
@@ -38,6 +38,7 @@ import { loadMyOrders, rememberOrder, trackingHref } from "@/lib/order-tracking"
 import { safeNextPath, withQuery } from "@/lib/safe-next";
 import type { DeliveryCheckoutValues } from "@/lib/validation";
 import { CheckoutSheet } from "./checkout-sheet";
+import { withPromos } from "@/lib/promo";
 
 const CLOSED_MESSAGE = "El local no está recibiendo pedidos ahora.";
 const ONLINE_OFF_MESSAGE = "Este local ya no está recibiendo pedidos en línea.";
@@ -77,6 +78,8 @@ export function OnlineOrdering({ initialMenu }: { initialMenu: PublicMenu }) {
   const [chosenChannel, setChosenChannel] = useState<OnlineChannel | null>(null);
   // Delivery pin on the map (phase 7). Kept for the visit only: not remembered on the device.
   const [pin, setPin] = useState<GeoPoint | null>(null);
+  // WhatsApp/SMS notices (phase 8): opt-in, only when the restaurant offers them.
+  const [notifyByMessage, setNotifyByMessage] = useState(false);
   const [zones, setZones] = useState<PublicDeliveryZone[] | null>(null);
   const [zonesError, setZonesError] = useState<unknown>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -88,7 +91,9 @@ export function OnlineOrdering({ initialMenu }: { initialMenu: PublicMenu }) {
   const [prefillKey, setPrefillKey] = useState(0);
   const [saveAddress, setSaveAddress] = useState(true);
   const prefilled = useRef(false);
-  const { restaurant, categories } = menu;
+  const { restaurant } = menu;
+  // Discounts by weekday and date, evaluated like the api does (phase 8).
+  const categories = useMemo(() => withPromos(menu.categories, restaurant.timezone), [menu.categories, restaurant.timezone]);
   const currency = restaurant.currency;
   // Units per order (owner setting): refreshed with the menu (every time the cart opens).
   const maxItems = restaurant.maxItemsPerOrder;
@@ -225,6 +230,7 @@ export function OnlineOrdering({ initialMenu }: { initialMenu: PublicMenu }) {
       customerPhone: normalizePhone(values.customerPhone) ?? values.customerPhone,
       ...(values.customerEmail ? { customerEmail: values.customerEmail } : {}),
       ...(values.note ? { note: values.note } : {}),
+      ...(notifyByMessage && restaurant.messaging ? { notifyByMessage: true } : {}),
     };
   }
 
@@ -358,6 +364,11 @@ export function OnlineOrdering({ initialMenu }: { initialMenu: PublicMenu }) {
         maxItems={maxItems}
         canOrder={canOrder}
         closedMessage={closedMessage}
+        notify={
+          restaurant.messaging
+            ? { channel: restaurant.messaging.channel, checked: notifyByMessage, onChange: setNotifyByMessage }
+            : null
+        }
         submitting={submitting}
         error={error}
         problem={activeProblem}

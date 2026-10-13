@@ -35,6 +35,20 @@ export const envValidationSchema = z.object({
   VAPID_PUBLIC_KEY: z.string().optional().transform((value) => (value ? value : undefined)),
   VAPID_PRIVATE_KEY: z.string().optional().transform((value) => (value ? value : undefined)),
   VAPID_SUBJECT: z.string().optional().transform((value) => (value ? value : undefined)),
+
+  /**
+   * WhatsApp/SMS order notices (phase 8): "off", "twilio" (needs the account SID and token) or "mailpit"
+   * (local stacks: each message arrives as an email in Mailpit).
+   */
+  MESSAGING_PROVIDER: z.enum(["off", "twilio", "mailpit"]).default("off"),
+  TWILIO_ACCOUNT_SID: z.string().optional().transform((value) => (value ? value : undefined)),
+  TWILIO_AUTH_TOKEN: z.string().optional().transform((value) => (value ? value : undefined)),
+  /** Overridable only for tests. */
+  TWILIO_API_URL: z.url({ protocol: /^https?$/ }).default("https://api.twilio.com").transform((url) => url.replace(/\/+$/, "")),
+}).superRefine((env, ctx) => {
+  if (env.MESSAGING_PROVIDER === "twilio" && (!env.TWILIO_ACCOUNT_SID || !env.TWILIO_AUTH_TOKEN)) {
+    ctx.addIssue({ code: "custom", path: ["TWILIO_ACCOUNT_SID"], message: "required when MESSAGING_PROVIDER=twilio" });
+  }
 });
 
 export type WorkersEnv = z.infer<typeof envValidationSchema>;

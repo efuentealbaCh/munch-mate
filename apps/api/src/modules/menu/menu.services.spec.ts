@@ -9,6 +9,7 @@ import { ModifierGroupsService } from "./modifier-groups.service";
 import type { ProductRecord, ProductsRepository } from "./products.repository";
 import { ProductsService } from "./products.service";
 import { PublicMenuService } from "./public-menu.service";
+import type { MessagingService } from "../messaging/messaging.service";
 
 const media = {
   productImage: (key: string | null) => (key ? { sm: `${key}-sm`, md: `${key}-md`, lg: `${key}-lg` } : null),
@@ -28,6 +29,7 @@ const product = (overrides: Partial<ProductRecord> = {}): ProductRecord => ({
   imageKey: null,
   modifierGroupIds: [],
   position: 0,
+  promo: null,
   ...overrides,
 });
 
@@ -264,6 +266,7 @@ describe("PublicMenuService", () => {
       products as unknown as ProductsRepository,
       groups as unknown as ModifierGroupsRepository,
       media,
+      { offeredChannel: () => null } as unknown as MessagingService,
     );
     return { service, restaurants, categories, products };
   }

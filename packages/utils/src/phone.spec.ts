@@ -1,4 +1,4 @@
-import { formatPhone, formatPhoneInput, normalizePhone } from "./phone";
+import { formatPhone, formatPhoneInput, messagingPhoneProblem, normalizePhone } from "./phone";
 
 describe("normalizePhone", () => {
   it.each([
@@ -44,5 +44,23 @@ describe("formatPhoneInput", () => {
     ["", ""],
   ])("%p → %p", (input, expected) => {
     expect(formatPhoneInput(input)).toBe(expected);
+  });
+});
+
+describe("messagingPhoneProblem", () => {
+  it("accepts Chilean mobiles in any common format", () => {
+    expect(messagingPhoneProblem("9 1234 5678")).toBeNull();
+    expect(messagingPhoneProblem("+569 12345678")).toBeNull();
+  });
+
+  it("rejects Chilean landlines and malformed numbers", () => {
+    expect(messagingPhoneProblem("+56 2 2345 6789")).toBe("not_mobile");
+    expect(messagingPhoneProblem("1234")).toBe("invalid");
+    expect(messagingPhoneProblem("hola")).toBe("invalid");
+  });
+
+  it("accepts international mobiles in E.164", () => {
+    expect(messagingPhoneProblem("+54 9 11 2345 6789")).toBeNull();
+    expect(messagingPhoneProblem("+1 2025550123")).toBeNull();
   });
 });

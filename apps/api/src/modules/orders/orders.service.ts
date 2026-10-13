@@ -16,10 +16,21 @@ import {
   type PublicOrderView,
   READY_MINUTES_BY_CHANNEL,
   type RiderPosition,
+  REPORT_LIMITS,
   type RestaurantRole,
   type RiderView,
+  type SalesExportKind,
+  type SalesReport,
+  type OrderMessageEvent,
 } from "@app/types";
-import { checkTransition, formatMoney, normalizePhone, roundCoord } from "@app/utils";
+import {
+  checkTransition,
+  formatMoney,
+  MESSAGING_PHONE_MESSAGES,
+  messagingPhoneProblem,
+  normalizePhone,
+  roundCoord,
+} from "@app/utils";
 import {
   BadRequestException,
   ConflictException,
@@ -51,6 +62,10 @@ import { DeliveryZonesRepository } from "./delivery-zones.repository";
 import { OrderValidationError, type PricingMenu, priceOrder } from "./order-pricing";
 import { businessDate, deriveAccessToken, isCalendarDate } from "./order-tokens";
 import { MapsService } from "../maps/maps.service";
+import { MessagingService } from "../messaging/messaging.service";
+import { salesCsv, summarizeRange } from "./sales-report";
+import { TableSessionsRepository } from "./table-sessions.repository";
+import { TableSessionsService } from "./table-sessions.service";
 import { PushService } from "../push/push.service";
 import { summarizeDay } from "./daily-summary";
 import { RiderTrackingService } from "./rider-tracking.service";
@@ -97,6 +112,7 @@ type ChannelFields = Pick<
   | "tableLabel"
   | "delivery"
   | "expectedPayment"
+  | "notifyBy"
 >;
 
 /** Defaults of the channel fields; each channel overrides what it uses. */
@@ -108,13 +124,25 @@ const NO_CONTACT = {
   tableLabel: null,
   delivery: null,
   expectedPayment: null,
+  notifyBy: null,
 } satisfies Omit<ChannelFields, "channel">;
 
 /** Roles that work the whole board; anyone else (riders) only acts on deliveries assigned to them. */
-const FLOOR_ROLES: readonly RestaurantRole[] = ["owner", "cashier", "kitchen"];
+const FLOOR_ROLES: readonly RestaurantRole[] = ["owner", "cashier", "kitchen", "waiter"];
 const isFloor = (roles: readonly RestaurantRole[]) => roles.some((role) => FLOOR_ROLES.includes(role));
 const notYourDelivery = () =>
   new ForbiddenException(apiError("NOT_YOUR_DELIVERY", "Este reparto no está asignado a ti"));
+
+/** Which status change sends which text message (pickup and delivery orders whose customer asked for them). */
+function MESSAGE_EVENT_BY_STATUS(channel: OrderRecord["channel"], to: OrderStatus): OrderMessageEvent | null {
+  if (channel === "dine_in") return null;
+  if (to === "accepted") return "accepted";
+  if (to === "ready" && channel === "pickup") return "ready";
+  if (to === "out_for_delivery") return "on_the_way";
+  if (to === "rejected") return "rejected";
+  if (to === "cancelled") return "cancelled";
+  return null;
+}
 
 export type ReceiptResult = { status: "pending" } | { status: "ready"; pdf: Buffer; filename: string };
 
@@ -142,6 +170,9 @@ export class OrdersService {
     private readonly tracking: RiderTrackingService,
     private readonly maps: MapsService,
     private readonly push: PushService,
+    private readonly messaging: MessagingService,
+    private readonly tableSessions: TableSessionsService,
+    private readonly tableAccounts: TableSessionsRepository,
   ) {
     this.tokenSecret = config.get("ORDER_TOKEN_SECRET", { infer: true });
     this.appUrl = config.get("APP_URL", { infer: true });
@@ -178,7 +209,7 @@ export class OrdersService {
    */
   async createPickup(slug: string, input: WithCustomer<CreatePickupOrderInput>): Promise<CreatedOrder> {
     const restaurant = await this.publicRestaurant(slug);
-    const contact = this.contact(input);
+    const contact = this.contact(input, restaurant);
 
     return this.placeOrder(restaurant, input, async () => {
       if (!restaurant.pickupEnabled) {
@@ -198,7 +229,7 @@ export class OrdersService {
    */
   async createDelivery(slug: string, input: WithCustomer<CreateDeliveryOrderInput>): Promise<CreatedOrder> {
     const restaurant = await this.publicRestaurant(slug);
-    const contact = this.contact(input);
+    const contact = this.contact(input, restaurant);
 
     return this.placeOrder(restaurant, input, async () => {
       if (!restaurant.deliveryEnabled) {
@@ -305,7 +336,10 @@ export class OrdersService {
 
     let priced;
     try {
-      priced = priceOrder(input.items, await this.loadPricingMenu(restaurant.id));
+      priced = priceOrder(input.items, await this.loadPricingMenu(restaurant.id), {
+        at: new Date(),
+        timeZone: restaurant.timezone,
+      });
     } catch (error) {
       if (error instanceof OrderValidationError) {
         throw new ConflictException(apiError(error.code, error.message, { productId: error.productId }));
@@ -321,10 +355,16 @@ export class OrdersService {
         // Both counters and the insert share the transaction, so a failed insert never burns a number.
         const number = await this.counters.next(`order:${restaurant.id}`, session);
         const ticketNumber = await this.counters.next(`ticket:${restaurant.id}:${day}`, session);
+        // Table orders add up in the table's open account (opened by the first one).
+        const tableSessionId =
+          fields.channel === "dine_in" && fields.tableId
+            ? (await this.tableAccounts.getOrOpen(restaurant.id, { id: fields.tableId, label: fields.tableLabel ?? "" }, session)).id
+            : null;
         return this.orders.create(
           restaurant.id,
           {
             ...fields,
+            tableSessionId,
             number,
             ticketNumber,
             businessDate: day,
@@ -351,6 +391,7 @@ export class OrdersService {
     }
 
     this.realtime.toRestaurant(restaurant.id).emit("order.created", toOrderView(created));
+    if (created.tableSessionId) await this.tableSessions.notifyChange(restaurant.id, created.tableSessionId);
     await this.push.newOrder(created);
     return { accessToken, order: this.publicView(created, restaurant) };
   }
@@ -362,16 +403,33 @@ export class OrdersService {
     return restaurant;
   }
 
-  /** Name, normalized phone and email of a pickup/delivery customer. @throws BadRequestException INVALID_PHONE. */
-  private contact(input: CreatePickupOrderInput): Pick<ChannelFields, "customerName" | "customerPhone" | "customerEmail"> {
+  /**
+   * Name, normalized phone and email of a pickup/delivery customer, and the text-message notices they asked
+   * for (only when the restaurant offers them; the phone must then be able to receive them).
+   * @throws BadRequestException INVALID_PHONE, PHONE_NOT_MOBILE.
+   */
+  private contact(
+    input: CreatePickupOrderInput,
+    restaurant: RestaurantRecord,
+  ): Pick<ChannelFields, "customerName" | "customerPhone" | "customerEmail" | "notifyBy"> {
     const customerPhone = normalizePhone(input.customerPhone);
     if (!customerPhone) {
       throw new BadRequestException(apiError("INVALID_PHONE", "Revisa el teléfono, ej. +56 9 1234 5678"));
+    }
+    const channel = input.notifyByMessage ? this.messaging.offeredChannel(restaurant) : null;
+    if (channel) {
+      const problem = messagingPhoneProblem(customerPhone);
+      if (problem) {
+        throw new BadRequestException(
+          apiError(problem === "not_mobile" ? "PHONE_NOT_MOBILE" : "INVALID_PHONE", MESSAGING_PHONE_MESSAGES[problem]),
+        );
+      }
     }
     return {
       customerName: input.customerName.trim(),
       customerPhone,
       customerEmail: input.customerEmail?.trim().toLowerCase() ?? "",
+      notifyBy: channel,
     };
   }
 
@@ -448,8 +506,57 @@ export class OrdersService {
     if (day > today) {
       throw new BadRequestException(apiError("FUTURE_DATE", "Aún no hay ventas para esa fecha"));
     }
-    const orders = await this.orders.listByBusinessDate(tenant.restaurantId, day);
-    return summarizeDay(orders, day, restaurant.currency);
+    const [orders, tips] = await Promise.all([
+      this.orders.listByBusinessDate(tenant.restaurantId, day),
+      this.tableSessions.tipsByDay(tenant.restaurantId, day, day),
+    ]);
+    return summarizeDay(orders, day, restaurant.currency, tips.get(day) ?? 0);
+  }
+
+  /**
+   * Sales between two business days (inclusive), with one row per day and the tips of the table accounts.
+   * @throws BadRequestException INVALID_DATE, FUTURE_DATE, INVALID_RANGE, RANGE_TOO_LONG.
+   */
+  async salesReport(tenant: TenantContext, from: string, to: string): Promise<SalesReport> {
+    const { report } = await this.rangeData(tenant, from, to);
+    return report;
+  }
+
+  /** The same range as a CSV for Excel (orders, products or days). */
+  async salesExport(
+    tenant: TenantContext,
+    from: string,
+    to: string,
+    kind: SalesExportKind,
+  ): Promise<{ filename: string; csv: string }> {
+    const { report, orders, restaurant } = await this.rangeData(tenant, from, to);
+    const name = { orders: "pedidos", products: "productos", days: "dias" }[kind];
+    return {
+      filename: `ventas-${name}-${restaurant.slug}-${from}${from === to ? "" : `_${to}`}.csv`,
+      csv: salesCsv(kind, orders, report, restaurant.timezone),
+    };
+  }
+
+  private async rangeData(tenant: TenantContext, from: string, to: string) {
+    const restaurant = await this.restaurant(tenant.restaurantId);
+    const today = businessDate(new Date(), restaurant.timezone);
+    if (!isCalendarDate(from) || !isCalendarDate(to)) {
+      throw new BadRequestException(apiError("INVALID_DATE", "Esa fecha no existe; revisa el día y el mes"));
+    }
+    if (from > to) throw new BadRequestException(apiError("INVALID_RANGE", "La fecha de inicio debe ser anterior a la de término"));
+    if (from > today) throw new BadRequestException(apiError("FUTURE_DATE", "Aún no hay ventas para esa fecha"));
+    const lastDay = to > today ? today : to;
+    const days = (Date.parse(`${lastDay}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000 + 1;
+    if (days > REPORT_LIMITS.rangeDaysMax) {
+      throw new BadRequestException(
+        apiError("RANGE_TOO_LONG", `Elige como máximo ${REPORT_LIMITS.rangeDaysMax} días`, { max: String(REPORT_LIMITS.rangeDaysMax) }),
+      );
+    }
+    const [orders, tips] = await Promise.all([
+      this.orders.listByBusinessDateRange(tenant.restaurantId, from, lastDay),
+      this.tableSessions.tipsByDay(tenant.restaurantId, from, lastDay),
+    ]);
+    return { restaurant, orders, report: summarizeRange(orders, from, lastDay, restaurant.currency, tips) };
   }
 
   async get(tenant: TenantContext, orderId: string): Promise<OrderView> {
@@ -513,8 +620,26 @@ export class OrdersService {
     }
     // Delivered (or otherwise left the road): the rider's position is not shared any more.
     if (order.status === "out_for_delivery") await this.tracking.clear(order.id);
+    await this.messageCustomer(updated, MESSAGE_EVENT_BY_STATUS(updated.channel, to));
     await this.broadcast(updated);
     return toOrderView(updated);
+  }
+
+  /** WhatsApp/SMS notice of an order event, when the customer asked for them (pickup and delivery). */
+  private async messageCustomer(order: OrderRecord, event: OrderMessageEvent | null): Promise<void> {
+    if (!event || !order.notifyBy) return;
+    const restaurant = await this.restaurant(order.restaurantId);
+    const last = order.statusHistory.at(-1);
+    await this.messaging.orderEvent(order, restaurant, event, {
+      restaurantName: restaurant.name,
+      ticketNumber: order.ticketNumber,
+      channel: order.channel,
+      estimatedReadyAt: order.estimatedReadyAt,
+      timezone: restaurant.timezone,
+      riderName: order.riderName,
+      reason: event === "rejected" || event === "cancelled" ? (last?.reason ?? null) : null,
+      trackingUrl: `${this.appUrl}${this.trackingUrl(order)}`,
+    });
   }
 
   /** Staff download of an order's receipt. */
@@ -599,11 +724,19 @@ export class OrdersService {
     if (!tenant.roles.some((role) => role === "owner" || role === "cashier")) {
       const order = await this.orders.findOne(tenant.restaurantId, orderId);
       if (!order) throw orderNotFound();
-      if (order.channel !== "delivery" || order.riderId !== userId) throw notYourDelivery();
+      const waiterAtTable = order.channel === "dine_in" && tenant.roles.includes("waiter");
+      const riderOfIt = order.channel === "delivery" && order.riderId === userId;
+      if (!waiterAtTable && !riderOfIt) {
+        // Waiters charge table orders only; anyone else here is a rider, limited to their deliveries.
+        throw tenant.roles.includes("waiter")
+          ? new ForbiddenException(apiError("FORBIDDEN_ROLE", "Solo puedes registrar pagos de pedidos en la mesa"))
+          : notYourDelivery();
+      }
     }
     const updated = await this.orders.markPaid(tenant.restaurantId, orderId, method);
     if (!updated) throw orderNotFound();
     this.realtime.toStaffOf(tenant.restaurantId, [updated.riderId]).emit("order.updated", toOrderView(updated));
+    if (updated.tableSessionId) await this.tableSessions.notifyChange(tenant.restaurantId, updated.tableSessionId);
     return toOrderView(updated);
   }
 
@@ -720,6 +853,7 @@ export class OrdersService {
       .emit("order.updated", toOrderView(order));
     const restaurant = await this.restaurant(order.restaurantId);
     this.realtime.toOrder(order.id).emit("order.status", this.publicView(order, restaurant));
+    if (order.tableSessionId) await this.tableSessions.notifyChange(order.restaurantId, order.tableSessionId);
   }
 
   private publicView(order: OrderRecord, restaurant: RestaurantRecord): PublicOrderView {
@@ -751,6 +885,7 @@ export class OrdersService {
             available: p.available,
             orderable: p.visible && activeCategories.has(p.categoryId),
             modifierGroupIds: p.modifierGroupIds,
+            promo: p.promo,
           },
         ]),
       ),

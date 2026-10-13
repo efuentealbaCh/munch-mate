@@ -1,4 +1,11 @@
-import { FINAL_ORDER_STATUSES, type GeoPoint, type OrderChannel, type OrderStatus, type PaymentMethod } from "@app/types";
+import {
+  FINAL_ORDER_STATUSES,
+  type GeoPoint,
+  type MessageChannel,
+  type OrderChannel,
+  type OrderStatus,
+  type PaymentMethod,
+} from "@app/types";
 import { Injectable } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { type ClientSession, type Model, Types } from "mongoose";
@@ -49,6 +56,8 @@ export interface OrderRecord {
   note: string;
   tableId: string | null;
   tableLabel: string | null;
+  tableSessionId: string | null;
+  notifyBy: MessageChannel | null;
   estimatedReadyAt: Date | null;
   delivery: DeliveryRecord | null;
   expectedPayment: ExpectedPaymentRecord | null;
@@ -77,6 +86,8 @@ export interface NewOrder {
   note: string;
   tableId: string | null;
   tableLabel: string | null;
+  tableSessionId: string | null;
+  notifyBy: MessageChannel | null;
   delivery: DeliveryRecord | null;
   expectedPayment: ExpectedPaymentRecord | null;
   customerId: string | null;
@@ -100,6 +111,7 @@ export class OrdersRepository {
           ...input,
           restaurantId: oid(restaurantId),
           tableId: input.tableId ? oid(input.tableId) : null,
+          tableSessionId: input.tableSessionId ? oid(input.tableSessionId) : null,
           customerId: input.customerId ? oid(input.customerId) : null,
           delivery: input.delivery
             ? {
@@ -283,6 +295,56 @@ export class OrdersRepository {
     return doc ? toRecord(doc) : null;
   }
 
+  /** The orders of a table account, oldest first. */
+  async listByTableSession(restaurantId: string, tableSessionId: string): Promise<OrderRecord[]> {
+    if (!Types.ObjectId.isValid(tableSessionId)) return [];
+    const docs = await this.orders
+      .find({ restaurantId: oid(restaurantId), tableSessionId: oid(tableSessionId) })
+      .sort({ createdAt: 1 })
+      .lean();
+    return docs.map(toRecord);
+  }
+
+  /** The orders of several table accounts (the floor view), grouped by account id. */
+  async listByTableSessions(restaurantId: string, tableSessionIds: string[]): Promise<Map<string, OrderRecord[]>> {
+    const byId = new Map<string, OrderRecord[]>(tableSessionIds.map((id) => [id, []]));
+    if (tableSessionIds.length === 0) return byId;
+    const docs = await this.orders
+      .find({ restaurantId: oid(restaurantId), tableSessionId: { $in: tableSessionIds.map(oid) } })
+      .sort({ createdAt: 1 })
+      .lean();
+    for (const record of docs.map(toRecord)) byId.get(record.tableSessionId!)?.push(record);
+    return byId;
+  }
+
+  /** Every order of the business days from..to (inclusive), oldest first (reports and exports). */
+  async listByBusinessDateRange(restaurantId: string, from: string, to: string): Promise<OrderRecord[]> {
+    const docs = await this.orders
+      .find({ restaurantId: oid(restaurantId), businessDate: { $gte: from, $lte: to } })
+      .sort({ createdAt: 1 })
+      .lean();
+    return docs.map(toRecord);
+  }
+
+  /** Charging a table account pays every unpaid order of it (rejected and cancelled ones excepted). */
+  async payTableSession(
+    restaurantId: string,
+    tableSessionId: string,
+    method: PaymentMethod,
+    session?: ClientSession,
+  ): Promise<void> {
+    await this.orders.updateMany(
+      {
+        restaurantId: oid(restaurantId),
+        tableSessionId: oid(tableSessionId),
+        paymentStatus: "unpaid",
+        status: { $nin: ["rejected", "cancelled"] },
+      },
+      { $set: { paymentStatus: "paid", paymentMethod: method } },
+      { session },
+    );
+  }
+
   async markPaid(restaurantId: string, orderId: string, method: PaymentMethod): Promise<OrderRecord | null> {
     if (!Types.ObjectId.isValid(orderId)) return null;
     const doc = await this.orders
@@ -320,6 +382,8 @@ function toRecord(doc: OrderDoc): OrderRecord {
       productId: item.productId.toString(),
       name: item.name,
       unitPrice: item.unitPrice,
+      regularUnitPrice: item.regularUnitPrice ?? item.unitPrice,
+      promoLabel: item.promoLabel ?? "",
       quantity: item.quantity,
       note: item.note ?? "",
       lineTotal: item.lineTotal,
@@ -341,6 +405,8 @@ function toRecord(doc: OrderDoc): OrderRecord {
     note: doc.note ?? "",
     tableId: doc.tableId ? doc.tableId.toString() : null,
     tableLabel: doc.tableLabel ?? null,
+    tableSessionId: doc.tableSessionId ? doc.tableSessionId.toString() : null,
+    notifyBy: doc.notifyBy ?? null,
     estimatedReadyAt: doc.estimatedReadyAt ?? null,
     delivery: doc.delivery
       ? {

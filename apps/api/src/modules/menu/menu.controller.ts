@@ -27,6 +27,7 @@ import {
   CreateProductDto,
   ModifierGroupDto,
   OrderDto,
+  ProductPromoDto,
   UpdateCategoryDto,
   UpdateProductDto,
 } from "./dto/menu.dto";
@@ -126,6 +127,21 @@ export class MenuController {
     @Body() dto: AvailabilityDto,
   ): Promise<void> {
     await this.products.setAvailability(tenant.restaurantId, productId, dto.available);
+  }
+
+  /** Discount: percent off or special price, optionally some weekdays and dates (owner only). */
+  @Put("products/:productId/promo")
+  setProductPromo(
+    @CurrentTenant() tenant: TenantContext,
+    @Param("productId") productId: string,
+    @Body() dto: ProductPromoDto,
+  ): Promise<ProductView> {
+    return this.products.setPromo(tenant.restaurantId, productId, dto);
+  }
+
+  @Delete("products/:productId/promo")
+  removeProductPromo(@CurrentTenant() tenant: TenantContext, @Param("productId") productId: string): Promise<ProductView> {
+    return this.products.removePromo(tenant.restaurantId, productId);
   }
 
   /** Multipart upload, field `file`. Re-encoded to 4:3 WebP in three sizes. */

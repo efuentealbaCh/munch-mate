@@ -7,7 +7,7 @@ import {
   type PublicDeliveryZone,
   RESTAURANT_ROLES,
 } from "@app/types";
-import { normalizePhone, PHONE_EXAMPLE, slugProblem } from "@app/utils";
+import { MESSAGING_PHONE_MESSAGES, messagingPhoneProblem, normalizePhone, PHONE_EXAMPLE, slugProblem } from "@app/utils";
 import { z } from "zod";
 import { cleanLine, cleanText } from "./clean-text";
 import { modifierRulesProblem } from "./menu";
@@ -209,6 +209,25 @@ export const pickupCheckoutSchema = z.object({
   note: z.string().overwrite(cleanText).max(ORDER_LIMITS.noteMax, `El comentario puede tener hasta ${ORDER_LIMITS.noteMax} caracteres`),
 });
 
+/**
+ * When the customer asks for WhatsApp/SMS notices (phase 8) the phone must be able to receive them: a mobile
+ * (same rule as the api's PHONE_NOT_MOBILE). @returns The message for the phone field, or null.
+ */
+export function messagingPhoneIssue(phone: string): string | null {
+  const problem = messagingPhoneProblem(phone);
+  return problem ? MESSAGING_PHONE_MESSAGES[problem] : null;
+}
+
+/** The pickup checkout, asking for a mobile phone when the customer wants notices. */
+export function pickupCheckoutSchemaFor(requireMobile: boolean) {
+  return requireMobile
+    ? pickupCheckoutSchema.superRefine((values, ctx) => {
+        const issue = messagingPhoneIssue(values.customerPhone);
+        if (issue) ctx.addIssue({ code: "custom", path: ["customerPhone"], message: issue });
+      })
+    : pickupCheckoutSchema;
+}
+
 /** Same bound as ExpectedPaymentDto.cashAmount. */
 export const CASH_AMOUNT_MAX = 100_000_000;
 
@@ -217,6 +236,8 @@ export interface DeliveryCheckoutContext {
   subtotal: number;
   zones: readonly PublicDeliveryZone[];
   currency: string;
+  /** The customer asked for WhatsApp/SMS notices: the phone must be a mobile. */
+  requireMobile?: boolean;
 }
 
 /**
@@ -225,7 +246,7 @@ export interface DeliveryCheckoutContext {
  * without the fee) and the cash amount, which must cover subtotal + fee. The api checks both again
  * (BELOW_MINIMUM_ORDER, CASH_AMOUNT_TOO_LOW).
  */
-export function deliveryCheckoutSchema({ subtotal, zones, currency }: DeliveryCheckoutContext) {
+export function deliveryCheckoutSchema({ subtotal, zones, currency, requireMobile = false }: DeliveryCheckoutContext) {
   return pickupCheckoutSchema
     .extend({
       zoneId: z.string().min(1, "Elige tu comuna o zona"),
@@ -245,6 +266,8 @@ export function deliveryCheckoutSchema({ subtotal, zones, currency }: DeliveryCh
       cashAmount: z.string(),
     })
     .superRefine((values, ctx) => {
+      const phoneIssue = requireMobile ? messagingPhoneIssue(values.customerPhone) : null;
+      if (phoneIssue) ctx.addIssue({ code: "custom", path: ["customerPhone"], message: phoneIssue });
       const zone = zones.find((z) => z.id === values.zoneId);
       if (values.zoneId && !zone) {
         ctx.addIssue({ code: "custom", path: ["zoneId"], message: "Esta zona ya no está disponible. Elige otra." });

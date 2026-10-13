@@ -61,6 +61,7 @@ const product: PublicProduct = {
   name: "Barros Luco",
   description: "",
   price: 3990,
+  promo: null,
   available: true,
   image: null,
   modifierGroups: [size, extras],

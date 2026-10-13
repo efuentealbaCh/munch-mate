@@ -16,6 +16,8 @@
 
 import { spawnSync } from "node:child_process";
 import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { lookup as dnsLookup } from "node:dns";
+import { Agent } from "node:https";
 import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 
@@ -42,8 +44,8 @@ function loadEnv(file) {
   return { ...values, ...process.env };
 }
 
-function run(command, args) {
-  const result = spawnSync(command, args, { stdio: "inherit" });
+function run(command, args, options = {}) {
+  const result = spawnSync(command, args, { stdio: "inherit", ...options });
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`${command} ${args[0]} failed (exit ${result.status})`);
 }
@@ -93,7 +95,8 @@ async function downloadAssets() {
   if (!res.ok) throw new Error(`assets download failed: ${res.status}`);
   const tarball = join(CACHE, "basemaps-assets.tar.gz");
   writeFileSync(tarball, Buffer.from(await res.arrayBuffer()));
-  run("tar", ["-xzf", tarball, "-C", CACHE]);
+  // Relative path on purpose: GNU tar (Git Bash on Windows) reads "C:\…" as a remote host and fails.
+  run("tar", ["-xzf", "basemaps-assets.tar.gz"], { cwd: CACHE });
   return dir;
 }
 
@@ -104,13 +107,27 @@ function contentType(file) {
   return "application/octet-stream";
 }
 
+/** dns.lookup that sends *.localhost to 127.0.0.1: Node does not resolve those names on every OS (Windows). */
+function localhostLookup(hostname, options, callback) {
+  if (!hostname.endsWith(".localhost")) return dnsLookup(hostname, options, callback);
+  if (options.all) return callback(null, [{ address: "127.0.0.1", family: 4 }]);
+  return callback(null, "127.0.0.1", 4);
+}
+
 async function s3Client() {
   const credentials = { accessKeyId: env.S3_ACCESS_KEY_ID, secretAccessKey: env.S3_SECRET_ACCESS_KEY };
   const candidates = [env.MAPS_S3_ENDPOINT, env.S3_ENDPOINT, env.DOMAIN && `https://s3.${env.DOMAIN}`].filter(Boolean);
   for (const endpoint of candidates) {
     // The local stack uses Caddy's internal CA, which Node does not trust. Only ever for localhost.
-    if (endpoint.startsWith("https://s3.localhost")) process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
-    const client = new S3Client({ endpoint, region: env.S3_REGION, forcePathStyle: true, credentials });
+    const local = endpoint.startsWith("https://s3.localhost");
+    if (local) process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+    const client = new S3Client({
+      endpoint,
+      region: env.S3_REGION,
+      forcePathStyle: true,
+      credentials,
+      ...(local ? { requestHandler: { httpsAgent: new Agent({ lookup: localhostLookup }) } } : {}),
+    });
     try {
       await client.send(new HeadBucketCommand({ Bucket: env.S3_BUCKET }));
       console.log(`✓ storage reachable at ${endpoint}`);

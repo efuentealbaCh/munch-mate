@@ -1,5 +1,5 @@
 import type { GeoArea, GeoPoint, RiderPosition } from "./geo";
-import type { OpenState } from "./restaurants";
+import type { MessageChannel, OpenState } from "./restaurants";
 
 /** Channels a customer can order through: dine_in (phase 3), pickup (phase 4), delivery (phase 5). */
 export const ORDER_CHANNELS = ["dine_in", "pickup", "delivery"] as const;
@@ -113,6 +113,11 @@ export interface CreatePickupOrderInput {
   /** Optional: when present, the confirmation with the PDF receipt is emailed. */
   customerEmail?: string;
   note?: string;
+  /**
+   * The customer asks for order notices by the restaurant's message channel (WhatsApp or SMS) at
+   * `customerPhone`, which must then be a mobile number. Ignored when the restaurant does not offer them.
+   */
+  notifyByMessage?: boolean;
 }
 
 /** Where a delivery goes. The zone fixes the fee and the minimum order; the rest is free text. */
@@ -170,7 +175,12 @@ export interface OrderItemModifier {
 export interface OrderItemView {
   productId: string;
   name: string;
+  /** Base price charged per unit (after the product's discount, if any). */
   unitPrice: number;
+  /** Base price per unit before the discount; equal to unitPrice without one. */
+  regularUnitPrice: number;
+  /** The discount's label when one applied ("" otherwise, or a generic one). */
+  promoLabel: string;
   quantity: number;
   modifiers: OrderItemModifier[];
   note: string;
@@ -235,6 +245,10 @@ export interface OrderView {
   delivery: OrderDeliveryView | null;
   expectedPayment: ExpectedPaymentView | null;
   rider: { id: string; name: string } | null;
+  /** Dine-in: the table account it belongs to (orders of a table add up until the bill is paid). */
+  tableSessionId: string | null;
+  /** Notices by text message the customer asked for (channel at ordering time), or null. */
+  notifyBy: MessageChannel | null;
   createdAt: string;
   /** Last write of any kind (status, payment, rider): tells which of two copies is newer. */
   updatedAt: string;
@@ -270,6 +284,8 @@ export interface PublicOrderView {
   updatedAt: string;
   /** Whether the customer may still cancel (only while pending). */
   cancellable: boolean;
+  /** Notices by text message the customer asked for, or null. */
+  notifyBy: MessageChannel | null;
 }
 
 /** Response of a successful order: the access token is the customer's only key to the order. */
@@ -296,6 +312,92 @@ export interface TableContext {
   openState: OpenState;
   /** Units (sum of quantities) allowed in one order. */
   maxItemsPerOrder: number;
+  /** Suggested tip shown when asking for the bill (percent, 0 = none). */
+  tipPercent: number;
+}
+
+// ── Table account (phase 8) ─────────────────────────────────────────────────
+
+/**
+ * The tip the customer chooses when asking for the bill: the suggested percentage, none, or an amount.
+ * Voluntary: the waiter confirms the final amount when charging.
+ */
+export type TipChoice = { kind: "suggested" } | { kind: "none" } | { kind: "amount"; amount: number };
+
+export const TABLE_LIMITS = { tipMax: 1_000_000 } as const;
+
+/** One line of a table bill: the same product with the same options adds up across orders. */
+export interface BillLine {
+  name: string;
+  /** Options, as "Grupo: opción" texts. */
+  options: string[];
+  quantity: number;
+  total: number;
+}
+
+/**
+ * What the customer's phone shows from the table QR: the open account of the table, its lines and calls.
+ * Nothing personal (no names); anyone at the table can see it.
+ */
+export interface PublicTableBill {
+  tableLabel: string;
+  /** false: no orders yet, or the last account was just paid (then `closedAt` is set). */
+  open: boolean;
+  lines: BillLine[];
+  /** Orders counted (rejected and cancelled ones are left out). */
+  orderCount: number;
+  /** Orders still on their way from the kitchen. */
+  ordersInProgress: number;
+  subtotal: number;
+  currency: string;
+  tipPercent: number;
+  /** subtotal × tipPercent, rounded to the currency unit. */
+  suggestedTip: number;
+  waiterCalledAt: string | null;
+  billRequestedAt: string | null;
+  /** The tip the customer chose when asking for the bill, or null before. */
+  requestedTip: number | null;
+  /** Set right after the account is paid, until the next order opens a new one. */
+  closedAt: string | null;
+}
+
+/** A table account as the floor staff see it. */
+export interface TableSessionView {
+  id: string;
+  tableId: string;
+  tableLabel: string;
+  status: "open" | "closed";
+  openedAt: string;
+  closedAt: string | null;
+  lines: BillLine[];
+  orderIds: string[];
+  orderCount: number;
+  ordersInProgress: number;
+  /** Orders of the account not paid yet (closing the account pays them). */
+  unpaidOrders: number;
+  subtotal: number;
+  currency: string;
+  tipPercent: number;
+  suggestedTip: number;
+  waiterCalledAt: string | null;
+  billRequestedAt: string | null;
+  requestedTip: number | null;
+  /** Once closed: what was charged. */
+  tip: number | null;
+  paymentMethod: PaymentMethod | null;
+  closedByName: string | null;
+}
+
+/** Body of `POST /api/public/tables/:token/request-bill`. */
+export interface RequestBillInput {
+  tip: TipChoice;
+}
+
+/** Body of `POST /restaurants/:id/table-sessions/:sessionId/close`: pays every unpaid order and the tip. */
+export interface CloseTableInput {
+  method: PaymentMethod;
+  /** Final tip amount (0 = none). */
+  tip: number;
 }
 
 // ── Delivery zones ──────────────────────────────────────────────────────────
@@ -351,13 +453,30 @@ export interface DailySummary {
     unpaid: number;
     /** total / orders counted, rounded; 0 without sales. */
     averageTicket: number;
+    /** Σ product discounts given (regular − charged); already left out of `total`. */
+    discounts: number;
   };
+  /** Tips of the table accounts closed that day: they belong to the staff, not part of `sales.total`. */
+  tips: number;
   byChannel: Record<OrderChannel, { orders: number; total: number }>;
   /** Paid amounts per method. */
   byPaymentMethod: Record<PaymentMethod, number>;
   /** Best sellers by units (top 5). */
   topProducts: { name: string; quantity: number; total: number }[];
 }
+
+/** Sales between two business days (inclusive): the same figures as DailySummary, plus one row per day. */
+export interface SalesReport extends Omit<DailySummary, "date"> {
+  from: string;
+  to: string;
+  days: { date: string; orders: number; total: number; tips: number }[];
+}
+
+export const REPORT_LIMITS = { rangeDaysMax: 366 } as const;
+
+/** What a sales export lists: one row per order, per product (units and amounts) or per day (with tips). */
+export const SALES_EXPORT_KINDS = ["orders", "products", "days"] as const;
+export type SalesExportKind = (typeof SALES_EXPORT_KINDS)[number];
 
 // ── Real-time (Socket.IO) ───────────────────────────────────────────────────
 
@@ -372,12 +491,18 @@ export interface ServerToClientEvents {
   "order.rider-location": (payload: RiderPosition & { orderId: string }) => void;
   /** The PDF receipt was generated (staff room and the customer's order room). */
   "order.receipt-ready": (payload: { orderId: string }) => void;
+  /** A table account changed: new order, call, bill request, closed (staff). */
+  "table.updated": (session: TableSessionView) => void;
+  /** The same, as the customers at the table see it (room `table:<tableId>`). */
+  "table.bill": (bill: PublicTableBill) => void;
 }
 
 /** Events the client emits. Acks return `{ ok: true }` or `{ ok: false, code }`. */
 export interface ClientToServerEvents {
   "restaurant.subscribe": (restaurantId: string, ack: (result: SubscribeResult) => void) => void;
   "order.subscribe": (accessToken: string, ack: (result: SubscribeResult) => void) => void;
+  /** A phone that scanned a table QR follows that table's account. */
+  "table.subscribe": (tableToken: string, ack: (result: SubscribeResult) => void) => void;
   /** The rider's phone reports its position while a delivery assigned to them is on its way. */
   "rider.location": (
     report: { orderId: string; lat: number; lng: number; accuracy?: number },

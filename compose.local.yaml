@@ -3,8 +3,14 @@
 # Routes outgoing email to a Mailpit container, so the smoke test can verify delivery
 # without sending real emails.
 services:
+  # WhatsApp/SMS notices go to Mailpit too: the smoke test and the browser tests read them there.
+  api:
+    environment:
+      MESSAGING_PROVIDER: mailpit
+
   workers:
     environment:
+      MESSAGING_PROVIDER: mailpit
       SMTP_HOST: mailpit
       SMTP_PORT: 1025
       SMTP_SECURE: "false"

@@ -13,6 +13,7 @@ import type {
   InvitationPreview,
   InvitationView,
   MapConfig,
+  MessagingSettings,
   MemberView,
   MenuCategoryView,
   ModifierGroupView,
@@ -20,7 +21,9 @@ import type {
   OrderView,
   PaymentMethod,
   PlatformRestaurantPage,
+  ProductPromo,
   ProductView,
+  PublicTableBill,
   ProfileInput,
   PublicDeliveryZone,
   PublicMenu,
@@ -32,11 +35,15 @@ import type {
   RestaurantView,
   RiderPosition,
   RiderView,
+  SalesExportKind,
+  SalesReport,
   SavedAddressInput,
   SavedAddressView,
   SlugAvailability,
   TableContext,
+  TableSessionView,
   TableView,
+  TipChoice,
   UserProfile,
   WeeklyHours,
 } from "@app/types";
@@ -90,6 +97,10 @@ export const restaurantsApi = {
       maxItemsPerOrder?: number;
       /** The restaurant on the map (centers the maps); null removes it. */
       location?: GeoPoint | null;
+      /** Suggested tip on table bills, percent (0 = none). */
+      tipPercent?: number;
+      /** WhatsApp/SMS notices. @throws ApiError SENDER_PHONE_REQUIRED, INVALID_SENDER_PHONE (400). */
+      messaging?: MessagingSettings;
     },
   ) =>
     api.request<RestaurantView>(restaurantPath(id), { method: "PATCH", body }),
@@ -210,6 +221,11 @@ export const menuApi = {
     }),
   deleteModifierGroup: (restaurantId: string, groupId: string) =>
     api.request<void>(`${menuPath(restaurantId)}/modifier-groups/${segment(groupId)}`, { method: "DELETE" }),
+  /** Discount of a product (owner). @throws ApiError INVALID_PROMO (400, `meta.problem`). */
+  setProductPromo: (restaurantId: string, productId: string, promo: ProductPromo) =>
+    api.request<ProductView>(`${menuPath(restaurantId)}/products/${segment(productId)}/promo`, { method: "PUT", body: promo }),
+  removeProductPromo: (restaurantId: string, productId: string) =>
+    api.request<ProductView>(`${menuPath(restaurantId)}/products/${segment(productId)}/promo`, { method: "DELETE" }),
   setOptionAvailability: (restaurantId: string, groupId: string, optionId: string, available: boolean) =>
     api.request<void>(
       `${menuPath(restaurantId)}/modifier-groups/${segment(groupId)}/options/${segment(optionId)}/availability`,
@@ -291,6 +307,44 @@ export const reportsApi = {
       `${restaurantPath(restaurantId)}/reports/daily${date ? `?date=${encodeURIComponent(date)}` : ""}`,
       { signal },
     ),
+  /**
+   * Sales between two business days (inclusive), one row per day.
+   * @throws ApiError INVALID_RANGE, RANGE_TOO_LONG, INVALID_DATE, FUTURE_DATE (400).
+   */
+  sales: (restaurantId: string, from: string, to: string, signal?: AbortSignal) =>
+    api.request<SalesReport>(
+      `${restaurantPath(restaurantId)}/reports/sales?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+      { signal },
+    ),
+  /** CSV for Excel (`;`, UTF-8 with BOM): one row per order, product or day. */
+  async salesCsv(restaurantId: string, from: string, to: string, kind: SalesExportKind): Promise<DownloadedFile> {
+    const query = new URLSearchParams({ from, to, kind });
+    const response = await api.requestResponse(`${restaurantPath(restaurantId)}/reports/sales.csv?${query}`);
+    return {
+      blob: await response.blob(),
+      filename: filenameFromDisposition(response.headers.get("Content-Disposition"), `ventas-${from}.csv`),
+    };
+  },
+};
+
+/** The floor (phase 8): open table accounts, calls, charging a table. Owner, cashier and waiters. */
+export const tableSessionsApi = {
+  list: (restaurantId: string) => api.request<TableSessionView[]>(`${restaurantPath(restaurantId)}/table-sessions`),
+  /** The call (or the bill request) was attended: the alert leaves every screen. */
+  attend: (restaurantId: string, sessionId: string, kind: "waiter" | "bill") =>
+    api.request<TableSessionView>(`${restaurantPath(restaurantId)}/table-sessions/${segment(sessionId)}/attend`, {
+      method: "POST",
+      body: { kind },
+    }),
+  /**
+   * Pays every unpaid order of the account with `method` and records the tip.
+   * @throws ApiError TABLE_ORDERS_IN_PROGRESS (409), TABLE_SESSION_NOT_FOUND (404: already charged).
+   */
+  close: (restaurantId: string, sessionId: string, body: { method: PaymentMethod; tip: number }) =>
+    api.request<TableSessionView>(`${restaurantPath(restaurantId)}/table-sessions/${segment(sessionId)}/close`, {
+      method: "POST",
+      body,
+    }),
 };
 
 /** Platform administration (platformRole "admin"; anyone else gets 404 NOT_FOUND). */
@@ -417,6 +471,14 @@ export const publicOrdersApi = {
   /** Fresh menu after a sold-out error (the page itself is server-rendered). */
   menu: (slug: string) => api.request<PublicMenu>(`/public/restaurants/${segment(slug)}/menu`),
   table: (tableToken: string) => api.request<TableContext>(`/public/tables/${segment(tableToken)}`),
+  /** The table's account (open, or just paid), from its QR. */
+  tableBill: (tableToken: string, signal?: AbortSignal) =>
+    api.request<PublicTableBill>(`/public/tables/${segment(tableToken)}/bill`, { signal }),
+  callWaiter: (tableToken: string) =>
+    api.request<PublicTableBill>(`/public/tables/${segment(tableToken)}/call-waiter`, { method: "POST" }),
+  /** @throws ApiError NOTHING_TO_PAY (409), INVALID_TIP (400). */
+  requestBill: (tableToken: string, tip: TipChoice) =>
+    api.request<PublicTableBill>(`/public/tables/${segment(tableToken)}/request-bill`, { method: "POST", body: { tip } }),
   /** Receipt PDF (POST: the token stays out of the URL). @returns null while it is being generated (202). */
   receipt: (accessToken: string) =>
     readReceipt(api.requestResponse("/public/orders/receipt", { method: "POST", body: { accessToken } })),

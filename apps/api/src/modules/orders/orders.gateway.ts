@@ -11,10 +11,11 @@ import type { Server, Socket } from "socket.io";
 import { AccessTokenService } from "../auth/access-token.service";
 import { ACCESS_COOKIE } from "../auth/auth.constants";
 import type { AuthUser } from "../auth/auth.types";
-import { orderRoom, RealtimeService, restaurantRoom, riderRoom } from "../realtime/realtime.service";
+import { orderRoom, RealtimeService, restaurantRoom, riderRoom, tableRoom } from "../realtime/realtime.service";
 import { MembershipsRepository } from "../restaurants/memberships.repository";
 import { OrdersService } from "./orders.service";
 import { RiderTrackingService } from "./rider-tracking.service";
+import { TableSessionsService } from "./table-sessions.service";
 
 interface SocketData {
   user: AuthUser | null;
@@ -46,6 +47,7 @@ export class OrdersGateway implements OnGatewayInit, OnGatewayConnection {
     private readonly memberships: MembershipsRepository,
     private readonly orders: OrdersService,
     private readonly tracking: RiderTrackingService,
+    private readonly tableSessions: TableSessionsService,
   ) {}
 
   afterInit(server: Server): void {
@@ -85,6 +87,15 @@ export class OrdersGateway implements OnGatewayInit, OnGatewayConnection {
     const user = socket.data.user;
     if (!user) return { ok: false, code: "UNAUTHENTICATED" };
     return this.tracking.report(user.id, (report ?? {}) as Record<string, unknown>);
+  }
+
+  /** A phone that scanned a table QR follows its account (calls, bill, orders adding up). */
+  @SubscribeMessage("table.subscribe")
+  async subscribeTable(@ConnectedSocket() socket: AppSocket, @MessageBody() tableToken: unknown): Promise<SubscribeResult> {
+    const tableId = typeof tableToken === "string" ? await this.tableSessions.tableIdForToken(tableToken) : null;
+    if (!tableId) return { ok: false, code: "TABLE_NOT_FOUND" };
+    await socket.join(tableRoom(tableId));
+    return { ok: true };
   }
 
   @SubscribeMessage("order.subscribe")

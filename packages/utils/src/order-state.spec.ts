@@ -103,3 +103,19 @@ describe("cancelling", () => {
     }
   });
 });
+
+describe("waiters (phase 8)", () => {
+  const waiter = { kind: "staff" as const, roles: ["waiter" as const] };
+
+  it("work table orders from start to served", () => {
+    expect(checkTransition("dine_in", "pending", "accepted", waiter).ok).toBe(true);
+    expect(checkTransition("dine_in", "ready", "served", waiter).ok).toBe(true);
+    expect(nextStatuses("dine_in", "pending", waiter)).toEqual(["accepted", "rejected", "cancelled"]);
+  });
+
+  it("cannot work pickup or delivery orders", () => {
+    expect(checkTransition("pickup", "pending", "accepted", waiter)).toEqual({ ok: false, reason: "forbidden" });
+    expect(checkTransition("delivery", "ready", "out_for_delivery", waiter)).toEqual({ ok: false, reason: "forbidden" });
+    expect(nextStatuses("pickup", "ready", waiter)).toEqual([]);
+  });
+});

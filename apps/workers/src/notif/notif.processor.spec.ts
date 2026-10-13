@@ -5,6 +5,7 @@ import type { Connection } from "mongoose";
 import type { PinoLogger } from "nestjs-pino";
 import webpush, { WebPushError } from "web-push";
 import type { WorkersEnv } from "../config/env.validation";
+import type { MessageSenderService } from "./message-sender.service";
 import { NotifProcessor } from "./notif.processor";
 
 jest.mock("web-push", () => {
@@ -33,6 +34,7 @@ const job = (subscriptions: NotifJob["subscriptions"]): Job<NotifJob> =>
 
 function setup(keys = true) {
   const deleteOne = jest.fn(async () => ({ deletedCount: 1 }));
+  const messages = { send: jest.fn(async () => ({ status: "sent", providerId: "SM1" })) };
   const processor = new NotifProcessor(
     {
       get: (name: string) =>
@@ -40,8 +42,9 @@ function setup(keys = true) {
     } as unknown as ConfigService<WorkersEnv, true>,
     { collection: () => ({ deleteOne }) } as unknown as Connection,
     { info: jest.fn(), warn: jest.fn() } as unknown as PinoLogger,
+    messages as unknown as MessageSenderService,
   );
-  return { processor, deleteOne };
+  return { processor, deleteOne, messages };
 }
 
 describe("NotifProcessor", () => {
@@ -88,5 +91,15 @@ describe("NotifProcessor", () => {
       skipped: "not_configured",
     });
     expect(send).not.toHaveBeenCalled();
+  });
+});
+
+describe("NotifProcessor text messages (phase 8)", () => {
+  it("hands message jobs to the sender with their job id", async () => {
+    const { processor, messages } = setup();
+    const job = { id: "msg-o1-accepted", name: "message", data: { orderId: "o1" } } as unknown as Job<NotifJob>;
+
+    await expect(processor.process(job)).resolves.toEqual({ status: "sent", providerId: "SM1" });
+    expect(messages.send).toHaveBeenCalledWith("msg-o1-accepted", { orderId: "o1" });
   });
 });

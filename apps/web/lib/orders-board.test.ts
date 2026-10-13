@@ -57,6 +57,8 @@ function order(id: string, status: OrderStatus, overrides: Partial<OrderView> = 
     customerEmail: "",
     note: "",
     tableLabel: "Mesa 1",
+    tableSessionId: null,
+    notifyBy: null,
     estimatedReadyAt: null,
     receiptAvailable: false,
     deliveryFee: 0,

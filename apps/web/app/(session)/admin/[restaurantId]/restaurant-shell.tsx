@@ -6,6 +6,7 @@ import {
   BikeIcon,
   BookOpenIcon,
   ClipboardListIcon,
+  ConciergeBellIcon,
   LayoutDashboardIcon,
   PackageCheckIcon,
   QrCodeIcon,
@@ -28,7 +29,7 @@ import { hasCode } from "@/lib/errors";
 import { canManageAvailability } from "@/lib/menu";
 import { liveOpenState } from "@/lib/opening-hours";
 import { canViewSales } from "@/lib/daily-summary";
-import { canWorkOrders, isRider } from "@/lib/orders-board";
+import { canServeTables, canWorkOrders, isRider } from "@/lib/orders-board";
 import { cn } from "@/lib/utils";
 import { RestaurantContext, type RestaurantContextValue } from "./restaurant-context";
 import { RestaurantRealtimeProvider } from "./restaurant-realtime";
@@ -80,7 +81,7 @@ export function RestaurantShell({ children }: { children: ReactNode }) {
       {/* Reconnected after a gap: the open/closed state may have changed meanwhile. */}
       <RestaurantRealtimeProvider restaurantId={restaurant.id} onAccepting={setAccepting} onResync={reload}>
         <div className="flex flex-col gap-6">
-          <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-3 print:hidden">
             <Button asChild variant="ghost" size="sm" className="-ml-2 self-start">
               <Link href="/admin">
                 <ArrowLeftIcon aria-hidden data-icon="inline-start" />
@@ -119,6 +120,7 @@ function SectionTabs({
   const tabs = [
     { href: base, label: "Resumen", icon: LayoutDashboardIcon, show: true },
     { href: `${base}/pedidos`, label: "Pedidos", icon: ClipboardListIcon, show: canWorkOrders(roles) },
+    { href: `${base}/salon`, label: "Salón", icon: ConciergeBellIcon, show: canServeTables(roles) },
     { href: `${base}/repartos`, label: "Repartos", icon: BikeIcon, show: isRider(roles) },
     { href: `${base}/ventas`, label: "Ventas", icon: ReceiptIcon, show: canViewSales(roles) },
     { href: `${base}/menu`, label: "Menú", icon: BookOpenIcon, show: isOwner },

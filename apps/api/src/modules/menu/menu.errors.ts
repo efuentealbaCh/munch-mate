@@ -34,3 +34,25 @@ export function isPermutation(ids: string[], expected: string[]): boolean {
   const expectedSet = new Set(expected);
   return ids.every((id) => expectedSet.has(id));
 }
+
+const PROMO_MESSAGES = {
+  kind: "Elige si es un porcentaje o un precio especial",
+  percent_range: "El descuento debe ser un porcentaje entero entre 1 y 90",
+  price_not_lower: "El precio especial debe ser menor que el precio normal",
+  days: "Revisa los días de la semana del descuento",
+  dates: "Revisa las fechas del descuento",
+  date_order: "La fecha de término debe ser posterior a la de inicio",
+  label: "El texto del descuento es demasiado largo",
+} as const;
+
+export const invalidPromo = (problem: keyof typeof PROMO_MESSAGES) =>
+  new BadRequestException(apiError("INVALID_PROMO", PROMO_MESSAGES[problem], { problem }));
+
+/** Lowering the price below a special price would turn the discount into a surcharge. */
+export const promoPriceNotLower = () =>
+  new ConflictException(
+    apiError(
+      "PROMO_PRICE_NOT_LOWER",
+      "El producto tiene un precio especial igual o mayor al nuevo precio: cambia o quita el descuento primero",
+    ),
+  );

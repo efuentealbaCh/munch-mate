@@ -1,4 +1,12 @@
-import { ORDER_LIMITS, RESTAURANT_ROLES, type RestaurantRole, type WeeklyHours } from "@app/types";
+import {
+  MESSAGE_CHANNELS,
+  type MessageChannel,
+  ORDER_LIMITS,
+  RESTAURANT_ROLES,
+  type RestaurantRole,
+  TIP_LIMITS,
+  type WeeklyHours,
+} from "@app/types";
 import { Transform, Type } from "class-transformer";
 import { GeoPointDto } from "../../../common/validation/geo-point.dto";
 import {
@@ -38,6 +46,20 @@ export class CreateRestaurantDto {
   @IsString()
   @MaxLength(60, SLUG_BOUND)
   slug?: string;
+}
+
+/** WhatsApp/SMS notices; the sender phone is normalized and checked by the service. */
+export class MessagingSettingsDto {
+  @IsBoolean()
+  enabled!: boolean;
+
+  @IsIn(MESSAGE_CHANNELS)
+  channel!: MessageChannel;
+
+  @Transform(cleanLine)
+  @IsString()
+  @MaxLength(30, { message: "senderPhone debe ser un teléfono válido, ej. +569 12345678" })
+  senderPhone!: string;
 }
 
 export class UpdateRestaurantDto {
@@ -82,6 +104,18 @@ export class UpdateRestaurantDto {
   @Min(ORDER_LIMITS.itemsPerOrderMin, { message: `El mínimo es ${ORDER_LIMITS.itemsPerOrderMin} producto por pedido` })
   @Max(ORDER_LIMITS.itemsPerOrderMax, { message: `El máximo es ${ORDER_LIMITS.itemsPerOrderMax} productos por pedido` })
   maxItemsPerOrder?: number;
+
+  /** Suggested tip on table bills, percent (0 = none). */
+  @IsOptional()
+  @IsInt({ message: "tipPercent debe ser un número entero" })
+  @Min(0, { message: "La propina sugerida no puede ser negativa" })
+  @Max(TIP_LIMITS.percentMax, { message: `La propina sugerida puede ser como máximo ${TIP_LIMITS.percentMax} %` })
+  tipPercent?: number;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => MessagingSettingsDto)
+  messaging?: MessagingSettingsDto;
 
   /** The restaurant on the map; null removes it. */
   @IsOptional()

@@ -16,7 +16,8 @@ const summary: DailySummary = {
   date: "2026-10-08",
   currency: "CLP",
   orders: { total: 7, completed: 4, inProgress: 1, cancelled: 1, rejected: 1 },
-  sales: { total: 30000, deliveryFees: 2000, paid: 24000, unpaid: 6000, averageTicket: 6000 },
+  sales: { total: 30000, deliveryFees: 2000, paid: 24000, unpaid: 6000, averageTicket: 6000, discounts: 0 },
+  tips: 0,
   byChannel: {
     dine_in: { orders: 3, total: 9000 },
     pickup: { orders: 0, total: 0 },

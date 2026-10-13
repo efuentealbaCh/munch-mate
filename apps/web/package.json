@@ -8,7 +8,8 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:e2e:web": "playwright test"
+    "test:e2e:web": "playwright test",
+    "guide:delivery": "playwright test --config playwright.guide.config.ts delivery-tracking"
   },
   "dependencies": {
     "@app/types": "workspace:*",

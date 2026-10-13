@@ -11,6 +11,8 @@ export interface RoomEmitter {
 
 export const restaurantRoom = (restaurantId: string) => `restaurant:${restaurantId}`;
 export const orderRoom = (orderId: string) => `order:${orderId}`;
+/** The phones that scanned a table's QR: its account (phase 8). */
+export const tableRoom = (tableId: string) => `table:${tableId}`;
 /** A rider-only member: receives just the deliveries assigned to them (customer data of other orders stays out). */
 export const riderRoom = (restaurantId: string, userId: string) => `rider:${restaurantId}:${userId}`;
 
@@ -50,6 +52,11 @@ export class RealtimeService {
   /** The customer tracking one order. */
   toOrder(orderId: string): RoomEmitter {
     return this.room(orderRoom(orderId));
+  }
+
+  /** The phones at one table (its account). */
+  toTable(tableId: string): RoomEmitter {
+    return this.room(tableRoom(tableId));
   }
 
   private room(name: string): RoomEmitter {
