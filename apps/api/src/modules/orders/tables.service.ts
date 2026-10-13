@@ -78,6 +78,7 @@ export class TablesService {
       acceptingOrders: restaurant.acceptingOrders,
       openState: openState(restaurant),
       maxItemsPerOrder: restaurant.maxItemsPerOrder,
+      tipPercent: restaurant.tipPercent,
     };
   }
 

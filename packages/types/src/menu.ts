@@ -1,5 +1,5 @@
 import type { GeoPoint } from "./geo";
-import type { OpenState, WeeklyHours } from "./restaurants";
+import type { MessageChannel, OpenState, WeeklyHours } from "./restaurants";
 /**
  * Limits shared by the api DTOs and the web forms, so both validate the same way.
  * Prices are integers in the currency's minor unit (CLP has none: 3990 = $3.990).
@@ -58,6 +58,28 @@ export interface ModifierGroupView {
   usedByProducts: number;
 }
 
+/**
+ * A product discount (phase 8): a percentage off or a special price, optionally only some weekdays and
+ * between two dates (restaurant timezone). It applies to the product's base price, not to option extras.
+ */
+export const PROMO_KINDS = ["percent", "price"] as const;
+export type PromoKind = (typeof PROMO_KINDS)[number];
+
+export interface ProductPromo {
+  kind: PromoKind;
+  /** percent: 1–90 (% off). price: the special price, lower than the regular one (minor units). */
+  value: number;
+  /** Weekdays it applies, 0 = Monday … 6 = Sunday (same as WeeklyHours); [] = every day. */
+  days: number[];
+  /** First and last day it applies (YYYY-MM-DD, inclusive); null = open-ended. */
+  startsOn: string | null;
+  endsOn: string | null;
+  /** Shown on the menu next to the price ("Martes de pizza"); "" = only the discount. */
+  label: string;
+}
+
+export const PROMO_LIMITS = { percentMin: 1, percentMax: 90, labelMax: 40 } as const;
+
 export interface ProductView {
   id: string;
   categoryId: string;
@@ -71,6 +93,8 @@ export interface ProductView {
   image: ProductImage | null;
   /** In display order. */
   modifierGroupIds: string[];
+  /** Discount (owner only); null = regular price. */
+  promo: ProductPromo | null;
 }
 
 /** Everything the admin menu editor needs, in display order, in one request. */
@@ -92,7 +116,10 @@ export interface PublicProduct {
   id: string;
   name: string;
   description: string;
+  /** Regular price. The price charged now comes from `promoPrice()` (@app/utils) with `promo`. */
   price: number;
+  /** Discount, if any; it may apply only some days (check it with the restaurant's timezone). */
+  promo: ProductPromo | null;
   available: boolean;
   image: ProductImage | null;
   modifierGroups: PublicModifierGroup[];
@@ -119,6 +146,10 @@ export interface PublicMenu {
     pickupEnabled: boolean;
     /** Whether customers may order for delivery (owner setting; zones at `/delivery-zones`). */
     deliveryEnabled: boolean;
+    /** IANA zone: discounts by weekday and date are evaluated in it. */
+    timezone: string;
+    /** Order notices by text message the customer may ask for at checkout; null = not offered. */
+    messaging: { channel: MessageChannel } | null;
   };
   categories: { id: string; name: string; description: string; products: PublicProduct[] }[];
 }

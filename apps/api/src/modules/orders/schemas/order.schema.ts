@@ -1,4 +1,6 @@
 import {
+  MESSAGE_CHANNELS,
+  type MessageChannel,
   ORDER_CHANNELS,
   ORDER_STATUSES,
   type OrderChannel,
@@ -37,8 +39,16 @@ export class OrderItemSnapshot {
   @Prop({ required: true })
   name!: string;
 
+  /** Base price charged (after the product's discount, if any). */
   @Prop({ required: true })
   unitPrice!: number;
+
+  /** Base price before the discount (phase 8). Older orders lack it: it then equals unitPrice. */
+  @Prop({ type: Number, default: null })
+  regularUnitPrice!: number | null;
+
+  @Prop({ default: "" })
+  promoLabel!: string;
 
   @Prop({ required: true, min: 1 })
   quantity!: number;
@@ -171,6 +181,14 @@ export class Order {
   @Prop({ type: Types.ObjectId, default: null })
   tableId!: Types.ObjectId | null;
 
+  /** Dine-in: the table account it belongs to (phase 8). */
+  @Prop({ type: Types.ObjectId, default: null })
+  tableSessionId!: Types.ObjectId | null;
+
+  /** WhatsApp/SMS notices the customer asked for (channel at ordering time), or null. */
+  @Prop({ type: String, enum: [...MESSAGE_CHANNELS, null], default: null })
+  notifyBy!: MessageChannel | null;
+
   /** Snapshot: renaming or deleting the table later does not change past orders. */
   @Prop({ type: String, default: null })
   tableLabel!: string | null;
@@ -213,6 +231,8 @@ OrderSchema.index({ restaurantId: 1, status: 1, createdAt: 1 });
 OrderSchema.index({ restaurantId: 1, businessDate: 1 });
 // "Mis pedidos": a customer's orders across restaurants, newest first (guests have no customerId).
 OrderSchema.index({ customerId: 1, createdAt: -1 }, { partialFilterExpression: { customerId: { $type: "objectId" } } });
+// The orders of a table account.
+OrderSchema.index({ restaurantId: 1, tableSessionId: 1 }, { partialFilterExpression: { tableSessionId: { $type: "objectId" } } });
 // A rider's deliveries in progress.
 OrderSchema.index({ restaurantId: 1, riderId: 1, status: 1 }, { partialFilterExpression: { channel: "delivery" } });
 // Per-phone limit on pickup orders in progress; partial so dine-in orders (no phone) stay out of it.

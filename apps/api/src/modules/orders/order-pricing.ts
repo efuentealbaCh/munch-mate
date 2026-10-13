@@ -1,10 +1,19 @@
-import type { OrderItemInput } from "@app/types";
+import type { OrderItemInput, ProductPromo } from "@app/types";
+import { promoPrice } from "@app/utils";
 
 /** Menu data needed to price an order, loaded once per request. */
 export interface PricingMenu {
   products: Map<
     string,
-    { id: string; name: string; price: number; available: boolean; orderable: boolean; modifierGroupIds: string[] }
+    {
+      id: string;
+      name: string;
+      price: number;
+      available: boolean;
+      orderable: boolean;
+      modifierGroupIds: string[];
+      promo: ProductPromo | null;
+    }
   >;
   groups: Map<
     string,
@@ -29,7 +38,12 @@ export interface PricedModifier {
 export interface PricedItem {
   productId: string;
   name: string;
+  /** Base price charged per unit: the discounted one when a discount applies at ordering time. */
   unitPrice: number;
+  /** Base price before the discount (= unitPrice without one). */
+  regularUnitPrice: number;
+  /** The discount's label ("" without one). */
+  promoLabel: string;
   quantity: number;
   modifiers: PricedModifier[];
   note: string;
@@ -54,12 +68,22 @@ export class OrderValidationError extends Error {
  * client sent them in.
  * @throws OrderValidationError when a product, option or selection rule no longer holds.
  */
-export function priceOrder(items: OrderItemInput[], menu: PricingMenu): { items: PricedItem[]; subtotal: number } {
-  const priced = items.map((item) => priceItem(item, menu));
+/** When and where the order is placed: discounts by weekday and date depend on it. */
+export interface PricingClock {
+  at: Date;
+  timeZone: string;
+}
+
+export function priceOrder(
+  items: OrderItemInput[],
+  menu: PricingMenu,
+  clock: PricingClock = { at: new Date(), timeZone: "America/Santiago" },
+): { items: PricedItem[]; subtotal: number } {
+  const priced = items.map((item) => priceItem(item, menu, clock));
   return { items: priced, subtotal: priced.reduce((sum, item) => sum + item.lineTotal, 0) };
 }
 
-function priceItem(item: OrderItemInput, menu: PricingMenu): PricedItem {
+function priceItem(item: OrderItemInput, menu: PricingMenu, clock: PricingClock): PricedItem {
   const product = menu.products.get(item.productId);
   if (!product?.orderable) {
     throw new OrderValidationError(
@@ -119,11 +143,15 @@ function priceItem(item: OrderItemInput, menu: PricingMenu): PricedItem {
     }
   }
 
-  const unitTotal = product.price + modifiers.reduce((sum, m) => sum + m.priceDelta, 0);
+  // Discounts apply to the base price only; option extras are charged in full.
+  const base = promoPrice(product.price, product.promo, clock.at, clock.timeZone);
+  const unitTotal = base.price + modifiers.reduce((sum, m) => sum + m.priceDelta, 0);
   return {
     productId: product.id,
     name: product.name,
-    unitPrice: product.price,
+    unitPrice: base.price,
+    regularUnitPrice: base.regularPrice,
+    promoLabel: base.label,
     quantity: item.quantity,
     modifiers,
     note: item.note?.trim() ?? "",

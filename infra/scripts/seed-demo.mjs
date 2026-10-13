@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Creates the demo restaurants of infra/demo/demo-restaurants.json through the public api, exactly as a
 // user would: register (or log in), verify the email via Mailpit, create restaurants, profile, logo,
-// modifier groups, categories and products with photos, tables, pickup, delivery zones drawn on the map, the
-// restaurant location, and open the restaurant for orders.
+// modifier groups, categories and products with photos and discounts, tables, pickup, delivery zones drawn on the
+// map, the restaurant location, WhatsApp notices, and open the restaurant for orders.
 //
 // Usage (from the repo root, with the local stack or `pnpm dev` running):
 //   node infra/scripts/seed-demo.mjs
@@ -156,6 +156,8 @@ async function seedRestaurant(spec, existing) {
     ...(spec.pickupEnabled !== undefined ? { pickupEnabled: spec.pickupEnabled } : {}),
     ...(spec.deliveryEnabled !== undefined ? { deliveryEnabled: spec.deliveryEnabled } : {}),
     ...(spec.location ? { location: spec.location } : {}),
+    // Phase 8: WhatsApp/SMS notices (offered only where the platform has a messaging provider).
+    ...(spec.messaging ? { messaging: spec.messaging } : {}),
   });
   if (!restaurant.logo) await upload(`${base}/logo`, spec.logo);
 
@@ -200,6 +202,8 @@ async function seedRestaurant(spec, existing) {
         created++;
       }
       if (item.photo && !product.image) await upload(`${base}/menu/products/${product.id}/image`, item.photo);
+      // Phase 8: the demo discounts (kept if the owner changed them since).
+      if (item.promo && !product.promo) await api("PUT", `${base}/menu/products/${product.id}/promo`, item.promo);
       const available = item.available !== false;
       if (product.available !== available) {
         await api("PATCH", `${base}/menu/products/${product.id}/availability`, { available });

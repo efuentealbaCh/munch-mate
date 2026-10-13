@@ -84,7 +84,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
       >
         Saltar al contenido
       </a>
-      <header className="sticky top-0 z-40 border-b bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/80">
+      <header className="sticky top-0 z-40 border-b bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/80 print:hidden">
         <div className="mx-auto flex h-14 max-w-5xl items-center justify-between gap-3 px-4">
           <Brand href="/admin" />
           <UserMenu user={user} onLogout={handleLogout} />

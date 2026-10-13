@@ -18,6 +18,7 @@ import { ItemsLimitSettings, ItemsLimitView } from "./items-limit-settings";
 import { LocationSettings } from "./location-settings";
 import { OpeningHoursSettings } from "./opening-hours-settings";
 import { PickupSettings } from "./pickup-settings";
+import { MessagingSettings, TipSettings } from "./service-settings";
 import { useRestaurant } from "./restaurant-context";
 import { ProfileForm } from "./profile-form";
 import { SettingsForm } from "./settings-form";
@@ -129,6 +130,28 @@ export function RestaurantOverview() {
             </CardHeader>
             <CardContent>
               <DeliverySettings />
+            </CardContent>
+          </Card>
+          <Card className={CARD_SPACING}>
+            <CardHeader>
+              <CardTitle>
+                <h2>Salón y propina</h2>
+              </CardTitle>
+              <CardDescription>Los pedidos de cada mesa se suman en su cuenta hasta cobrarla desde la pestaña Salón.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <TipSettings />
+            </CardContent>
+          </Card>
+          <Card className={CARD_SPACING}>
+            <CardHeader>
+              <CardTitle>
+                <h2>Avisos por WhatsApp o SMS</h2>
+              </CardTitle>
+              <CardDescription>Mensajes al cliente cuando su pedido de retiro o delivery avanza.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <MessagingSettings />
             </CardContent>
           </Card>
           <Card className={CARD_SPACING}>

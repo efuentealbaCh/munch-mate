@@ -47,8 +47,10 @@ export function useCurrentPosition(): {
     setLocating(true);
     setError(null);
     try {
+      // A fresh reading (maximumAge 0): the user taps again because the pin is wrong, and a cached
+      // position would put it back in the same place.
       const position = await new Promise<GeolocationPosition>((resolve, reject) =>
-        navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 15_000, maximumAge: 30_000 }),
+        navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 15_000, maximumAge: 0 }),
       );
       return {
         point: { lat: roundCoord(position.coords.latitude), lng: roundCoord(position.coords.longitude) },

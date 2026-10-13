@@ -1,0 +1,92 @@
+[
+  {
+    "file": "01-menu-publico.png",
+    "actor": "Cliente",
+    "caption": "Abre el menú público del local. El aviso confirma que hay retiro y delivery."
+  },
+  {
+    "file": "02-producto-opciones.png",
+    "actor": "Cliente",
+    "caption": "Elige las opciones obligatorias (tamaño y masa). El precio del botón se actualiza."
+  },
+  {
+    "file": "03-checkout-mapa.png",
+    "actor": "Cliente",
+    "caption": "Elige Delivery y toca «Usar mi ubicación». El pin elige la zona solo (Ñuñoa) y suma su costo de envío."
+  },
+  {
+    "file": "04-checkout-pago.png",
+    "actor": "Cliente",
+    "caption": "Completa nombre, teléfono y dirección. Con efectivo, indica con cuánto pagas y ves tu vuelto."
+  },
+  {
+    "file": "05-seguimiento-pendiente.png",
+    "actor": "Cliente",
+    "caption": "Llega a la página de seguimiento: número de pedido y estado «Pendiente». Guarda este link."
+  },
+  {
+    "file": "06-tablero-pedido-nuevo.png",
+    "actor": "Dueño / caja",
+    "caption": "El pedido aparece en el tablero sin recargar, con dirección, zona y el vuelto que hay que llevar."
+  },
+  {
+    "file": "07-aceptar-hora-llegada.png",
+    "actor": "Dueño / caja",
+    "caption": "Al aceptar, elige en cuánto llega. La hora estimada se calcula sola."
+  },
+  {
+    "file": "08-seguimiento-aceptado.png",
+    "actor": "Cliente",
+    "caption": "El cliente ve «Aceptado» y la hora aproximada de llegada, en vivo."
+  },
+  {
+    "file": "09-asignar-repartidor.png",
+    "actor": "Dueño / caja",
+    "caption": "«Asignar repartidor» lista a los miembros con el rol Repartidor."
+  },
+  {
+    "file": "10-repartidor-mis-repartos.png",
+    "actor": "Repartidor",
+    "caption": "El repartidor solo ve sus entregas: dirección, teléfono, cómo navegar y el vuelto que debe llevar."
+  },
+  {
+    "file": "11-repartidor-en-reparto.png",
+    "actor": "Repartidor",
+    "caption": "«Salir a repartir»: el teléfono empieza a compartir su ubicación. Debe mantener la pantalla encendida."
+  },
+  {
+    "file": "12-repartidor-mapa.png",
+    "actor": "Repartidor",
+    "caption": "Más abajo, en la misma tarjeta, el repartidor ve en el mapa su posición (punto azul) y la dirección de entrega."
+  },
+  {
+    "file": "13-seguimiento-en-reparto.png",
+    "actor": "Cliente",
+    "caption": "El cliente ve «En reparto» y el mapa con el repartidor (saliendo del local) y su dirección."
+  },
+  {
+    "file": "14-seguimiento-acercandose.png",
+    "actor": "Cliente",
+    "caption": "Unos segundos después, el repartidor se movió en el mapa hacia la dirección del cliente."
+  },
+  {
+    "file": "15-tablero-mapa-repartidor.png",
+    "actor": "Dueño / caja",
+    "caption": "Desde el tablero, «Seguir al repartidor» abre el mismo mapa en vivo para el local."
+  },
+  {
+    "file": "16-repartidor-cobrar.png",
+    "actor": "Repartidor",
+    "caption": "«Entregado» en un pedido sin pagar pide registrar el cobro (con el vuelto a la vista)."
+  },
+  {
+    "file": "17-seguimiento-entregado.png",
+    "actor": "Cliente",
+    "caption": "El cliente ve «Entregado»: el mapa desaparece y la ubicación del repartidor se borra."
+  },
+  {
+    "file": "18-tablero-hoy.png",
+    "actor": "Dueño / caja",
+    "caption": "En la pestaña «Hoy» del tablero el pedido queda Entregado y Pagado · Efectivo."
+  }
+]

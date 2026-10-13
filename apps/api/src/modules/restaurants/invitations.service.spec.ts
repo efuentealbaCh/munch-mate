@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
+import type { MessagingService } from "../messaging/messaging.service";
 import type { ConfigService } from "@nestjs/config";
 import type { Connection } from "mongoose";
 import type { MediaService } from "../../infra/storage/media.service";
@@ -61,6 +62,7 @@ function setup(options: { invitation?: typeof pending | null; markAccepted?: boo
     emails as unknown as EmailQueue,
     connection as unknown as Connection,
     fakeMedia,
+    { available: false } as unknown as MessagingService,
     config,
   );
   return { service, invitations, memberships, users, emails, session };

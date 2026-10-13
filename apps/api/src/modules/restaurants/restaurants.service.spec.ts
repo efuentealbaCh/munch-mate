@@ -1,4 +1,5 @@
 import type { Connection } from "mongoose";
+import type { MessagingService } from "../messaging/messaging.service";
 import type { MediaService } from "../../infra/storage/media.service";
 import type { RealtimeService } from "../realtime/realtime.service";
 
@@ -41,6 +42,7 @@ describe("RestaurantsService.create", () => {
     const memberships = { create: jest.fn() };
     const connection = { transaction: (fn: (session: unknown) => Promise<unknown>) => fn({}) };
     const service = new RestaurantsService(
+      { available: false } as unknown as MessagingService,
       restaurants as unknown as RestaurantsRepository,
       memberships as unknown as MembershipsRepository,
       connection as unknown as Connection,
@@ -117,6 +119,7 @@ describe("RestaurantsService queries and updates", () => {
       ]),
     };
     const service = new RestaurantsService(
+      { available: false } as unknown as MessagingService,
       restaurants as unknown as RestaurantsRepository,
       memberships as unknown as MembershipsRepository,
       {} as Connection,

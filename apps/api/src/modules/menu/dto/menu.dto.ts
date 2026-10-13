@@ -1,4 +1,4 @@
-import { MENU_LIMITS } from "@app/types";
+import { MENU_LIMITS, PROMO_KINDS, PROMO_LIMITS, type PromoKind } from "@app/types";
 import { Transform, Type } from "class-transformer";
 import {
   ArrayMaxSize,
@@ -6,14 +6,17 @@ import {
   ArrayUnique,
   IsArray,
   IsBoolean,
+  IsIn,
   IsInt,
   IsMongoId,
   IsOptional,
   IsString,
   Length,
+  Matches,
   Max,
   MaxLength,
   Min,
+  ValidateIf,
   ValidateNested,
 } from "class-validator";
 import { cleanLine, cleanText } from "../../../common/validation/clean-text";
@@ -177,4 +180,42 @@ export class ModifierGroupDto {
   @ValidateNested({ each: true })
   @Type(() => ModifierOptionDto)
   options!: ModifierOptionDto[];
+}
+
+const DATE = { message: "debe ser una fecha YYYY-MM-DD" };
+
+/** Body of `PUT /menu/products/:productId/promo`; the price rules (vs the product price) live in the service. */
+export class ProductPromoDto {
+  @IsIn(PROMO_KINDS)
+  kind!: PromoKind;
+
+  @IsInt({ message: "value debe ser un entero" })
+  @Min(0)
+  @Max(MENU_LIMITS.priceMax)
+  value!: number;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(7)
+  @ArrayUnique()
+  @IsInt({ each: true })
+  @Min(0, { each: true })
+  @Max(6, { each: true })
+  days?: number[];
+
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, DATE)
+  startsOn?: string | null;
+
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, DATE)
+  endsOn?: string | null;
+
+  @IsOptional()
+  @Transform(cleanLine)
+  @IsString()
+  @MaxLength(PROMO_LIMITS.labelMax)
+  label?: string;
 }

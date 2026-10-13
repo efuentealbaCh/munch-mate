@@ -1,4 +1,7 @@
 import type { ConfigService } from "@nestjs/config";
+import type { MessagingService } from "../messaging/messaging.service";
+import type { TableSessionsRepository } from "./table-sessions.repository";
+import type { TableSessionsService } from "./table-sessions.service";
 import type { PdfQueue } from "../../infra/queue/pdf.queue";
 import type { StorageService } from "../../infra/storage/storage.service";
 import type { Connection } from "mongoose";
@@ -72,6 +75,8 @@ function order(overrides: Partial<OrderRecord> = {}): OrderRecord {
     riderName: null,
     customerId: null,
     clientOrderId: "c-1",
+    tableSessionId: null,
+    notifyBy: null,
     createdAt: new Date(),
     updatedAt: new Date(),
     ...overrides,
@@ -92,6 +97,7 @@ function setup(
     insideZone?: boolean;
     mapAvailable?: boolean;
     customerOrders?: OrderRecord[];
+    messagingChannel?: "whatsapp" | "sms" | null;
   } = {},
 ) {
   const emitted: string[] = [];
@@ -102,6 +108,14 @@ function setup(
     followOrder: jest.fn(async () => undefined),
   };
   const tracking = { clear: jest.fn(async () => undefined), lastPosition: jest.fn(async () => null) };
+  const messaging = {
+    offeredChannel: jest.fn(() => options.messagingChannel ?? null),
+    orderEvent: jest.fn(async () => undefined),
+  };
+  const tableSessions = {
+    notifyChange: jest.fn(async () => undefined),
+    tipsByDay: jest.fn(async () => new Map<string, number>()),
+  };
   const pdfQueue = {
     enqueueReceipt: jest.fn(async () => undefined),
     receiptFailed: jest.fn(async () => false),
@@ -158,7 +172,7 @@ function setup(
     { list: jest.fn(async () => [{ id: "c1", name: "C", description: "", active: true, position: 0 }]) } as unknown as CategoriesRepository,
     {
       list: jest.fn(async () => [
-        { id: "p1", categoryId: "c1", name: "Completo", description: "", price: 1000, available: true, visible: true, imageKey: null, modifierGroupIds: [], position: 0 },
+        { id: "p1", categoryId: "c1", name: "Completo", description: "", price: 1000, available: true, visible: true, imageKey: null, modifierGroupIds: [], position: 0, promo: null },
       ]),
     } as unknown as ProductsRepository,
     { list: jest.fn(async () => []) } as unknown as ModifierGroupsRepository,
@@ -190,8 +204,11 @@ function setup(
     tracking as unknown as RiderTrackingService,
     { isAvailable: jest.fn(async () => options.mapAvailable ?? true) } as unknown as MapsService,
     push as unknown as PushService,
+    messaging as unknown as MessagingService,
+    tableSessions as unknown as TableSessionsService,
+    { getOrOpen: jest.fn(async () => ({ id: "s1" })) } as unknown as TableSessionsRepository,
   );
-  return { service, orders, emitted, pdfQueue, storage, tracking, push };
+  return { service, orders, emitted, pdfQueue, storage, tracking, push, messaging, tableSessions };
 }
 
 const input = { clientOrderId: "c-1", items: [{ productId: "p1", quantity: 1, modifiers: [] }] };
@@ -765,5 +782,86 @@ describe("OrdersService customers and push", () => {
     await expect(setup({ current: order({ status: "served" }) }).service.followOrder("tok", sub)).rejects.toMatchObject({
       response: { code: "ORDER_FINISHED" },
     });
+  });
+});
+
+describe("OrdersService phase 8: table accounts, notices and waiters", () => {
+  const waiter: TenantContext = { restaurantId: "r1", roles: ["waiter"], status: "active" };
+
+  it("puts a table order in the table's open account and tells the floor", async () => {
+    const { service, orders, tableSessions } = setup();
+    orders.create.mockResolvedValueOnce(order({ tableSessionId: "s1" }));
+
+    await service.createDineIn("abc", input);
+
+    expect(orders.create).toHaveBeenCalledWith("r1", expect.objectContaining({ tableSessionId: "s1" }), {});
+    expect(tableSessions.notifyChange).toHaveBeenCalledWith("r1", "s1");
+  });
+
+  it("keeps pickup and delivery orders out of table accounts", async () => {
+    const { service, orders } = setup();
+
+    await service.createPickup("don-pepe", pickupInput);
+
+    expect(orders.create).toHaveBeenCalledWith("r1", expect.objectContaining({ tableSessionId: null }), {});
+  });
+
+  it("stores the message channel only when the restaurant offers it and the customer asks", async () => {
+    const offered = setup({ messagingChannel: "whatsapp" });
+    await offered.service.createPickup("don-pepe", { ...pickupInput, notifyByMessage: true });
+    expect(offered.orders.create).toHaveBeenCalledWith("r1", expect.objectContaining({ notifyBy: "whatsapp" }), {});
+
+    const notAsked = setup({ messagingChannel: "whatsapp" });
+    await notAsked.service.createPickup("don-pepe", pickupInput);
+    expect(notAsked.orders.create).toHaveBeenCalledWith("r1", expect.objectContaining({ notifyBy: null }), {});
+
+    const notOffered = setup({ messagingChannel: null });
+    await notOffered.service.createPickup("don-pepe", { ...pickupInput, notifyByMessage: true });
+    expect(notOffered.orders.create).toHaveBeenCalledWith("r1", expect.objectContaining({ notifyBy: null }), {});
+  });
+
+  it("asks for a mobile phone when the customer wants notices", async () => {
+    const { service } = setup({ messagingChannel: "sms" });
+    await expect(
+      service.createPickup("don-pepe", { ...pickupInput, customerPhone: "+56 2 2345 6789", notifyByMessage: true }),
+    ).rejects.toMatchObject({ response: { code: "PHONE_NOT_MOBILE" } });
+  });
+
+  it("sends a notice when accepting, with the tracking link, only if the customer asked for notices", async () => {
+    const asked = setup({ current: pickupOrder({ notifyBy: "whatsapp" }) });
+    await asked.service.changeStatus(tenant, "u1", "o1", "accepted", undefined, 15);
+    expect(asked.messaging.orderEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ notifyBy: "whatsapp" }),
+      expect.anything(),
+      "accepted",
+      expect.objectContaining({ restaurantName: "Don Pepe", trackingUrl: expect.stringMatching(/^https:\/\/munch\.test\/pedido#t=/) }),
+    );
+
+    const silent = setup({ current: pickupOrder() });
+    await silent.service.changeStatus(tenant, "u1", "o1", "accepted", undefined, 15);
+    expect(silent.messaging.orderEvent).not.toHaveBeenCalled();
+  });
+
+  it("never messages about table orders", async () => {
+    const { service, messaging } = setup({ current: order({ notifyBy: "sms" }) });
+    await service.changeStatus(tenant, "u1", "o1", "accepted");
+    expect(messaging.orderEvent).not.toHaveBeenCalled();
+  });
+
+  it("lets waiters work and charge table orders, not pickup or delivery ones", async () => {
+    await expect(setup().service.changeStatus(waiter, "w1", "o1", "accepted")).resolves.toMatchObject({ status: "accepted" });
+    await expect(setup().service.markPaid(waiter, "w1", "o1", "card_pos")).resolves.toMatchObject({ paymentStatus: "paid" });
+    await expect(
+      setup({ current: pickupOrder({ status: "ready" }) }).service.markPaid(waiter, "w1", "o1", "cash"),
+    ).rejects.toMatchObject({ response: { code: "FORBIDDEN_ROLE" } });
+    await expect(
+      setup({ current: pickupOrder() }).service.changeStatus(waiter, "w1", "o1", "accepted", undefined, 15),
+    ).rejects.toMatchObject({ response: { code: "FORBIDDEN_ROLE" } });
+  });
+
+  it("refreshes the table account when one of its orders changes", async () => {
+    const { service, tableSessions } = setup({ current: order({ tableSessionId: "s1" }) });
+    await service.changeStatus(tenant, "u1", "o1", "accepted");
+    expect(tableSessions.notifyChange).toHaveBeenCalledWith("r1", "s1");
   });
 });

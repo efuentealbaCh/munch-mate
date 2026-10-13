@@ -1,4 +1,11 @@
-import { type GeoPoint, ORDER_LIMITS, type RestaurantStatus, type WeeklyHours } from "@app/types";
+import {
+  type GeoPoint,
+  type MessagingSettings,
+  ORDER_LIMITS,
+  type RestaurantStatus,
+  TIP_LIMITS,
+  type WeeklyHours,
+} from "@app/types";
 import { Injectable } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { type ClientSession, type Model, Types } from "mongoose";
@@ -17,6 +24,8 @@ export interface RestaurantRecord {
   openingHours: WeeklyHours | null;
   maxItemsPerOrder: number;
   location: GeoPoint | null;
+  tipPercent: number;
+  messaging: MessagingSettings;
   currency: string;
   timezone: string;
   status: RestaurantStatus;
@@ -33,6 +42,8 @@ export interface RestaurantChanges {
   openingHours?: WeeklyHours | null;
   maxItemsPerOrder?: number;
   location?: GeoPoint | null;
+  tipPercent?: number;
+  messaging?: MessagingSettings;
 }
 
 /** Thrown when the unique index on `slug` rejects a write. */
@@ -201,6 +212,12 @@ function toRecord(doc: Restaurant & { _id: Types.ObjectId }): RestaurantRecord {
       typeof doc.location?.lat === "number" && typeof doc.location.lng === "number"
         ? { lat: doc.location.lat, lng: doc.location.lng }
         : null,
+    tipPercent: doc.tipPercent ?? TIP_LIMITS.percentDefault,
+    messaging: {
+      enabled: doc.messaging?.enabled ?? false,
+      channel: doc.messaging?.channel ?? "whatsapp",
+      senderPhone: doc.messaging?.senderPhone ?? "",
+    },
     currency: doc.currency,
     timezone: doc.timezone,
     status: doc.status,

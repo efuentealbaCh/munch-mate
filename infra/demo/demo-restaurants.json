@@ -315,7 +315,21 @@
               "groups": [
                 "tamano-completo",
                 "agregados"
-              ]
+              ],
+              "promo": {
+                "kind": "price",
+                "value": 2990,
+                "days": [
+                  0,
+                  1,
+                  2,
+                  3,
+                  4
+                ],
+                "startsOn": null,
+                "endsOn": null,
+                "label": "Precio almuerzo"
+              }
             },
             {
               "name": "Completo dinámico",
@@ -649,7 +663,15 @@
                 "tamano-pizza",
                 "masa",
                 "ingredientes-extra"
-              ]
+              ],
+              "promo": {
+                "kind": "percent",
+                "value": 20,
+                "days": [],
+                "startsOn": null,
+                "endsOn": null,
+                "label": "Promo de la semana"
+              }
             },
             {
               "name": "Pepperoni",
@@ -749,7 +771,19 @@
             {
               "name": "Cerveza artesanal",
               "description": "Rubia o roja, 500 ml.",
-              "price": 3990
+              "price": 3990,
+              "promo": {
+                "kind": "price",
+                "value": 2990,
+                "days": [
+                  3,
+                  4,
+                  5
+                ],
+                "startsOn": null,
+                "endsOn": null,
+                "label": "Happy hour"
+              }
             }
           ]
         }
@@ -879,6 +913,11 @@
       "location": {
         "lat": -33.4566,
         "lng": -70.5978
+      },
+      "messaging": {
+        "enabled": true,
+        "channel": "whatsapp",
+        "senderPhone": "+56 9 5555 0101"
       }
     },
     {
@@ -1003,7 +1042,15 @@
                 "tamano-cafe",
                 "leche",
                 "extras-cafe"
-              ]
+              ],
+              "promo": {
+                "kind": "percent",
+                "value": 15,
+                "days": [],
+                "startsOn": null,
+                "endsOn": null,
+                "label": ""
+              }
             },
             {
               "name": "Latte",

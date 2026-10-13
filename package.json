@@ -13,6 +13,7 @@
     "test:int": "pnpm -r test:int",
     "test:e2e": "pnpm -r test:e2e",
     "test:web": "pnpm --filter @app/web test:e2e:web",
+    "capturas:delivery": "pnpm --filter @app/web guide:delivery",
     "env:init": "sh infra/scripts/env-init.sh",
     "infra:up": "docker compose -f compose.yaml -f compose.dev.yaml up -d --wait mongo valkey garage mailpit",
     "infra:down": "docker compose -f compose.yaml -f compose.dev.yaml down",

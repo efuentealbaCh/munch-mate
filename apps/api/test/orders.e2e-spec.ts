@@ -126,6 +126,7 @@ describe("Dine-in orders (e2e)", () => {
         acceptingOrders: true,
         openState: { openNow: true, nextOpeningAt: null },
         maxItemsPerOrder: 50,
+        tipPercent: 10,
       });
 
       const { accessToken, order } = await s.order();

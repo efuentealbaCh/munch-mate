@@ -18,6 +18,7 @@ El proyecto tiene dos objetivos: ser un **MVP real y desplegable** y, de paso, e
 | **Owner** | Su restaurante | Configura el restaurante, el menú, las mesas, las zonas de delivery y el staff |
 | **Staff — caja** | Su restaurante | Acepta o rechaza pedidos y marca los pagos |
 | **Staff — cocina** | Su restaurante | Ve la cola de pedidos y cambia los estados de preparación |
+| **Staff — garzón** | Su restaurante | Atiende las mesas: ve los llamados y las cuentas en «Salón», trabaja los pedidos de mesa y cobra la cuenta con la propina. No toca retiro, delivery, ventas ni el menú |
 | **Staff — repartidor** | Su restaurante | Ve sus entregas asignadas y las marca como entregadas. Es opcional: un restaurante puede no tener repartidores en el sistema |
 | **Cliente invitado** | Un pedido | Pide sin registrarse y sigue su pedido con un link privado |
 | **Cliente registrado** | Toda la plataforma | Igual que el invitado, más historial y datos guardados. La cuenta es global, no por restaurante |
@@ -96,18 +97,19 @@ pending ──► accepted ──► preparing ──► ready ──┬──�
 
 | Colección | Tenant | Campos clave |
 | --- | --- | --- |
-| `restaurants` | — | `slug` (único), `name`, `description`, `phone`, `logoKey`, `currency`, `timezone`, `status`, `createdBy`, `membershipVersion`, `acceptingOrders`, `pickupEnabled`, `deliveryEnabled`, `openingHours` ✅ |
+| `restaurants` | — | `slug` (único), `name`, `description`, `phone`, `logoKey`, `currency`, `timezone`, `status`, `createdBy`, `membershipVersion`, `acceptingOrders`, `pickupEnabled`, `deliveryEnabled`, `openingHours` ✅, `tipPercent`, `messaging` (`enabled`, `channel`, `senderPhone`) ✅ |
 | `users` | — | `email` (único), `passwordHash`, `name`, `emailVerifiedAt`, `platformRole?` ✅ |
 | `sessions` | — | `userId`, `familyId`, `tokenHash`, `expiresAt`, `rotatedAt`, `revokedAt` ✅ |
 | `one_time_tokens` | — | `type` (`verify_email` / `password_reset`), `tokenHash`, `userId`, `expiresAt`, `usedAt` ✅ |
-| `memberships` | ✔ | `userId`, `restaurantId`, `roles[]` (`owner`, `cashier`, `kitchen`, `rider`) ✅ |
+| `memberships` | ✔ | `userId`, `restaurantId`, `roles[]` (`owner`, `cashier`, `kitchen`, `waiter`, `rider`) ✅ |
 | `invitations` | ✔ | `email`, `roles[]`, `tokenHash`, `invitedBy`, `expiresAt`, `acceptedAt`, `revokedAt` ✅ |
 | `menu_categories` | ✔ | `name`, `description`, `position`, `active` ✅ |
-| `products` | ✔ | `categoryId`, `name`, `description`, `price`, `imageKey`, `available` (agotado), `visible`, `modifierGroupIds[]`, `position` ✅ |
+| `products` | ✔ | `categoryId`, `name`, `description`, `price`, `imageKey`, `available` (agotado), `visible`, `modifierGroupIds[]`, `position` ✅, `promo` (porcentaje o precio especial, días, fechas, texto) ✅ |
 | `modifier_groups` | ✔ | `name`, `minSelect`, `maxSelect`, `options[]` (`name`, `priceDelta`, `available`) — biblioteca reutilizable entre productos ✅ |
 | `tables` | ✔ | `label`, `token` (único, va en el QR `/m/{token}`, regenerable), `active` ✅ |
 | `delivery_zones` | ✔ | `name`, `fee`, `minOrder`, `active`, `isHome` (zona del local, preseleccionada), `position` ✅ |
-| `orders` | ✔ | `number` (global), `ticketNumber` (diario), `businessDate`, `channel`, `status`, `statusHistory[]` (con quién y motivo), `paymentStatus`, `paymentMethod`, `items[]` (snapshot de precios y modificadores), `subtotal`, `total`, `currency`, `customerName`, `customerPhone` (normalizado), `customerEmail`, `estimatedReadyAt`, `note`, `tableId`, `tableLabel` (snapshot), `deliveryFee`, `delivery` (zona, dirección, depto, referencia), `expectedPayment` (medio y monto en efectivo), `riderId`, `riderName`, `accessTokenHash`, `clientOrderId` ✅, `customerId` ✅ |
+| `orders` | ✔ | `number` (global), `ticketNumber` (diario), `businessDate`, `channel`, `status`, `statusHistory[]` (con quién y motivo), `paymentStatus`, `paymentMethod`, `items[]` (snapshot de precios y modificadores), `subtotal`, `total`, `currency`, `customerName`, `customerPhone` (normalizado), `customerEmail`, `estimatedReadyAt`, `note`, `tableId`, `tableLabel` (snapshot), `deliveryFee`, `delivery` (zona, dirección, depto, referencia), `expectedPayment` (medio y monto en efectivo), `riderId`, `riderName`, `accessTokenHash`, `clientOrderId` ✅, `customerId` ✅, `tableSessionId`, `notifyBy`, ítems con `regularUnitPrice` y `promoLabel` ✅ |
+| `table_sessions` | ✔ | `tableId`, `tableLabel`, `status` (`open`/`closed`, una abierta por mesa), `openedAt`, `waiterCalledAt`, `billRequestedAt`, `requestedTip`, `closedAt`, `closedBusinessDate`, `tip`, `paymentMethod`, `closedBy` ✅ |
 | `counters` | ✔ | `_id` (`order:{restaurantId}` / `ticket:{restaurantId}:{businessDate}`), `seq` ✅ |
 | `customer_addresses` | — | `userId`, `label` (única por usuario), `address`, `unit`, `reference`, `location` (pin) ✅ |
 | `push_subscriptions` | — | `endpoint` (único), `keys`, `userId` (dispositivo de una cuenta) u `orderId` + `expiresAt` (seguidor de un pedido) ✅ |
@@ -140,12 +142,23 @@ pending ──► accepted ──► preparing ──► ready ──┬──�
 | **4. Retiro** | Checkout `pickup`, email de confirmación con comprobante PDF, marcado de pago | Flujo completo de retiro con email recibido |
 | **5. Delivery** | Zonas, checkout `delivery`, asignación de repartidor, vista del repartidor | Pedido entregado y marcado como pagado contra entrega |
 | **6. Clientes y push** | Cuentas de cliente, historial, direcciones, web push | El cliente recibe push al quedar listo su pedido |
+| **7. Mapas** | Mapa propio, zonas dibujadas, pin del cliente, seguimiento del repartidor | El cliente ve al repartidor moverse hasta su puerta |
+| **8. Salón y ventas** | Rol garzón, cuenta de mesa con llamado al garzón y propina, descuentos por producto, comandas en impresora térmica, exportar ventas, avisos por WhatsApp o SMS | Una mesa pide, llama al garzón, pide la cuenta con propina y el garzón la cobra; el cliente de retiro recibe el aviso por WhatsApp |
 
 Cada fase termina con sus tests, `smoke` actualizado y despliegue al VPS.
 
 ---
 
 ## Decisiones confirmadas
+
+- **Salón y ventas (fase 8):**
+  - **Garzón**: rol nuevo. Trabaja solo los pedidos de mesa y los cobra; su pantalla es «Salón».
+  - **Cuenta de mesa**: los pedidos de una mesa se suman en una cuenta abierta hasta que se cobra. Desde el QR se ve la cuenta, se llama al garzón y se pide la cuenta. Cobrar exige que no queden pedidos en cocina; paga todos los pedidos de la cuenta con un medio de pago. El siguiente pedido abre una cuenta nueva.
+  - **Propina**: solo en mesa. Sugerida por el local (10 % por defecto, se puede cambiar o dejar en 0), voluntaria: el cliente elige la sugerida, otro monto o ninguna, y el garzón confirma el monto al cobrar. Se informa aparte de las ventas.
+  - **Descuentos**: por producto, porcentaje o precio especial, opcionalmente algunos días de la semana y entre fechas. Sin cupones. Se aplican al precio del producto, no a los extras, y el pedido guarda el precio normal y el cobrado.
+  - **Impresora térmica**: comandas de cocina y precuentas, impresas desde el navegador del dispositivo (58 u 80 mm). Cada dispositivo decide si imprime solo los pedidos nuevos o al aceptarlos.
+  - **Exportar ventas**: cualquier rango de hasta 366 días, en CSV para Excel (por pedido, por producto o por día) y en una vista imprimible.
+  - **WhatsApp o SMS**: el dueño elige el canal y el número de envío; el cliente de retiro o delivery lo pide al comprar con un celular válido. Avisos al aceptar, listo para retirar, en camino, rechazado y cancelado. Proveedor: Twilio (una cuenta para ambos canales); en local los mensajes llegan a Mailpit.
 
 - **Moneda y país**: CLP / Chile por defecto (configurable por restaurante), zona horaria `America/Santiago`.
 - **Una sucursal por restaurante** en el MVP. Una cadena registra cada local como un restaurante.

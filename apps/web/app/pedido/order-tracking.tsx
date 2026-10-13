@@ -1,6 +1,6 @@
 "use client";
 
-import { ORDER_CHANNEL_LABELS, ORDER_STATUS_LABELS, type PublicOrderView } from "@app/types";
+import { MESSAGE_CHANNEL_LABELS, ORDER_CHANNEL_LABELS, ORDER_STATUS_LABELS, type PublicOrderView } from "@app/types";
 import { formatPhone } from "@app/utils";
 import {
   BellPlusIcon,
@@ -12,6 +12,7 @@ import {
   CloudOffIcon,
   DownloadIcon,
   MapPinIcon,
+  MessageCircleIcon,
   PartyPopperIcon,
   PhoneIcon,
   ReceiptTextIcon,
@@ -275,6 +276,13 @@ function TrackedOrder({ token }: { token: string }) {
       {finished ? null : <StatusSteps order={order} />}
 
       <FollowOrderButton token={token} order={order} />
+
+      {order.notifyBy && !finished ? (
+        <p className="flex items-center justify-center gap-2 text-sm text-muted-foreground" data-testid="message-notices">
+          <MessageCircleIcon className="size-4" aria-hidden />
+          Te avisamos por {MESSAGE_CHANNEL_LABELS[order.notifyBy]} cuando cambie tu pedido.
+        </p>
+      ) : null}
 
       {order.delivery && !finished ? <DeliveryDetails order={order} /> : null}
 

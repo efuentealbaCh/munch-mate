@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { MongooseModule } from "@nestjs/mongoose";
 import { VerifiedEmailGuard } from "../auth/verified-email.guard";
+import { MessagingModule } from "../messaging/messaging.module";
 import { UsersModule } from "../users/users.module";
 import { InvitationsController, RestaurantInvitationsController } from "./invitations.controller";
 import { InvitationsRepository } from "./invitations.repository";
@@ -20,6 +21,7 @@ import { Restaurant, RestaurantSchema } from "./schemas/restaurant.schema";
 @Module({
   imports: [
     UsersModule,
+    MessagingModule,
     MongooseModule.forFeature([
       { name: Restaurant.name, schema: RestaurantSchema },
       { name: Membership.name, schema: MembershipSchema },

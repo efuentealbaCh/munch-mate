@@ -15,6 +15,8 @@ interface Transition {
 }
 
 const FLOOR: readonly RestaurantRole[] = ["owner", "cashier", "kitchen"];
+/** Table orders: the waiters (phase 8) work them too; pickup and delivery stay with the floor roles. */
+const TABLE: readonly RestaurantRole[] = [...FLOOR, "waiter"];
 /** Taking the order out and handing it over. A rider may only act on deliveries assigned to them (api check). */
 const DISPATCH: readonly RestaurantRole[] = [...FLOOR, "rider"];
 
@@ -31,16 +33,16 @@ const DISPATCH: readonly RestaurantRole[] = [...FLOOR, "rider"];
 const TRANSITIONS: Record<OrderChannel, Partial<Record<OrderStatus, Transition[]>>> = {
   dine_in: {
     pending: [
-      { to: "accepted", roles: FLOOR },
-      { to: "rejected", roles: FLOOR, requiresReason: true },
-      { to: "cancelled", roles: FLOOR, customer: true, requiresReason: true },
+      { to: "accepted", roles: TABLE },
+      { to: "rejected", roles: TABLE, requiresReason: true },
+      { to: "cancelled", roles: TABLE, customer: true, requiresReason: true },
     ],
     accepted: [
-      { to: "preparing", roles: FLOOR },
-      { to: "cancelled", roles: FLOOR, requiresReason: true },
+      { to: "preparing", roles: TABLE },
+      { to: "cancelled", roles: TABLE, requiresReason: true },
     ],
-    preparing: [{ to: "ready", roles: FLOOR }],
-    ready: [{ to: "served", roles: FLOOR }],
+    preparing: [{ to: "ready", roles: TABLE }],
+    ready: [{ to: "served", roles: TABLE }],
   },
   pickup: {
     pending: [

@@ -12,9 +12,10 @@ function menu(overrides: { productAvailable?: boolean; orderable?: boolean; opti
           available: overrides.productAvailable ?? true,
           orderable: overrides.orderable ?? true,
           modifierGroupIds: ["size", "extras"],
+          promo: null,
         },
       ],
-      ["p2", { id: "p2", name: "Bebida", price: 1500, available: true, orderable: true, modifierGroupIds: [] }],
+      ["p2", { id: "p2", name: "Bebida", price: 1500, available: true, orderable: true, modifierGroupIds: [], promo: null }],
     ]),
     groups: new Map([
       [

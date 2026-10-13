@@ -30,6 +30,11 @@ export const envValidationSchema = z.object({
   MEDIA_PUBLIC_URL: z.url({ protocol: /^https?$/ }).transform((url) => url.replace(/\/+$/, "")),
   /** Web push (optional): without it the api enqueues no notifications. Generate with `pnpm push:keys`. */
   VAPID_PUBLIC_KEY: z.string().optional().transform((value) => (value ? value : undefined)),
+  /**
+   * WhatsApp/SMS order notices (phase 8): "off" hides the option; "twilio" sends for real; "mailpit" (local
+   * stacks only) delivers each message as an email to Mailpit. The workers hold the provider credentials.
+   */
+  MESSAGING_PROVIDER: z.enum(["off", "twilio", "mailpit"]).default("off"),
 });
 
 export type ApiEnv = z.infer<typeof envValidationSchema>;

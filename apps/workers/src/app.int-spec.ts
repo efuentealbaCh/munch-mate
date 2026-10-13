@@ -175,6 +175,8 @@ describe("workers (integration)", () => {
               productId: "p1",
               name: "Completo italiano",
               unitPrice: 3490,
+              regularUnitPrice: 3490,
+              promoLabel: "",
               quantity: 2,
               modifiers: [],
               note: "",

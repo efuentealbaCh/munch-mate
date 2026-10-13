@@ -6,6 +6,7 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { formatPrice } from "@/lib/money";
+import { type MenuProduct, savingsPercent } from "@/lib/promo";
 import { cn } from "@/lib/utils";
 
 /**
@@ -148,7 +149,7 @@ function ProductCard({ product, currency, onOpen }: { product: PublicProduct; cu
         <span className="font-semibold break-words">{product.name}</span>
         {product.description ? <span className="line-clamp-2 text-sm text-muted-foreground">{product.description}</span> : null}
         <span className="mt-1 flex flex-wrap items-center gap-2">
-          <span className="font-semibold tabular-nums">{formatPrice(product.price, currency)}</span>
+          <ProductPrice product={product} currency={currency} />
           {product.available ? null : <Badge variant="destructive">Agotado</Badge>}
         </span>
       </span>
@@ -167,6 +168,29 @@ function ProductCard({ product, currency, onOpen }: { product: PublicProduct; cu
         />
       ) : null}
     </button>
+  );
+}
+
+/**
+ * The price the customer pays now; with a discount (phase 8), also the regular price crossed out and the
+ * discount's label (`withPromos` sets them).
+ */
+function ProductPrice({ product, currency, className }: { product: MenuProduct; currency: string; className?: string }) {
+  const discounted = product.regularPrice !== undefined && product.regularPrice > product.price;
+  return (
+    <span className={cn("flex flex-wrap items-baseline gap-x-2 gap-y-1", className)} data-testid="product-price">
+      <span className={cn("font-semibold tabular-nums", discounted && "text-primary")}>{formatPrice(product.price, currency)}</span>
+      {discounted ? (
+        <>
+          <s className="text-sm text-muted-foreground tabular-nums" aria-label={`Antes ${formatPrice(product.regularPrice!, currency)}`}>
+            {formatPrice(product.regularPrice!, currency)}
+          </s>
+          <Badge className="bg-brand-soft text-primary" data-testid="promo-badge">
+            {product.promoLabel || `-${savingsPercent(product.price, product.regularPrice!)} %`}
+          </Badge>
+        </>
+      ) : null}
+    </span>
   );
 }
 
@@ -192,7 +216,11 @@ export function ProductSheetHeader({ product, currency, price }: { product: Publ
       <SheetHeader className="gap-1 pr-12">
         <SheetTitle className="text-xl font-bold">{product.name}</SheetTitle>
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-lg font-semibold tabular-nums">{price ?? formatPrice(product.price, currency)}</span>
+          {price ? (
+            <span className="text-lg font-semibold tabular-nums">{price}</span>
+          ) : (
+            <ProductPrice product={product} currency={currency} className="text-lg" />
+          )}
           {product.available ? null : <Badge variant="destructive">Agotado</Badge>}
         </div>
         <SheetDescription className={product.description ? "text-base" : "sr-only"}>

@@ -12,6 +12,7 @@ import {
   MessageSquareTextIcon,
   NavigationIcon,
   PhoneIcon,
+  PrinterIcon,
   ShoppingBagIcon,
   UserIcon,
   WalletIcon,
@@ -43,6 +44,8 @@ interface OrderCardProps {
   actions: OrderStatus[];
   canPay: boolean;
   now: number;
+  /** Prints the kitchen ticket on this device's receipt printer (phase 8). */
+  onPrint?(): void;
   /** Just arrived: highlighted for a few seconds. */
   fresh: boolean;
   /** A request for this order is in flight (its buttons are disabled). */
@@ -68,6 +71,7 @@ export function OrderCard({
   actions,
   canPay,
   now,
+  onPrint,
   fresh,
   busy,
   onAction,
@@ -205,7 +209,7 @@ export function OrderCard({
         <PaymentBadge order={order} />
       </div>
 
-      {forward.length > 0 || backward.length > 0 || (canPay && order.paymentStatus === "unpaid") || order.receiptAvailable ? (
+      {forward.length > 0 || backward.length > 0 || (canPay && order.paymentStatus === "unpaid") || order.receiptAvailable || onPrint ? (
         <div className="flex flex-col gap-2">
           {forward.map((status, index) => (
             <Button
@@ -231,6 +235,12 @@ export function OrderCard({
               >
                 {receiptBusy ? <Spinner aria-hidden data-icon="inline-start" /> : <DownloadIcon aria-hidden data-icon="inline-start" />}
                 Comprobante
+              </Button>
+            ) : null}
+            {onPrint ? (
+              <Button variant="outline" className="flex-1" onClick={onPrint} aria-label={`Imprimir comanda del pedido #${order.ticketNumber}`}>
+                <PrinterIcon aria-hidden data-icon="inline-start" />
+                Comanda
               </Button>
             ) : null}
             {canPay && order.paymentStatus === "unpaid" ? (

@@ -1,4 +1,4 @@
-import { type APIRequestContext, type BrowserContext, expect, type Page, test } from "@playwright/test";
+import { type APIRequestContext, type BrowserContext, expect, type Locator, type Page, test } from "@playwright/test";
 import { CONTEXT_OPTIONS, ORIGIN_HEADER, registerViaApi, runId, uniqueEmail, verifyEmailViaApi } from "./helpers";
 
 /*
@@ -62,6 +62,17 @@ async function setup(owner: BrowserContext): Promise<void> {
   shared.zoneId = String(zone.id);
   const config = await send(api, "get", "/api/public/map-config");
   shared.mapAvailable = config.available === true;
+}
+
+/**
+ * The map region is visible and MapLibre's container fills it. A visible region is not enough: when the
+ * container collapsed to 0 px (MapLibre's CSS overriding its positioning) the map was drawn but clipped away.
+ */
+async function expectMapShown(region: Locator) {
+  await expect(region).toBeVisible();
+  const map = region.locator(".maplibregl-map");
+  await expect(map).toHaveCount(1);
+  await expect.poll(() => map.evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThan(100);
 }
 
 /** Customer: one Margarita in the cart and the checkout open. */
@@ -147,7 +158,7 @@ test("with the map: drawn zone, pin from geolocation, and the rider followed liv
   await expect(row.getByTestId("zone-area-badge")).toHaveText("En el mapa");
   await row.getByRole("button", { name: `Editar área de ${ZONE}` }).click();
   const editor = settings.getByRole("dialog", { name: `Área de reparto · ${ZONE}` });
-  await expect(editor.getByRole("region", { name: `Mapa para dibujar el área de ${ZONE}` })).toBeVisible();
+  await expectMapShown(editor.getByRole("region", { name: `Mapa para dibujar el área de ${ZONE}` }));
   await expect(editor.getByTestId("area-vertices")).toHaveText("4 puntos");
   await editor.getByRole("button", { name: "Limpiar" }).click();
   await expect(editor.getByTestId("area-vertices")).toHaveText("0 puntos");
@@ -167,7 +178,7 @@ test("with the map: drawn zone, pin from geolocation, and the rider followed liv
   try {
     const phone = await customer.newPage();
     const cart = await openCheckout(phone);
-    await expect(cart.getByRole("region", { name: "Mapa para marcar dónde entregar" })).toBeVisible();
+    await expectMapShown(cart.getByRole("region", { name: "Mapa para marcar dónde entregar" }));
     // The drawn zone needs a pin: the order cannot be sent yet.
     await expect(cart.getByTestId("pin-required")).toContainText(`Para ${ZONE} necesitamos tu ubicación`);
     await fillContact(cart, "Pina Mapa");
@@ -215,11 +226,11 @@ test("with the map: drawn zone, pin from geolocation, and the rider followed liv
     await card.getByRole("button", { name: "Salir a repartir" }).click();
     await expect(card.getByTestId("delivery-status")).toHaveText("En reparto");
     await expect(riderPage.getByTestId("location-sharing")).toContainText("Compartiendo tu ubicación · mantén la pantalla encendida");
-    await expect(card.getByRole("region", { name: /Mapa del reparto #/ })).toBeVisible();
+    await expectMapShown(card.getByRole("region", { name: /Mapa del reparto #/ }));
 
     // The customer sees the rider on the map, live.
     await expect(phone.getByTestId("order-status")).toHaveText("En reparto");
-    await expect(phone.getByRole("region", { name: "Mapa con el repartidor y tu dirección" })).toBeVisible();
+    await expectMapShown(phone.getByRole("region", { name: "Mapa con el repartidor y tu dirección" }));
     await expect(phone.getByTestId("rider-updated")).toContainText(/Actualizado|en vivo/, { timeout: 20_000 });
     await expect(phone.getByTestId("rider-waiting")).toHaveCount(0);
 

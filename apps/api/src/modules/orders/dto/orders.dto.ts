@@ -8,6 +8,9 @@ import {
   PAYMENT_METHODS,
   type PaymentMethod,
   PICKUP_READY_MINUTES,
+  SALES_EXPORT_KINDS,
+  type SalesExportKind,
+  TABLE_LIMITS,
 } from "@app/types";
 import { applyDecorators } from "@nestjs/common";
 import { Transform, Type } from "class-transformer";
@@ -149,6 +152,11 @@ export class CreatePickupOrderDto {
   @IsString()
   @MaxLength(ORDER_LIMITS.noteMax)
   note?: string;
+
+  /** Notices by WhatsApp/SMS at customerPhone (must then be a mobile); ignored if the restaurant offers none. */
+  @IsOptional()
+  @IsBoolean()
+  notifyByMessage?: boolean;
 }
 
 export class DeliveryAddressDto {
@@ -333,4 +341,54 @@ export class FollowOrderDto extends AccessTokenDto {
   @ValidateNested()
   @Type(() => PushSubscriptionDto)
   subscription!: PushSubscriptionDto;
+}
+
+const DAY = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+
+/** The tip the customer chooses when asking for the bill. */
+export class TipChoiceDto {
+  @IsIn(["suggested", "none", "amount"])
+  kind!: "suggested" | "none" | "amount";
+
+  @ValidateIf((tip: TipChoiceDto) => tip.kind === "amount")
+  @IsInt({ message: "La propina debe ser un monto entero" })
+  @Min(0, { message: "La propina no puede ser negativa" })
+  @Max(TABLE_LIMITS.tipMax)
+  amount?: number;
+}
+
+export class RequestBillDto {
+  @ValidateNested()
+  @Type(() => TipChoiceDto)
+  tip!: TipChoiceDto;
+}
+
+/** Charging a table account: the payment method of every unpaid order and the final tip. */
+export class CloseTableDto {
+  @IsIn(PAYMENT_METHODS, { message: `method debe ser uno de: ${PAYMENT_METHODS.join(", ")}` })
+  method!: PaymentMethod;
+
+  @IsInt({ message: "La propina debe ser un monto entero" })
+  @Min(0, { message: "La propina no puede ser negativa" })
+  @Max(TABLE_LIMITS.tipMax)
+  tip!: number;
+}
+
+export class AttendTableDto {
+  @IsIn(["waiter", "bill"])
+  kind!: "waiter" | "bill";
+}
+
+/** Sales between two business days (inclusive); the service checks real days, order and length. */
+export class SalesRangeQueryDto {
+  @Matches(DAY, { message: "from debe tener el formato AAAA-MM-DD" })
+  from!: string;
+
+  @Matches(DAY, { message: "to debe tener el formato AAAA-MM-DD" })
+  to!: string;
+}
+
+export class SalesExportQueryDto extends SalesRangeQueryDto {
+  @IsIn(SALES_EXPORT_KINDS, { message: `kind debe ser uno de: ${SALES_EXPORT_KINDS.join(", ")}` })
+  kind!: SalesExportKind;
 }

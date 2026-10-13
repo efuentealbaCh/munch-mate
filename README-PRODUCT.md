@@ -6,7 +6,7 @@ Munch Mate es una plataforma web para que cualquier restaurante, sanguchería, p
 
 Un solo sistema atiende a muchos restaurantes a la vez. Cada local tiene su menú, su equipo y sus pedidos, completamente separados del resto.
 
-> Este documento describe el producto terminado. Las reglas técnicas están en [`CLAUDE.md`](CLAUDE.md) y el detalle del modelo y la hoja de ruta en [`docs/PRODUCT.md`](docs/PRODUCT.md).
+> Este documento describe el producto terminado. Las reglas técnicas están en [`CLAUDE.MD`](CLAUDE.MD) y el detalle del modelo y la hoja de ruta en [`docs/PRODUCT.md`](docs/PRODUCT.md).
 
 ---
 
@@ -33,11 +33,13 @@ Munch Mate reemplaza todo eso por un flujo único: **el cliente pide, la cocina 
 
 El pago se hace **en el local o al recibir el pedido** (efectivo, tarjeta en POS o transferencia), y el personal lo registra en el sistema. No hay pagos en línea en esta versión.
 
+En la mesa, los pedidos se suman en **la cuenta de la mesa**: se pide varias veces y se paga todo junto al final, con propina sugerida.
+
 ---
 
 ## La experiencia del cliente
 
-1. **Ve el menú** con fotos, descripciones y precios, ordenado por categorías.
+1. **Ve el menú** con fotos, descripciones y precios, ordenado por categorías. Los productos en promoción muestran el precio rebajado con el normal tachado.
 2. **Arma su pedido**: elige tamaños, agregados o variantes ("Tamaño: Normal o XL", "Agregados: palta, queso…"). Lo que está agotado se ve, pero no se puede pedir.
 3. **Confirma**, sin crear cuenta. Si la conexión falla y vuelve a enviar, el pedido no se duplica.
 4. **Sigue su pedido en vivo** con un número grande y fácil de cantar ("#12") y los pasos del avance:
@@ -49,7 +51,15 @@ El pago se hace **en el local o al recibir el pedido** (efectivo, tarjeta en POS
    La página se actualiza sola. Si el local rechaza el pedido, el cliente ve el motivo.
 5. **Puede cancelar** mientras el pedido todavía no entra a cocina.
 6. **Recibe un email de confirmación** con un comprobante en PDF (retiro y delivery).
-7. **Si quiere, crea una cuenta** para guardar su historial y sus direcciones, y recibir una notificación en el teléfono cuando su pedido está listo.
+7. **Si quiere, recibe avisos por WhatsApp o SMS** (retiro y delivery): cuando el local acepta el pedido, cuando está listo o sale a reparto. Basta marcar la opción y usar un celular.
+8. **Si quiere, crea una cuenta** para guardar su historial y sus direcciones, y recibir una notificación en el teléfono cuando su pedido está listo.
+9. **En delivery, ve al repartidor en el mapa** mientras va en camino, y marca su dirección con un pin.
+
+### En la mesa
+
+- **Llamar al garzón** con un botón desde el mismo QR.
+- **Mi cuenta**: el detalle de todo lo que pidió la mesa, sumado.
+- **Pedir la cuenta** con la propina sugerida (10 % por defecto), otro monto o sin propina. Es voluntaria y se confirma con el garzón al pagar.
 
 El seguimiento funciona con un **link privado** que solo tiene quien hizo el pedido. Nadie puede ver un pedido ajeno adivinando su número.
 
@@ -65,11 +75,24 @@ Con un toque, el personal avanza el pedido: **aceptar, rechazar (con motivo), en
 
 Un interruptor **"Recibiendo pedidos"** abre o cierra el local en un segundo: con el local cerrado, el menú se sigue viendo, pero no se puede pedir.
 
+**Comandas impresas**: el tablero imprime la comanda de cada pedido en la impresora térmica del local (58 u 80 mm), con un botón o sola al llegar o al aceptar el pedido. Cada dispositivo elige si imprime, así que solo la tablet de cocina lo hace.
+
+### Salón
+
+La pantalla de los garzones. Muestra las mesas con cuenta abierta, con los llamados y las cuentas pedidas primero y un aviso sonoro. Desde ahí se marca el llamado como atendido, se imprime la **precuenta** (con la propina sugerida, como voluntaria) y se **cobra la mesa**: medio de pago y propina, y todos los pedidos de la mesa quedan pagados.
+
+### Ventas
+
+- **Resumen del día** para el cierre de caja: total vendido, por canal y medio de pago, pendiente de cobro, más vendidos, **propinas** (aparte de las ventas) y **descuentos** dados.
+- **Cualquier rango de fechas**, con una fila por día.
+- **Exportar a Excel** (pedidos, productos o días) y **versión imprimible**.
+
 ### Menú
 
 - Categorías, productos con foto, precio y descripción.
 - **Grupos de opciones reutilizables**: un grupo "Bebida del combo" se define una vez y se usa en todos los productos que lo necesiten. Si se cambia, se actualiza en todos.
 - Dos interruptores por producto: **Agotado** (se ve, pero no se puede pedir) y **Oculto** (no aparece en el menú).
+- **Descuentos por producto**: un porcentaje o un precio especial, todos los días o solo algunos (ej. «Martes de pizza»), y entre fechas si se quiere. El pedido guarda el precio normal y el cobrado.
 - Una vista rápida de **disponibilidad** para que caja o cocina marquen productos agotados durante el servicio sin tocar nada más.
 - Las fotos se suben desde el teléfono. El sistema las optimiza y les quita la ubicación GPS y otros datos privados.
 
@@ -82,8 +105,9 @@ Un interruptor **"Recibiendo pedidos"** abre o cierra el local en un segundo: co
 
 ### Retiro y delivery
 
-- **Zonas de reparto** definidas como lista de comunas o sectores, cada una con su costo de envío y pedido mínimo.
-- **Repartidores propios** (opcional): el local les asigna entregas y ellos las marcan como entregadas desde su teléfono. Si el local usa reparto externo, el personal avanza los estados a mano.
+- **Zonas de reparto** como comunas o sectores, cada una con su costo de envío y pedido mínimo, y opcionalmente **dibujadas en un mapa** propio (sin costo por uso). El pin del cliente elige la zona.
+- **Repartidores propios** (opcional): el local les asigna entregas y ellos las marcan como entregadas desde su teléfono, compartiendo su ubicación mientras van en camino. Si el local usa reparto externo, el personal avanza los estados a mano.
+- **Avisos por WhatsApp o SMS** desde el número del local, para los clientes que los pidan.
 
 ### Equipo y permisos
 
@@ -94,6 +118,7 @@ El dueño invita a su equipo por email y le asigna uno o más roles:
 | **Dueño** | Todo: perfil del local, menú, precios, mesas, zonas de reparto y equipo |
 | **Caja** | Aceptar o rechazar pedidos, registrar pagos, marcar productos agotados |
 | **Cocina** | Ver la cola de pedidos, cambiar estados de preparación, marcar agotados |
+| **Garzón** | Atender las mesas desde «Salón»: llamados, pedidos de mesa y cobrar la cuenta con la propina |
 | **Repartidor** | Ver sus entregas y marcarlas como entregadas |
 
 Un restaurante siempre tiene al menos un dueño: el sistema no permite quedarse sin ninguno.
@@ -124,6 +149,7 @@ Ningún número se repite, aunque entren muchos pedidos a la vez.
 - **Aislamiento entre restaurantes**: ningún local puede ver ni adivinar datos de otro.
 - Sesiones en cookies protegidas, contraseñas cifradas con argon2id, verificación de email para dueños y protección contra intentos masivos de acceso.
 - Los comprobantes y hojas de QR se guardan en almacenamiento privado.
+- La cuenta de una mesa solo muestra lo pedido, sin nombres ni teléfonos. Los avisos por WhatsApp o SMS exigen un celular válido y nunca se registran en los logs.
 
 ---
 
@@ -131,7 +157,8 @@ Ningún número se repite, aunque entren muchos pedidos a la vez.
 
 - Pagos en línea con tarjeta.
 - Boleta o factura electrónica del SII. El comprobante es un documento interno, no tributario.
-- Seguimiento GPS del repartidor o zonas dibujadas en un mapa.
+- Cupones de descuento (solo descuentos por producto).
+- Pedidos programados para más tarde, dividir la cuenta de una mesa o editar un pedido ya aceptado.
 - Varias sucursales bajo un mismo restaurante (cada local se registra por separado).
-- Control de inventario, reservas y reportes avanzados (solo hay un resumen de ventas del día).
+- Control de inventario y reservas.
 - Otros idiomas.

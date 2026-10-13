@@ -2,6 +2,7 @@ import type {
   CustomerOrdersPage,
   CreatedOrder,
   DailySummary,
+  SalesReport,
   OrderView,
   PublicOrderView,
   RiderPosition,
@@ -44,6 +45,8 @@ import {
   DailySummaryQueryDto,
   OrdersQueryDto,
   PaymentDto,
+  SalesExportQueryDto,
+  SalesRangeQueryDto,
 } from "./dto/orders.dto";
 import { OrdersService, type ReceiptResult } from "./orders.service";
 import { TablesService } from "./tables.service";
@@ -51,7 +54,7 @@ import { TablesService } from "./tables.service";
 /** Staff side: the kitchen board and the cashier. Which status changes each role may make is in @app/utils. */
 @Controller("restaurants/:restaurantId/orders")
 @UseGuards(RestaurantAccessGuard)
-@RestaurantRoles("owner", "cashier", "kitchen")
+@RestaurantRoles("owner", "cashier", "kitchen", "waiter")
 export class OrdersController {
   constructor(private readonly orders: OrdersService) {}
 
@@ -95,8 +98,9 @@ export class OrdersController {
     return sendReceipt(await this.orders.getReceipt(tenant, orderId), res);
   }
 
+  /** Waiters only register payments of table orders (the service checks the channel). */
   @Post(":orderId/payment")
-  @RestaurantRoles("owner", "cashier")
+  @RestaurantRoles("owner", "cashier", "waiter")
   @HttpCode(HttpStatus.OK)
   markPaid(
     @CurrentTenant() tenant: TenantContext,
@@ -129,6 +133,28 @@ export class ReportsController {
   @Get("daily")
   daily(@CurrentTenant() tenant: TenantContext, @Query() query: DailySummaryQueryDto): Promise<DailySummary> {
     return this.orders.dailySummary(tenant, query.date);
+  }
+
+  /** Sales between two business days, one row per day (printable report). */
+  @Get("sales")
+  sales(@CurrentTenant() tenant: TenantContext, @Query() query: SalesRangeQueryDto): Promise<SalesReport> {
+    return this.orders.salesReport(tenant, query.from, query.to);
+  }
+
+  /** CSV for Excel: `kind` = orders | products | days. */
+  @Get("sales.csv")
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  async salesCsv(
+    @CurrentTenant() tenant: TenantContext,
+    @Query() query: SalesExportQueryDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const { filename, csv } = await this.orders.salesExport(tenant, query.from, query.to, query.kind);
+    res.setHeader("Cache-Control", "no-store");
+    return new StreamableFile(Buffer.from(csv, "utf8"), {
+      type: "text/csv; charset=utf-8",
+      disposition: `attachment; filename="${filename}"`,
+    });
   }
 }
 

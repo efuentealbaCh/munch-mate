@@ -1,4 +1,4 @@
-import { type NotifJob, QUEUES } from "@app/types";
+import { type MessageJob, type NotifJob, QUEUES } from "@app/types";
 import { isPushEndpointAllowed } from "@app/utils";
 import { Processor, WorkerHost } from "@nestjs/bullmq";
 import { ConfigService } from "@nestjs/config";
@@ -8,6 +8,7 @@ import type { Connection } from "mongoose";
 import { InjectPinoLogger, PinoLogger } from "nestjs-pino";
 import webpush, { WebPushError } from "web-push";
 import type { WorkersEnv } from "../config/env.validation";
+import { type MessageResult, MessageSenderService } from "./message-sender.service";
 
 /** The push service says the browser unsubscribed or the subscription expired: forget it. */
 const GONE = new Set([404, 410]);
@@ -34,6 +35,7 @@ export class NotifProcessor extends WorkerHost {
     config: ConfigService<WorkersEnv, true>,
     @InjectConnection() private readonly connection: Connection,
     @InjectPinoLogger(NotifProcessor.name) private readonly logger: PinoLogger,
+    private readonly messages: MessageSenderService,
   ) {
     super();
     const publicKey = config.get("VAPID_PUBLIC_KEY", { infer: true });
@@ -42,8 +44,14 @@ export class NotifProcessor extends WorkerHost {
     this.vapid = publicKey && privateKey ? { subject, publicKey, privateKey } : null;
   }
 
-  async process(job: Job<NotifJob>): Promise<NotifResult> {
+  async process(job: Job<NotifJob | MessageJob>): Promise<NotifResult | MessageResult> {
+    // WhatsApp/SMS notices (phase 8) share the queue with web push.
+    if (job.name === "message") return this.messages.send(String(job.id), job.data as MessageJob);
     if (job.name !== "push") throw new Error(`Unknown job "${job.name}" in queue "${QUEUES.NOTIF}"`);
+    return this.push(job as Job<NotifJob>);
+  }
+
+  private async push(job: Job<NotifJob>): Promise<NotifResult> {
     if (!this.vapid) {
       this.logger.warn({ jobId: job.id }, "push skipped: VAPID keys are not configured in the workers");
       return { sent: 0, removed: 0, skipped: "not_configured" };

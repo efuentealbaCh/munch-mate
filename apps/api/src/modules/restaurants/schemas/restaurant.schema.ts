@@ -1,4 +1,4 @@
-import type { RestaurantStatus, WeeklyHours } from "@app/types";
+import { MESSAGE_CHANNELS, type MessagingSettings, type RestaurantStatus, TIP_LIMITS, type WeeklyHours } from "@app/types";
 import { Prop, raw, Schema, SchemaFactory } from "@nestjs/mongoose";
 import { type HydratedDocument, Types } from "mongoose";
 
@@ -49,6 +49,20 @@ export class Restaurant {
   /** Where the restaurant is ({ lat, lng }, set by the owner on the map); centers maps. */
   @Prop(raw({ lat: { type: Number }, lng: { type: Number } }))
   location?: { lat: number; lng: number };
+
+  /** Suggested tip on table bills, percent (phase 8). 0 = no suggestion. */
+  @Prop({ default: TIP_LIMITS.percentDefault, min: 0, max: TIP_LIMITS.percentMax })
+  tipPercent!: number;
+
+  /** WhatsApp/SMS notices to customers who ask for them (phase 8). */
+  @Prop(
+    raw({
+      enabled: { type: Boolean, default: false },
+      channel: { type: String, enum: MESSAGE_CHANNELS, default: "whatsapp" },
+      senderPhone: { type: String, default: "" },
+    }),
+  )
+  messaging?: MessagingSettings;
 
   /** ISO 4217. Amounts are stored as integers in the currency's minor unit (CLP has none). */
   @Prop({ required: true, default: "CLP" })

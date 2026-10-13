@@ -31,6 +31,8 @@ function order(overrides: Partial<OrderRecord>): OrderRecord {
     riderName: null,
     customerId: null,
     clientOrderId: "c",
+    tableSessionId: null,
+    notifyBy: null,
     createdAt: new Date(),
     updatedAt: new Date(),
     ...overrides,
@@ -41,6 +43,8 @@ const line = (productId: string, name: string, quantity: number, lineTotal: numb
   productId,
   name,
   unitPrice: lineTotal / quantity,
+  regularUnitPrice: lineTotal / quantity,
+  promoLabel: "",
   quantity,
   modifiers: [],
   note: "",
@@ -68,7 +72,7 @@ describe("summarizeDay", () => {
     );
 
     expect(summary.orders).toEqual({ total: 5, completed: 2, inProgress: 1, cancelled: 1, rejected: 1 });
-    expect(summary.sales).toEqual({ total: 19_500, deliveryFees: 1500, paid: 10_000, unpaid: 9500, averageTicket: 6500 });
+    expect(summary.sales).toEqual({ total: 19_500, deliveryFees: 1500, paid: 10_000, unpaid: 9500, averageTicket: 6500, discounts: 0 });
     expect(summary.byChannel).toEqual({
       dine_in: { orders: 1, total: 7000 },
       pickup: { orders: 1, total: 3000 },

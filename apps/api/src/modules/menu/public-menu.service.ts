@@ -2,6 +2,7 @@ import type { PublicMenu, PublicModifierGroup } from "@app/types";
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { apiError } from "../../common/errors/api-error";
 import { MediaService } from "../../infra/storage/media.service";
+import { MessagingService } from "../messaging/messaging.service";
 import { openState } from "../restaurants/restaurant.views";
 import { RestaurantsRepository } from "../restaurants/restaurants.repository";
 import { CategoriesRepository } from "./categories.repository";
@@ -19,6 +20,7 @@ export class PublicMenuService {
     private readonly products: ProductsRepository,
     private readonly modifierGroups: ModifierGroupsRepository,
     private readonly media: MediaService,
+    private readonly messaging: MessagingService,
   ) {}
 
   /**
@@ -53,6 +55,8 @@ export class PublicMenuService {
         openState: openState(restaurant),
         maxItemsPerOrder: restaurant.maxItemsPerOrder,
         location: restaurant.location,
+        timezone: restaurant.timezone,
+        messaging: ((channel) => (channel ? { channel } : null))(this.messaging.offeredChannel(restaurant)),
       },
       categories: categories
         .map((category) => ({
@@ -66,6 +70,7 @@ export class PublicMenuService {
               name: product.name,
               description: product.description,
               price: product.price,
+              promo: product.promo,
               available: product.available,
               image: this.media.productImage(product.imageKey),
               modifierGroups: product.modifierGroupIds.flatMap((id) => {
