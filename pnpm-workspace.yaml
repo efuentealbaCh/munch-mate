@@ -5,6 +5,8 @@ allowBuilds:
   '@parcel/watcher': false
   argon2: true
   cpu-features: false
+  # print-agent bundler: its postinstall only checks/links the binary; it comes from the optional @esbuild/<platform> package and works without it.
+  esbuild: false
   msgpackr-extract: false
   protobufjs: false
   ssh2: false

@@ -55,6 +55,15 @@ describe("envValidationSchema", () => {
     );
   });
 
+  it("treats an empty PRINT_AGENT_DOWNLOAD_URL as unset and rejects a non-http one", () => {
+    expect(envValidationSchema.parse({ ...validEnv, PRINT_AGENT_DOWNLOAD_URL: "" }).PRINT_AGENT_DOWNLOAD_URL).toBeUndefined();
+    expect(
+      envValidationSchema.parse({ ...validEnv, PRINT_AGENT_DOWNLOAD_URL: "https://descargas.munchmate.cl/agente.exe" })
+        .PRINT_AGENT_DOWNLOAD_URL,
+    ).toBe("https://descargas.munchmate.cl/agente.exe");
+    expect(invalidKeys({ ...validEnv, PRINT_AGENT_DOWNLOAD_URL: "ftp://x.cl/a.exe" })).toEqual(["PRINT_AGENT_DOWNLOAD_URL"]);
+  });
+
   it("rejects non-http APP_URL and short JWT secrets", () => {
     expect(invalidKeys({ ...validEnv, APP_URL: "ftp://munchmate.cl" })).toEqual(["APP_URL"]);
     expect(invalidKeys({ ...validEnv, JWT_ACCESS_SECRET: "short" })).toEqual(["JWT_ACCESS_SECRET"]);

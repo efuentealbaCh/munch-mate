@@ -1,10 +1,5 @@
-import {
-  ORDER_CHANNEL_LABELS,
-  PAYMENT_METHOD_LABELS,
-  type OrderView,
-  type TableSessionView,
-} from "@app/types";
-import { equalSplitState } from "@app/utils";
+import { PAYMENT_METHOD_LABELS, type OrderView, type TableSessionView } from "@app/types";
+import { equalSplitState, type Ticket } from "@app/utils";
 import type { KeyValueStorage } from "./cart";
 import { formatPrice } from "./money";
 import { paymentKindLabel } from "./split-bill";
@@ -93,75 +88,9 @@ export function shouldReprintEdited(
 
 // ── What a ticket says ──────────────────────────────────────────────────────
 
-export interface TicketLine {
-  quantity: number;
-  name: string;
-  /** Options and notes, one per row. */
-  details: string[];
-  /** Amount on the right (pre-bills); kitchen tickets have none. */
-  amount?: string;
-}
-
-export interface Ticket {
-  /** Framed word above everything, for the kitchen to notice ("MODIFICADO"). */
-  banner?: string;
-  /** Big text at the top: "#12" or "Mesa 4". */
-  headline: string;
-  title: string;
-  /** Small rows under the title: channel, table or customer, time. */
-  meta: string[];
-  lines: TicketLine[];
-  totals: { label: string; amount: string; strong?: boolean }[];
-  /** What changed in the last edit, under the lines (edited kitchen tickets). */
-  changes?: { title: string; rows: string[] };
-  footer: string[];
-}
-
-const time = (iso: string, timeZone?: string) =>
-  new Date(iso).toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone });
-
-/**
- * Kitchen ticket: what to prepare, without prices. An order whose items the staff edited says "MODIFICADO"
- * in a frame at the top, lists the whole updated order and, under it, the changes of the last edit (with its
- * reason), so the kitchen can swap the old ticket.
- */
-export function kitchenTicket(order: OrderView, restaurantName: string, timeZone?: string): Ticket {
-  const where =
-    order.channel === "dine_in"
-      ? (order.tableLabel ?? "Mesa")
-      : order.channel === "delivery"
-        ? `Delivery · ${order.customerName}`
-        : `Retiro · ${order.customerName}`;
-  const meta = [`${ORDER_CHANNEL_LABELS[order.channel]} · ${time(order.createdAt, timeZone)}`, where];
-  if (order.estimatedReadyAt) {
-    meta.push(`${order.channel === "delivery" ? "Llega" : "Listo"} aprox. ${time(order.estimatedReadyAt, timeZone)}`);
-  }
-  const lastEdit = order.edits.at(-1);
-  return {
-    ...(lastEdit ? { banner: "MODIFICADO" } : {}),
-    headline: `#${order.ticketNumber}`,
-    title: restaurantName,
-    meta,
-    lines: order.items.map((item) => ({
-      quantity: item.quantity,
-      name: item.name,
-      details: [
-        ...item.modifiers.map((m) => `${m.groupName}: ${m.optionName}`),
-        ...(item.note ? [`Nota: ${item.note}`] : []),
-      ],
-    })),
-    totals: [],
-    ...(lastEdit
-      ? {
-          changes: {
-            title: `Cambios ${time(lastEdit.at, timeZone)}${lastEdit.byName ? ` · ${lastEdit.byName}` : ""}:`,
-            rows: [...lastEdit.changes, ...(lastEdit.reason ? [`Motivo: ${lastEdit.reason}`] : [])],
-          },
-        }
-      : {}),
-    footer: order.note ? [`Comentario: ${order.note}`] : [],
-  };
-}
+// The ticket model and the kitchen ticket live in @app/utils, shared with the api (the print agent gets the
+// same tickets laid out for ESC/POS). Re-exported so the web keeps importing them from here.
+export { kitchenTicket, type Ticket, type TicketLine } from "@app/utils";
 
 /**
  * Table pre-bill ("precuenta"): the account with the suggested tip, stated as voluntary (Ley 20.918) and the

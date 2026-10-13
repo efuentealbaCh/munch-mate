@@ -3,6 +3,7 @@ import { MongooseModule } from "@nestjs/mongoose";
 import { AuthModule } from "../auth/auth.module";
 import { MapsModule } from "../maps/maps.module";
 import { MessagingModule } from "../messaging/messaging.module";
+import { PrintingModule } from "../printing/printing.module";
 import { PushModule } from "../push/push.module";
 import { MenuModule } from "../menu/menu.module";
 import { RestaurantsModule } from "../restaurants/restaurants.module";
@@ -45,6 +46,7 @@ import { TablesService } from "./tables.service";
     MapsModule,
     PushModule,
     MessagingModule,
+    PrintingModule,
     MongooseModule.forFeature([
       { name: TableSession.name, schema: TableSessionSchema },
       { name: Table.name, schema: TableSchema },

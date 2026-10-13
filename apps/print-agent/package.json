@@ -1,0 +1,32 @@
+{
+  "name": "@app/print-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Agente de impresión de Munch Mate: imprime comandas y comprobantes en impresoras térmicas (ESC/POS) desde un PC del local",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "jest --config jest.config.js",
+    "start": "node dist/agent.cjs",
+    "bundle": "node scripts/bundle.mjs",
+    "build:exe": "node scripts/bundle.mjs && node scripts/build-exe.mjs"
+  },
+  "dependencies": {
+    "@app/types": "workspace:*",
+    "@app/utils": "workspace:*",
+    "socket.io-client": "^4.8.4"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "^24.19.1",
+    "esbuild": "^0.28.2",
+    "jest": "^30.5.2",
+    "postject": "1.0.0-alpha.6",
+    "socket.io": "4.8.3",
+    "ts-jest": "^29.4.14",
+    "typescript": "~6.0.3"
+  }
+}

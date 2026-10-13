@@ -4,6 +4,7 @@ import type {
   DailySummary,
   SalesReport,
   OrderView,
+  PrintOrderResult,
   PublicOrderView,
   RiderPosition,
   RiderView,
@@ -92,6 +93,16 @@ export class OrdersController {
     @Body() dto: EditOrderItemsDto,
   ): Promise<OrderView> {
     return this.orders.editItems(tenant, user.id, orderId, dto);
+  }
+
+  /**
+   * Prints the kitchen ticket on the print agents' kitchen printers (again, on purpose). `queued: 0` means
+   * no kitchen printer is active: the web then prints from the browser.
+   */
+  @Post(":orderId/print")
+  @HttpCode(HttpStatus.OK)
+  print(@CurrentTenant() tenant: TenantContext, @Param("orderId") orderId: string): Promise<PrintOrderResult> {
+    return this.orders.printKitchen(tenant, orderId);
   }
 
   /** Last position of the rider (null when not on its way or no report yet). */

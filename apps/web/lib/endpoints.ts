@@ -1,5 +1,6 @@
 import type {
   AdminMenuView,
+  AgentPrinterSettings,
   ChangeOrderStatusInput,
   CreatedOrder,
   CreateDeliveryOrderInput,
@@ -21,8 +22,15 @@ import type {
   ModifierGroupView,
   OrderStatus,
   OrderView,
+  PairingCodeView,
   PaymentMethod,
   PlatformRestaurantPage,
+  PrintAgentsList,
+  PrintAgentsSummary,
+  PrintAgentView,
+  PrintJobStatus,
+  PrintJobView,
+  PrintOrderResult,
   ProductPromo,
   ProductView,
   PublicTableBill,
@@ -300,6 +308,12 @@ export const ordersApi = {
     api.request<{ position: RiderPosition | null }>(`${restaurantPath(restaurantId)}/orders/${segment(orderId)}/rider-location`, {
       signal,
     }),
+  /**
+   * Prints the kitchen ticket on the print agents' kitchen printers (phase 8, board roles).
+   * @returns `queued: 0` when no kitchen printer took it: print from the browser instead.
+   */
+  printKitchen: (restaurantId: string, orderId: string) =>
+    api.request<PrintOrderResult>(`${restaurantPath(restaurantId)}/orders/${segment(orderId)}/print`, { method: "POST" }),
 };
 
 async function readReceipt(pending: Promise<Response>): Promise<DownloadedFile | null> {
@@ -387,6 +401,54 @@ export const tableSessionsApi = {
       `${restaurantPath(restaurantId)}/table-sessions/${segment(sessionId)}/payments/${segment(paymentId)}`,
       { method: "DELETE" },
     ),
+};
+
+const printAgentsPath = (restaurantId: string) => `${restaurantPath(restaurantId)}/print-agents`;
+/** Printer keys contain spaces, colons and slashes ("usb:EPSON TM-T20", "net:192.168.1.50:9100"). */
+const printerPath = (restaurantId: string, agentId: string, printerKey: string) =>
+  `${printAgentsPath(restaurantId)}/${segment(agentId)}/printers/${segment(printerKey)}`;
+
+/**
+ * Print agents (phase 8): computers of the restaurant that print ESC/POS by themselves. Owner only, except
+ * `summary` (board roles) and the failed jobs (owner, cashier).
+ */
+export const printAgentsApi = {
+  list: (restaurantId: string) => api.request<PrintAgentsList>(printAgentsPath(restaurantId)),
+  /** One-time code for the agent (10 min). */
+  pairingCode: (restaurantId: string) =>
+    api.request<PairingCodeView>(`${printAgentsPath(restaurantId)}/pairing-code`, { method: "POST" }),
+  /** @throws ApiError PRINT_AGENT_NOT_FOUND (404). */
+  rename: (restaurantId: string, agentId: string, name: string) =>
+    api.request<PrintAgentView>(`${printAgentsPath(restaurantId)}/${segment(agentId)}`, { method: "PATCH", body: { name } }),
+  /** Unpairs it: its token stops working and its pending jobs expire. */
+  revoke: (restaurantId: string, agentId: string) =>
+    api.request<void>(`${printAgentsPath(restaurantId)}/${segment(agentId)}`, { method: "DELETE" }),
+  /**
+   * Only the fields sent change.
+   * @throws ApiError INVALID_CATEGORY (400), PRINTER_NOT_FOUND / PRINT_AGENT_NOT_FOUND (404).
+   */
+  updatePrinter: (restaurantId: string, agentId: string, printerKey: string, body: Partial<AgentPrinterSettings>) =>
+    api.request<PrintAgentView>(printerPath(restaurantId, agentId, printerKey), { method: "PATCH", body }),
+  /** Forgets a printer the agent no longer reports (it comes back disabled if reported again). */
+  removePrinter: (restaurantId: string, agentId: string, printerKey: string) =>
+    api.request<PrintAgentView>(printerPath(restaurantId, agentId, printerKey), { method: "DELETE" }),
+  /** A test page (enabled or not). */
+  testPrinter: (restaurantId: string, agentId: string, printerKey: string) =>
+    api.request<PrintJobView>(`${printerPath(restaurantId, agentId, printerKey)}/test`, { method: "POST" }),
+  /** Whether tickets come out of an agent (board roles), so the browser does not print them twice. */
+  summary: (restaurantId: string, signal?: AbortSignal) =>
+    api.request<PrintAgentsSummary>(`${printAgentsPath(restaurantId)}/summary`, { signal }),
+  /** Newest first (owner, cashier). */
+  jobs: (restaurantId: string, status?: PrintJobStatus, limit?: number) => {
+    const query = new URLSearchParams();
+    if (status) query.set("status", status);
+    if (limit) query.set("limit", String(limit));
+    const search = query.toString();
+    return api.request<PrintJobView[]>(`${printAgentsPath(restaurantId)}/jobs${search ? `?${search}` : ""}`);
+  },
+  /** Queues a failed or expired job again. @throws ApiError PRINT_JOB_NOT_RETRYABLE / PRINT_AGENT_REVOKED (409). */
+  retryJob: (restaurantId: string, jobId: string) =>
+    api.request<PrintJobView>(`${printAgentsPath(restaurantId)}/jobs/${segment(jobId)}/retry`, { method: "POST" }),
 };
 
 /** Platform administration (platformRole "admin"; anyone else gets 404 NOT_FOUND). */

@@ -1,4 +1,5 @@
 import type { Connection } from "mongoose";
+import type { PrintJobsService } from "../printing/print-jobs.service";
 import type { RealtimeService } from "../realtime/realtime.service";
 import type { TenantContext } from "../restaurants/restaurant-access.guard";
 import type { RestaurantsRepository } from "../restaurants/restaurants.repository";
@@ -144,6 +145,7 @@ function setup(
     listByTableSessions: jest.fn(async () => new Map([["s1", options.orders ?? [order()]]])),
     payTableOrders: jest.fn(async (..._args: unknown[]) => undefined),
   };
+  const printing = { tablePayment: jest.fn(async (..._args: unknown[]) => undefined) };
   const realtime = {
     toRestaurant: () => ({ emit: (event: string) => emitted.push(`restaurant:${event}`) }),
     toTable: () => ({ emit: (event: string) => emitted.push(`table:${event}`) }),
@@ -156,8 +158,9 @@ function setup(
     { findById: jest.fn(async () => ({ id: "w1", name: "Gabi Garzón" })) } as unknown as UsersRepository,
     realtime as unknown as RealtimeService,
     { transaction: (fn: (s: unknown) => Promise<unknown>) => fn({}) } as unknown as Connection,
+    printing as unknown as PrintJobsService,
   );
-  return { service, sessions, orders, emitted };
+  return { service, sessions, orders, emitted, printing };
 }
 
 describe("TableSessionsService (customers at the table)", () => {
@@ -464,5 +467,54 @@ describe("TableSessionsService (split bills)", () => {
     await expect(
       setup({ open: withPayment, chargeResult: null, reread: session({ status: "closed" }) }).service.deletePayment(tenant, "s1", "pay1"),
     ).rejects.toMatchObject({ status: 409, response: { code: "TABLE_SESSION_CLOSED" } });
+  });
+});
+
+describe("TableSessionsService payment receipts (print agents)", () => {
+  it("prints a receipt for a partial payment with what is left of the account", async () => {
+    const { service, printing } = setup();
+    await service.addPayment(tenant, "w1", "s1", { kind: "amount", amount: 5000, method: "cash", tip: 500 });
+    expect(printing.tablePayment).toHaveBeenCalledWith("r1", {
+      sessionId: "s1",
+      paymentId: "pay1",
+      tableLabel: "Mesa 4",
+      at: expect.any(Date),
+      byName: "Gabi Garzón",
+      method: "cash",
+      payment: { kind: "amount", part: null, parts: null, amount: 5000, tip: 500, items: [] },
+      account: { total: 20000, paid: 5000, remaining: 15000, closed: false },
+    });
+  });
+
+  it("lists the products of a payment by products", async () => {
+    const { service, printing } = setup({
+      orders: [order({ items: [{ productId: "p1", name: "Lomo", unitPrice: 10000, regularUnitPrice: 10000, promoLabel: "", quantity: 2, note: "", lineTotal: 20000, modifiers: [] }] as never })],
+    });
+    await service.addPayment(tenant, "w1", "s1", { kind: "items", items: [{ orderId: "o1", line: 0, quantity: 1 }], method: "card_pos", tip: 0 });
+    expect(printing.tablePayment).toHaveBeenCalledWith(
+      "r1",
+      expect.objectContaining({
+        payment: expect.objectContaining({ kind: "items", amount: 10000, items: [{ quantity: 1, name: "Lomo", details: [], amount: 10000 }] }),
+      }),
+    );
+  });
+
+  it("prints the payment that charges what was left, with the account paid", async () => {
+    const { service, printing } = setup();
+    await service.close(tenant, "w1", "s1", { method: "card_pos", tip: 2000 });
+    expect(printing.tablePayment).toHaveBeenCalledWith(
+      "r1",
+      expect.objectContaining({
+        method: "card_pos",
+        payment: expect.objectContaining({ amount: 20000, tip: 2000 }),
+        account: { total: 20000, paid: 20000, remaining: 0, closed: true },
+      }),
+    );
+  });
+
+  it("prints nothing when closing an account already paid (no new payment)", async () => {
+    const { service, printing } = setup({ open: session({ payments: [payment({ amount: 20000 })] }) });
+    await service.close(tenant, "w1", "s1", { method: "cash", tip: 0 });
+    expect(printing.tablePayment).not.toHaveBeenCalled();
   });
 });

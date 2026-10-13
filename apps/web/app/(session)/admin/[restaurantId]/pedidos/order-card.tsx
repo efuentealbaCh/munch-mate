@@ -5,11 +5,13 @@ import { formatPhone } from "@app/utils";
 import {
   AlarmClockIcon,
   BikeIcon,
+  ChevronDownIcon,
   ClockIcon,
   DownloadIcon,
   MailIcon,
   MapPinIcon,
   MessageSquareTextIcon,
+  MonitorSmartphoneIcon,
   NavigationIcon,
   PencilIcon,
   PhoneIcon,
@@ -20,6 +22,7 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Spinner } from "@/components/ui/spinner";
 import { formatClockTime, telHref } from "@/lib/format";
 import { formatPrice, formatPriceDelta } from "@/lib/money";
@@ -46,8 +49,15 @@ interface OrderCardProps {
   actions: OrderStatus[];
   canPay: boolean;
   now: number;
-  /** Prints the kitchen ticket on this device's receipt printer (phase 8). */
+  /**
+   * «Comanda»: prints the kitchen ticket, on the print agent's kitchen printer when the restaurant has one,
+   * else on this device's receipt printer (phase 8).
+   */
   onPrint?(): void;
+  /** Passed while «Comanda» goes to the print agent: «Imprimir en este dispositivo» forces the browser. */
+  onPrintHere?(): void;
+  /** The ticket is being sent to the print agent. */
+  printBusy?: boolean;
   /** "Modificar": change the items (only passed while this member may edit the order). */
   onEdit?(): void;
   /** Just arrived: highlighted for a few seconds. */
@@ -76,6 +86,8 @@ export function OrderCard({
   canPay,
   now,
   onPrint,
+  onPrintHere,
+  printBusy = false,
   onEdit,
   fresh,
   busy,
@@ -252,10 +264,40 @@ export function OrderCard({
               </Button>
             ) : null}
             {onPrint ? (
-              <Button variant="outline" className="flex-1" onClick={onPrint} aria-label={`Imprimir comanda del pedido #${order.ticketNumber}`}>
-                <PrinterIcon aria-hidden data-icon="inline-start" />
-                Comanda
-              </Button>
+              <div className="flex flex-1">
+                <Button
+                  variant="outline"
+                  className={cn("flex-1", onPrintHere && "rounded-r-none")}
+                  onClick={onPrint}
+                  disabled={printBusy}
+                  aria-busy={printBusy || undefined}
+                  aria-label={`Imprimir comanda del pedido #${order.ticketNumber}`}
+                  data-testid="print-order"
+                >
+                  {printBusy ? <Spinner aria-hidden data-icon="inline-start" /> : <PrinterIcon aria-hidden data-icon="inline-start" />}
+                  Comanda
+                </Button>
+                {onPrintHere ? (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        className="-ml-px rounded-l-none"
+                        aria-label={`Más opciones de impresión del pedido #${order.ticketNumber}`}
+                      >
+                        <ChevronDownIcon aria-hidden />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-60">
+                      <DropdownMenuItem className="min-h-10" onSelect={onPrintHere}>
+                        <MonitorSmartphoneIcon aria-hidden />
+                        Imprimir en este dispositivo
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                ) : null}
+              </div>
             ) : null}
             {onEdit ? (
               <Button
