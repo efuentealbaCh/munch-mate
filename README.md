@@ -302,9 +302,9 @@ Las comandas y los comprobantes de pago pueden salir **solos** por una impresora
 
 ### En un local real
 
-1. **Panel** → **Impresoras** → **Descargar para Windows** (aparece cuando la plataforma configuró `PRINT_AGENT_DOWNLOAD_URL`). Guarda `munchmate-impresora.exe` en una carpeta fija (no en Descargas).
+1. **Panel** → **Impresoras** → **Descargar para Windows** (aparece cuando la plataforma configuró `PRINT_AGENT_DOWNLOAD_URL`, por ejemplo `https://github.com/efuentealbaCh/munch-mate/releases/download/print-agent-v0.1.0/munchmate-impresora.exe`; responde 404 hasta que la CI publique esa release al hacer push a `main`). Guarda `munchmate-impresora.exe` en una carpeta fija (no en Descargas) y, mientras no esté firmado, haz clic derecho → **Propiedades** → marca **Desbloquear** → Aceptar: así Windows no vuelve a preguntar en ese equipo.
 2. En la misma pantalla, **Vincular un equipo**: aparece un código como `K7MX-3QPA`, válido por 10 minutos.
-3. Doble clic en el `.exe` (si Windows muestra SmartScreen: **Más información → Ejecutar de todas formas**; el ejecutable aún no está firmado). El asistente pide la dirección del servidor, el nombre del equipo (ej. `Cocina`), el código, si inicia con Windows (**S**) y, si hay, las impresoras de red (nombre e IP, puerto 9100).
+3. Doble clic en el `.exe` (si no lo desbloqueaste y Windows muestra SmartScreen: **Más información → Ejecutar de todas formas**; el ejecutable está listo para firmarse con `pnpm --filter @app/print-agent sign:exe`, pero aún no hay certificado). El asistente pide la dirección del servidor, el nombre del equipo (ej. `Cocina`), el código, si inicia con Windows (**S**) y, si hay, las impresoras de red (nombre e IP, puerto 9100).
 4. De vuelta en **Impresoras**, el equipo aparece **En línea** con sus impresoras, todas apagadas: actívalas y elige papel, **Comandas** (al llegar el pedido, al aceptarlo o «No imprime comandas»), **Categorías** (ej. solo Bebidas para la barra), **Comprobantes de pago** y copias. Toca **Imprimir prueba**.
 5. En el tablero (**Pedidos**), si el navegador de ese dispositivo también imprimía solo, usa el aviso «desactívala aquí» para no imprimir dos veces.
 
@@ -313,8 +313,11 @@ Las comandas y los comprobantes de pago pueden salir **solos** por una impresora
 Necesitas el stack arriba (paso 11), Windows y PowerShell. **No hace falta una impresora térmica**: con `MUNCHMATE_PRINT_DIR` el agente agrega la impresora «Archivo (pruebas)», que guarda cada ticket como un archivo `.bin` con los bytes ESC/POS.
 
 ```powershell
-# 1. Construir el .exe (una vez, o tras cambios en apps/print-agent): ~90 MB en apps/print-agent/dist
+# 1. Construir el .exe (una vez, o tras cambios en apps/print-agent): ~90 MB en apps/print-agent/dist,
+#    con ícono y datos de «Munch Mate Impresora». Construido en este equipo, no muestra SmartScreen.
+pnpm install
 pnpm --filter @app/print-agent build:exe
+pnpm --filter @app/print-agent sign:exe     # sin certificado avisa y lo deja sin firmar (funciona igual)
 
 # 2. Confiar en el certificado local de Caddy (https://localhost) y aislar la configuración de pruebas
 docker cp munch-mate-caddy-1:/data/caddy/pki/authorities/local/root.crt "$env:TEMP\caddy-root.crt"
