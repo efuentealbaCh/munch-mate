@@ -89,6 +89,7 @@ pnpm env:init
 
 - Crea `.env` desde `.env.example` con secretos aleatorios. Se niega a sobrescribir uno existente.
 - **Si tu `.env` es anterior a la fase 6**, copia a mano desde `.env.example` las líneas `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` y `VAPID_SUBJECT` (vacías) y sigue con el paso 4.
+- **Si es anterior a la fase 8**, copia también `MESSAGING_PROVIDER=mailpit`, `TWILIO_ACCOUNT_SID=` y `TWILIO_AUTH_TOKEN=` (los avisos por WhatsApp o SMS llegan a Mailpit en local).
 - **Nunca** subas `.env` a git.
 </details>
 
@@ -187,7 +188,7 @@ pnpm maps:init
 pnpm smoke
 ```
 
-- Recorre el sistema real: salud, TLS, S3, colas, registro, menú, mesa, retiro, delivery, ventas, plataforma, push y mapas.
+- Recorre el sistema real: salud, TLS, S3, colas, registro, menú, mesa, retiro, delivery, ventas, plataforma, push, mapas y el salón (descuento, cuenta de mesa con propina, exportar CSV y un aviso de WhatsApp en Mailpit).
 - **Deberías ver:** `✓ all checks passed`.
 - **Si falla:** copia las líneas con `✗`. Registra 1 usuario: si acabas de correr Playwright, espera 1 minuto (límite de 5 registros por minuto).
 </details>
@@ -201,7 +202,7 @@ pnpm test:web
 pnpm --filter @app/web exec playwright show-report   # si algo falla
 ```
 
-Playwright maneja un Chromium móvil contra `https://localhost`: cuentas, menú, mesa, retiro, delivery, horario, mapas y seguimiento del repartidor (la prueba de mapas se salta sola si falta el paso 13).
+Playwright maneja un Chromium móvil contra `https://localhost`: cuentas, menú, mesa, retiro, delivery, horario, mapas, seguimiento del repartidor, cancelar con motivo y el salón: descuento, cuenta de mesa cobrada con propina, comanda, CSV de ventas y aviso por WhatsApp (la prueba de mapas se salta sola si falta el paso 13).
 </details>
 
 ### 5 · Demo en el navegador
