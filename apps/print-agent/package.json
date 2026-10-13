@@ -12,7 +12,8 @@
     "test": "jest --config jest.config.js",
     "start": "node dist/agent.cjs",
     "bundle": "node scripts/bundle.mjs",
-    "build:exe": "node scripts/bundle.mjs && node scripts/build-exe.mjs"
+    "build:exe": "node scripts/bundle.mjs && node scripts/build-exe.mjs",
+    "sign:exe": "node scripts/sign-exe.mjs"
   },
   "dependencies": {
     "@app/types": "workspace:*",
@@ -25,6 +26,7 @@
     "esbuild": "^0.28.2",
     "jest": "^30.5.2",
     "postject": "1.0.0-alpha.6",
+    "resedit": "^3.1.0",
     "socket.io": "4.8.3",
     "ts-jest": "^29.4.14",
     "typescript": "~6.0.3"
