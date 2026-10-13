@@ -58,6 +58,7 @@ export function toOrderView(order: OrderRecord): OrderView {
     })),
     paymentStatus: order.paymentStatus,
     paymentMethod: order.paymentMethod,
+    paymentBreakdown: order.paymentBreakdown.map((portion) => ({ ...portion })),
     items: toItemViews(order),
     subtotal: order.subtotal,
     total: order.total,

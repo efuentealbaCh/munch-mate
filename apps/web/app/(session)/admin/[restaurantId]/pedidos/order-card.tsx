@@ -1,6 +1,6 @@
 "use client";
 
-import { type OrderStatus, type OrderView, PAYMENT_METHOD_LABELS } from "@app/types";
+import type { OrderStatus, OrderView } from "@app/types";
 import { formatPhone } from "@app/utils";
 import {
   AlarmClockIcon,
@@ -26,13 +26,14 @@ import { formatPrice, formatPriceDelta } from "@/lib/money";
 import { addressLine, expectedPaymentLabel, mapsSearchUrl } from "@/lib/delivery";
 import { estimateLabel, showsReadyEstimate } from "@/lib/order-tracking";
 import { ACTION_LABELS, destinationLabel, elapsedLabel, isFinalStatus, isPastReadyTime, minutesSince } from "@/lib/orders-board";
+import { paymentBadgeLabel } from "@/lib/split-bill";
 import { cn } from "@/lib/utils";
 
-/** Paid with its method, or "Sin pagar". */
+/** Paid with its method (each portion when a split table account paid it with several), or "Sin pagar". */
 export function PaymentBadge({ order }: { order: OrderView }) {
   return order.paymentStatus === "paid" ? (
-    <Badge variant="secondary" className="bg-success/10 text-success">
-      Pagado{order.paymentMethod ? ` · ${PAYMENT_METHOD_LABELS[order.paymentMethod]}` : ""}
+    <Badge variant="secondary" className="h-auto bg-success/10 whitespace-normal text-success" data-testid="payment-badge">
+      {paymentBadgeLabel(order)}
     </Badge>
   ) : (
     <Badge variant="outline">Sin pagar</Badge>

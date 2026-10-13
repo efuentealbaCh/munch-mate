@@ -1,6 +1,6 @@
 "use client";
 
-import { PAYMENT_METHOD_LABELS, PAYMENT_METHODS, type PaymentMethod, type TableSessionView } from "@app/types";
+import type { TableSessionView } from "@app/types";
 import {
   BellOffIcon,
   BellRingIcon,
@@ -10,15 +10,13 @@ import {
   ReceiptTextIcon,
   UtensilsCrossedIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useId, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { AccessDenied } from "@/components/access-denied";
 import { FormError } from "@/components/form-error";
-import { PriceInput } from "@/components/price-input";
 import { useTicketPrinter } from "@/components/ticket-printer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useChime } from "@/hooks/use-chime";
 import { useNow } from "@/hooks/use-now";
@@ -26,16 +24,17 @@ import { useSocketEvent } from "@/hooks/use-realtime";
 import { localStore } from "@/lib/browser-storage";
 import { tableSessionsApi } from "@/lib/endpoints";
 import { errorMessage, hasCode } from "@/lib/errors";
-import { initialTip, isNewCall, minutesAgoLabel, parseTip, sortSessions, upsertSession } from "@/lib/floor";
-import { formatPrice, formatPriceInput } from "@/lib/money";
+import { isNewCall, minutesAgoLabel, sortSessions, upsertSession } from "@/lib/floor";
+import { formatPrice } from "@/lib/money";
 import { canServeTables } from "@/lib/orders-board";
 import { loadPrintSettings, preBillTicket } from "@/lib/print";
+import { splitChipLabel } from "@/lib/split-bill";
 import { cn } from "@/lib/utils";
-import { METHOD_ICONS } from "../pedidos/order-dialogs";
 import { useRestaurant } from "../restaurant-context";
 import { useRestaurantRealtime } from "../restaurant-realtime";
+import { ChargeDialog } from "./charge-dialog";
 
-/** "Salón" (phase 8): the tables with an open account, their calls, and charging them with the tip. */
+/** "Salón" (phase 8): the tables with an open account, their calls, and charging them (split or at once) with the tip. */
 export function SalonView() {
   const { restaurant } = useRestaurant();
   if (!canServeTables(restaurant.myRoles)) {
@@ -154,10 +153,18 @@ function Salon() {
         restaurantId={restaurant.id}
         session={charging}
         onOpenChange={(open) => !open && setCharging(null)}
+        onUpdated={(updated) => {
+          setSessions((current) => (current ? upsertSession(current, updated) : current));
+          setCharging(updated.status === "open" ? updated : null);
+        }}
         onClosed={(closed) => {
           setSessions((current) => (current ? upsertSession(current, closed) : current));
           setCharging(null);
-          toast.success(`${closed.tableLabel} cobrada`);
+          toast.success(closed.orderCount === 0 ? `${closed.tableLabel} liberada` : `Cuenta pagada · ${closed.tableLabel}`);
+        }}
+        onGone={() => {
+          setCharging(null);
+          void load();
         }}
       />
       {printer.element}
@@ -240,10 +247,24 @@ function TableCard({
       ) : (
         <p className="text-sm text-muted-foreground">Todavía sin pedidos.</p>
       )}
-      {session.ordersInProgress > 0 ? (
-        <Badge variant="outline" className="self-start">
-          {session.ordersInProgress} en preparación
-        </Badge>
+      {session.payments.length > 0 ? (
+        <p className="flex items-center justify-between gap-2 rounded-lg bg-muted px-3 py-2 text-sm" data-testid="session-paid">
+          <span>
+            Pagado <strong className="tabular-nums">{formatPrice(session.paid, session.currency)}</strong> de{" "}
+            {formatPrice(session.paid + session.remaining, session.currency)}
+          </span>
+          <span className="font-semibold tabular-nums">Falta {formatPrice(session.remaining, session.currency)}</span>
+        </p>
+      ) : null}
+      {session.ordersInProgress > 0 || session.split ? (
+        <div className="flex flex-wrap gap-2">
+          {session.ordersInProgress > 0 ? <Badge variant="outline">{session.ordersInProgress} en preparación</Badge> : null}
+          {session.split ? (
+            <Badge variant="secondary" data-testid="split-chip">
+              {splitChipLabel(session.split)}
+            </Badge>
+          ) : null}
+        </div>
       ) : null}
 
       <div className="mt-auto flex flex-wrap gap-2">
@@ -257,112 +278,5 @@ function TableCard({
         </Button>
       </div>
     </article>
-  );
-}
-
-/** Charging a table: payment method and the final tip (what the customer chose, or the suggestion). */
-function ChargeDialog({
-  restaurantId,
-  session,
-  onOpenChange,
-  onClosed,
-}: {
-  restaurantId: string;
-  session: TableSessionView | null;
-  onOpenChange(open: boolean): void;
-  onClosed(session: TableSessionView): void;
-}) {
-  return (
-    <Dialog open={session !== null} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-sm">
-        {session ? <ChargeForm key={session.id} restaurantId={restaurantId} session={session} onClosed={onClosed} /> : null}
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function ChargeForm({
-  restaurantId,
-  session,
-  onClosed,
-}: {
-  restaurantId: string;
-  session: TableSessionView;
-  onClosed(session: TableSessionView): void;
-}) {
-  const id = useId();
-  const empty = session.orderCount === 0;
-  const [tipText, setTipText] = useState(() => (empty ? "" : formatPriceInput(initialTip(session))));
-  const [method, setMethod] = useState<PaymentMethod | null>(empty ? "cash" : null);
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<unknown>(null);
-  const tip = parseTip(tipText);
-
-  async function close() {
-    if (!method || tip === null) return;
-    setPending(true);
-    setError(null);
-    try {
-      onClosed(await tableSessionsApi.close(restaurantId, session.id, { method, tip: empty ? 0 : tip }));
-    } catch (failure) {
-      setError(failure);
-    } finally {
-      setPending(false);
-    }
-  }
-
-  return (
-    <>
-      <DialogHeader>
-        <DialogTitle>{empty ? `Liberar ${session.tableLabel}` : `Cobrar ${session.tableLabel}`}</DialogTitle>
-        <DialogDescription>
-          {empty
-            ? "La mesa no tiene pedidos: se cierra la cuenta sin cobrar."
-            : `Consumo ${formatPrice(session.subtotal, session.currency)}. Se marcan pagados ${session.unpaidOrders} ${session.unpaidOrders === 1 ? "pedido" : "pedidos"}.`}
-        </DialogDescription>
-      </DialogHeader>
-      {empty ? null : (
-        <>
-          <div className="flex flex-col gap-2">
-            <label htmlFor={`${id}-tip`} className="text-sm font-medium">
-              Propina {session.tipPercent > 0 ? `(sugerida ${session.tipPercent} %: ${formatPrice(session.suggestedTip, session.currency)})` : ""}
-            </label>
-            <PriceInput id={`${id}-tip`} value={tipText} onChange={(event) => setTipText(event.target.value)} aria-invalid={tip === null || undefined} />
-            {tip === null ? <p className="text-sm text-destructive">Escribe un monto válido, ej. 2.000</p> : null}
-            <p className="text-sm">
-              Total a cobrar:{" "}
-              <strong className="tabular-nums" data-testid="charge-total">
-                {formatPrice(session.subtotal + (tip ?? 0), session.currency)}
-              </strong>
-            </p>
-          </div>
-          <div className="flex flex-col gap-2" role="radiogroup" aria-label="Medio de pago">
-            {PAYMENT_METHODS.map((option) => {
-              const Icon = METHOD_ICONS[option];
-              return (
-                <Button
-                  key={option}
-                  type="button"
-                  role="radio"
-                  aria-checked={method === option}
-                  variant={method === option ? "default" : "outline"}
-                  size="lg"
-                  onClick={() => setMethod(option)}
-                >
-                  <Icon aria-hidden data-icon="inline-start" />
-                  {PAYMENT_METHOD_LABELS[option]}
-                </Button>
-              );
-            })}
-          </div>
-        </>
-      )}
-      <FormError error={error} />
-      <DialogFooter>
-        <Button size="lg" className="w-full" disabled={!method || tip === null || pending} onClick={() => void close()} data-testid="confirm-charge">
-          {empty ? "Liberar mesa" : "Cobrar y cerrar la cuenta"}
-        </Button>
-      </DialogFooter>
-    </>
   );
 }

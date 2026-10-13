@@ -96,6 +96,16 @@ export class ExpectedPayment {
   cashAmount!: number | null;
 }
 
+/** One method's share of a table order paid by a split account. */
+@Schema({ _id: false })
+export class PaymentPortionDoc {
+  @Prop({ type: String, enum: PAYMENT_METHODS, required: true })
+  method!: PaymentMethod;
+
+  @Prop({ required: true, min: 0 })
+  amount!: number;
+}
+
 @Schema({ _id: false })
 export class StatusChange {
   @Prop({ type: String, enum: ORDER_STATUSES, required: true })
@@ -166,8 +176,16 @@ export class Order {
   @Prop({ type: String, enum: ["unpaid", "paid"], default: "unpaid" })
   paymentStatus!: PaymentStatus;
 
+  /** With a breakdown: the method of its largest portion (what older screens and exports show). */
   @Prop({ type: String, enum: [...PAYMENT_METHODS, null], default: null })
   paymentMethod!: PaymentMethod | null;
+
+  /**
+   * Table orders paid when their account closed: each method's share (Σ = total), from the account's payments.
+   * [] (or missing, on older orders) = paid entirely with `paymentMethod`.
+   */
+  @Prop({ type: [SchemaFactory.createForClass(PaymentPortionDoc)], default: [] })
+  paymentBreakdown!: PaymentPortionDoc[];
 
   @Prop({ type: [SchemaFactory.createForClass(OrderItemSnapshot)], required: true })
   items!: OrderItemSnapshot[];

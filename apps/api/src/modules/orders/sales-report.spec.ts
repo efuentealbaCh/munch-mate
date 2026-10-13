@@ -1,5 +1,5 @@
 import type { OrderRecord } from "./orders.repository";
-import { csvField, daysBetween, orderDiscount, salesCsv, summarizeRange } from "./sales-report";
+import { csvField, daysBetween, orderDiscount, paymentMethodLabel, salesCsv, summarizeRange } from "./sales-report";
 
 let seq = 0;
 function order(overrides: Partial<OrderRecord>): OrderRecord {
@@ -15,6 +15,7 @@ function order(overrides: Partial<OrderRecord>): OrderRecord {
     statusHistory: [],
     paymentStatus: "paid",
     paymentMethod: "cash",
+    paymentBreakdown: [],
     items: [],
     subtotal: 0,
     deliveryFee: 0,
@@ -117,6 +118,30 @@ describe("CSV", () => {
       `12-10-2026;20:30;${orders[0]!.number};${orders[0]!.ticketNumber};Para retirar;Ana Pérez;Retirado;Pagado;Efectivo;2;2000;0;10000`,
     );
     expect(rows[2]!.endsWith(";Rechazado;Pagado;Efectivo;1;0;0;0")).toBe(true);
+  });
+
+  it("shows a split payment with each method's amount", () => {
+    const split = order({
+      channel: "dine_in",
+      status: "served",
+      tableLabel: "Mesa 4",
+      total: 12000,
+      paymentMethod: "cash",
+      paymentBreakdown: [
+        { method: "cash", amount: 7000 },
+        { method: "card_pos", amount: 5000 },
+      ],
+      items: [pizza(2, 6000)],
+    });
+    expect(paymentMethodLabel(split)).toBe("Dividido (Efectivo $7000 · Tarjeta (POS) $5000)");
+    expect(paymentMethodLabel({ paymentMethod: "transfer", paymentBreakdown: [{ method: "transfer", amount: 12000 }] })).toBe("Transferencia");
+    expect(paymentMethodLabel({ paymentMethod: "cash", paymentBreakdown: [] })).toBe("Efectivo");
+    expect(paymentMethodLabel({ paymentMethod: null, paymentBreakdown: [] })).toBe("");
+
+    const rows = salesCsv("orders", [split], summarizeRange([split], "2026-10-12", "2026-10-12", "CLP", new Map()), "America/Santiago")
+      .trim()
+      .split("\r\n");
+    expect(rows[1]).toContain(";En la mesa;Mesa 4;Servido;Pagado;Dividido (Efectivo $7000 · Tarjeta (POS) $5000);2;0;0;12000");
   });
 
   it("exports products and days with a total row", () => {

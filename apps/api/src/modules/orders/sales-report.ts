@@ -16,6 +16,18 @@ export function orderDiscount(order: Pick<OrderRecord, "items">): number {
   return order.items.reduce((sum, item) => sum + (item.regularUnitPrice - item.unitPrice) * item.quantity, 0);
 }
 
+/**
+ * The payment method column of an order: its method, or "Dividido (Efectivo $5000 · Tarjeta (POS) $7000)"
+ * when a split table account paid it with several (amounts as integers, like every amount of the export).
+ */
+export function paymentMethodLabel(order: Pick<OrderRecord, "paymentMethod" | "paymentBreakdown">): string {
+  if (order.paymentBreakdown.length > 1) {
+    return `Dividido (${order.paymentBreakdown.map((p) => `${PAYMENT_METHOD_LABELS[p.method]} $${p.amount}`).join(" · ")})`;
+  }
+  const method = order.paymentBreakdown[0]?.method ?? order.paymentMethod;
+  return method ? PAYMENT_METHOD_LABELS[method] : "";
+}
+
 /** Every business day from..to (inclusive), YYYY-MM-DD. */
 export function daysBetween(from: string, to: string): string[] {
   const days: string[] = [];
@@ -108,7 +120,7 @@ export function salesCsv(
         order.tableLabel ?? order.customerName,
         ORDER_STATUS_LABELS[order.status],
         order.paymentStatus === "paid" ? "Pagado" : "Pendiente",
-        order.paymentMethod ? PAYMENT_METHOD_LABELS[order.paymentMethod] : "",
+        paymentMethodLabel(order),
         order.items.reduce((sum, item) => sum + item.quantity, 0),
         orderDiscount(order),
         order.deliveryFee,

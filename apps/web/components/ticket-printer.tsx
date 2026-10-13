@@ -99,8 +99,9 @@ export function TicketView({ ticket }: { ticket: Ticket }) {
       {ticket.totals.length > 0 ? (
         <>
           <hr style={{ border: 0, borderTop: "1px dashed #000", margin: 0 }} />
-          {ticket.totals.map((total) => (
-            <div key={total.label} style={{ display: "flex", justifyContent: "space-between", fontWeight: total.strong ? 900 : 400 }}>
+          {/* Labels may repeat (two "Pagado: Pago · Efectivo" rows of a split account): keyed by position too. */}
+          {ticket.totals.map((total, index) => (
+            <div key={`${index}-${total.label}`} style={{ display: "flex", justifyContent: "space-between", fontWeight: total.strong ? 900 : 400 }}>
               <span>{total.label}</span>
               <span>{total.amount}</span>
             </div>

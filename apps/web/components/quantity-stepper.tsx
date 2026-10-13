@@ -14,6 +14,7 @@ export function QuantityStepper({
   min = 1,
   max = ORDER_LIMITS.quantityMax,
   size = "default",
+  disabled = false,
   className,
 }: {
   value: number;
@@ -22,6 +23,8 @@ export function QuantityStepper({
   min?: number;
   max?: number;
   size?: "sm" | "default";
+  /** Both buttons off (e.g. while the new value is being saved). */
+  disabled?: boolean;
   className?: string;
 }) {
   const buttonSize = size === "sm" ? "icon-sm" : "icon";
@@ -32,7 +35,7 @@ export function QuantityStepper({
         variant="ghost"
         size={buttonSize}
         aria-label="Quitar uno"
-        disabled={value <= min}
+        disabled={disabled || value <= min}
         onClick={() => onChange(Math.max(min, value - 1))}
       >
         <MinusIcon aria-hidden />
@@ -45,7 +48,7 @@ export function QuantityStepper({
         variant="ghost"
         size={buttonSize}
         aria-label="Agregar uno"
-        disabled={value >= max}
+        disabled={disabled || value >= max}
         onClick={() => onChange(Math.min(max, value + 1))}
       >
         <PlusIcon aria-hidden />

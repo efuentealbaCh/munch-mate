@@ -41,7 +41,7 @@ Hechas en la fase 8:
 Aprobadas para implementar (decisiones del 13-10-2026):
 
 1. **Editar un pedido** (agregar o quitar productos) **solo por el personal** y **solo antes de que la cocina empiece** (estados pendiente o aceptado): después de «Empezar» ya se gastó material.
-2. **Dividir la cuenta de mesa** por productos, en partes iguales o en montos libres, cada parte con su medio de pago. **La arma el garzón en «Salón»**; el teléfono de la mesa ve cuánto se pagó y cuánto falta.
+2. ✅ **Dividir la cuenta de mesa** por productos, en partes iguales o en montos libres, cada parte con su medio de pago. **La arma el garzón en «Salón»**; el teléfono de la mesa ve cuánto se pagó y cuánto falta. (Implementado en la api: plan, pagos parciales con su propina, cierre automático y desglose por medio en los reportes. En la web: diálogo «Cobrar» de «Salón» con las cuatro formas, «Mi cuenta» del teléfono, precuenta y tablero con el desglose.)
 3. **Impresión directa ESC/POS** con un **agente local** en el computador de cocina (impresoras USB y de red), vinculado al local con un código. La impresión desde el navegador queda como alternativa.
 
 Descartadas por ahora:

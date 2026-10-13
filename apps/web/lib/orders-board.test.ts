@@ -48,6 +48,7 @@ function order(id: string, status: OrderStatus, overrides: Partial<OrderView> = 
     statusHistory: steps.map((s) => ({ status: s, at: "2026-10-07T12:00:00.000Z", byName: null })),
     paymentStatus: "unpaid",
     paymentMethod: null,
+    paymentBreakdown: [],
     items: [],
     subtotal: 1000,
     total: 1000,

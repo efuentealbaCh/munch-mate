@@ -11,6 +11,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { publicOrdersApi } from "@/lib/endpoints";
 import { errorMessage } from "@/lib/errors";
 import { formatPrice } from "@/lib/money";
+import { linePaidLabel, pendingPartsLabel, publicPaymentLabel, splitPlanLabel } from "@/lib/split-bill";
 import { billStage, defaultTipMode, type TipMode, tipFromForm } from "@/lib/table-bill";
 import { cn } from "@/lib/utils";
 import { subscribeWithTimeout, useOnVisible, useRealtime, useSocketEvent } from "@/hooks/use-realtime";
@@ -83,7 +84,11 @@ export function TableAccount({ tableToken, currency, ordersPlaced }: { tableToke
         {stage === "empty" ? null : (
           <Button type="button" variant="outline" size="sm" onClick={() => setOpen(true)} data-testid="my-bill">
             <ReceiptTextIcon aria-hidden data-icon="inline-start" />
-            {stage === "paid" ? "Cuenta pagada" : `Mi cuenta · ${formatPrice(bill!.subtotal, currency)}`}
+            {stage === "paid"
+              ? "Cuenta pagada"
+              : bill!.paid > 0
+                ? `Mi cuenta · falta ${formatPrice(bill!.remaining, currency)}`
+                : `Mi cuenta · ${formatPrice(bill!.subtotal, currency)}`}
           </Button>
         )}
       </div>
@@ -143,17 +148,28 @@ function BillDetail({
       </SheetHeader>
 
       <ul className="flex flex-col divide-y px-4" aria-label="Detalle de la cuenta">
-        {bill.lines.map((line, index) => (
-          <li key={`${line.name}-${index}`} className="flex items-start justify-between gap-3 py-2.5" data-testid="bill-line">
-            <span className="flex min-w-0 flex-col">
-              <span className="font-medium">
-                {line.quantity} × {line.name}
+        {bill.lines.map((line, index) => {
+          // Paid by products (or an order paid on its own): crossed out; partly paid: "1 de 2 pagado".
+          const allPaid = stage !== "paid" && line.paidQuantity >= line.quantity && line.quantity > 0;
+          const partly = linePaidLabel(line);
+          return (
+            <li
+              key={`${line.name}-${index}`}
+              className={cn("flex items-start justify-between gap-3 py-2.5", allPaid && "text-muted-foreground")}
+              data-testid="bill-line"
+              data-paid={allPaid || undefined}
+            >
+              <span className="flex min-w-0 flex-col">
+                <span className={cn("font-medium", allPaid && "line-through")}>
+                  {line.quantity} × {line.name}
+                </span>
+                {line.options.length > 0 ? <span className="text-sm text-muted-foreground">{line.options.join(" · ")}</span> : null}
+                {allPaid ? <span className="text-xs">Pagado</span> : partly ? <span className="text-xs text-success">{partly}</span> : null}
               </span>
-              {line.options.length > 0 ? <span className="text-sm text-muted-foreground">{line.options.join(" · ")}</span> : null}
-            </span>
-            <span className="tabular-nums">{formatPrice(line.total, currency)}</span>
-          </li>
-        ))}
+              <span className={cn("tabular-nums", allPaid && "line-through")}>{formatPrice(line.total, currency)}</span>
+            </li>
+          );
+        })}
       </ul>
 
       <dl className="flex flex-col gap-1 border-t px-4 py-3 text-sm">
@@ -178,6 +194,8 @@ function BillDetail({
           </>
         ) : null}
       </dl>
+
+      {stage !== "paid" && (bill.split !== null || bill.payments.length > 0) ? <SplitSummary bill={bill} currency={currency} /> : null}
 
       {stage === "open" ? (
         <fieldset className="flex flex-col gap-2 border-t px-4 py-3">
@@ -214,6 +232,48 @@ function BillDetail({
         </p>
       ) : null}
     </div>
+  );
+}
+
+/** How the table is paying a split account: the plan, each payment (no names, no tips) and what is left. */
+function SplitSummary({ bill, currency }: { bill: PublicTableBill; currency: string }) {
+  const plan = splitPlanLabel(bill.split, bill.equalPart, currency);
+  const pendingParts = pendingPartsLabel(bill.equalPart, currency);
+  return (
+    <section className="flex flex-col gap-2 border-t px-4 py-3" aria-label="Pagos de la mesa" data-testid="bill-split">
+      {plan ? (
+        <p className="font-semibold" data-testid="bill-plan">
+          {plan}
+        </p>
+      ) : null}
+      {bill.payments.length > 0 ? (
+        <ul className="flex flex-col gap-1 text-sm" aria-label="Pagos registrados">
+          {bill.payments.map((payment, index) => (
+            <li key={index} className="flex items-center gap-2" data-testid="bill-payment">
+              <CheckCircle2Icon className="size-4 shrink-0 text-success" aria-hidden />
+              {publicPaymentLabel(payment, currency)}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      <p
+        className="flex flex-wrap items-baseline justify-between gap-2 rounded-lg bg-brand-soft px-3 py-2 font-semibold"
+        role="status"
+        data-testid="bill-balance"
+      >
+        <span>
+          Pagado <span className="tabular-nums">{formatPrice(bill.paid, currency)}</span>
+        </span>
+        <span className="text-lg font-bold">
+          Falta <span className="tabular-nums">{formatPrice(bill.remaining, currency)}</span>
+        </span>
+      </p>
+      {pendingParts ? (
+        <p className="text-sm text-muted-foreground" data-testid="bill-pending-parts">
+          {pendingParts}
+        </p>
+      ) : null}
+    </section>
   );
 }
 

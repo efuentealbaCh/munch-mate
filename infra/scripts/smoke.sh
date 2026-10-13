@@ -417,7 +417,7 @@ if [ "$LOCAL" = true ]; then
   [ "$code" = "200" ] && code=$(status -b "$jar" -H "Origin: $BASE" $json -d '{"status":"delivered"}' "$orders_url/status")
   if [ "$code" = "200" ]; then pass "delivery dispatched, paid on delivery and delivered"; else fail "delivery flow returned $code"; fi
 
-  # Phase 8: a product discount, the table account (call, bill with tip, charge), the sales export and a
+  # Phase 8: a product discount, the table account (call, bill with tip, split charge), the sales export and a
   # WhatsApp notice delivered to Mailpit (the local stack runs with MESSAGING_PROVIDER=mailpit).
   promo_url="$BASE/api/restaurants/$restaurant_id/menu/products/$product_id/promo"
   code=$(status -b "$jar" -H "Origin: $BASE" $json -X PUT -d '{"kind":"percent","value":50}' "$promo_url")
@@ -456,8 +456,20 @@ if [ "$LOCAL" = true ]; then
       status -b "$jar" -H "Origin: $BASE" $json -d "{\"status\":\"$next\"}" "$BASE/api/restaurants/$restaurant_id/orders/$table_order/status" > /dev/null
     done
   done
-  code=$(status -b "$jar" -H "Origin: $BASE" $json -d '{"method":"card_pos","tip":800}' "$close_url")
-  if [ "$code" = "200" ]; then pass "table charged by card with the tip"; else fail "charge table returned $code"; fi
+  # Split bill: two equal parts, the first in cash and the last by card (its payment closes the account).
+  session_url="$BASE/api/restaurants/$restaurant_id/table-sessions/$session_id"
+  code=$(status -b "$jar" -H "Origin: $BASE" $json -X PUT -d '{"mode":"equal","parts":2}' "$session_url/split")
+  if [ "$code" = "200" ]; then pass "table account split in two equal parts"; else fail "split table returned $code"; fi
+  body=$($CURL -b "$jar" -H "Origin: $BASE" $json -d '{"kind":"equal","part":1,"method":"cash","tip":300}' "$session_url/payments" || true)
+  case "$body" in
+    *'"status":"open"'*'"pendingParts":[2]'*) pass "first part paid in cash, the account stays open" ;;
+    *) fail "first part: $body" ;;
+  esac
+  body=$($CURL -b "$jar" -H "Origin: $BASE" $json -d '{"kind":"equal","part":2,"method":"card_pos","tip":500}' "$session_url/payments" || true)
+  case "$body" in
+    *'"status":"closed"'*'"paymentMethods":["cash","card_pos"]'*) pass "last part paid by card closes the account (tips 300 + 500)" ;;
+    *) fail "last part: $body" ;;
+  esac
   if $CURL -b "$jar" "$BASE/api/restaurants/$restaurant_id/reports/daily" | grep -q '"tips":800'; then
     pass "the day's tips are reported apart from sales"
   else

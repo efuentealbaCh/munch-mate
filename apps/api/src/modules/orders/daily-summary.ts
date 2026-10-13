@@ -5,7 +5,8 @@ const TOP_PRODUCTS = 5;
 
 /**
  * Sales of one business day from its orders. Rejected and cancelled orders are only counted, never summed;
- * orders still in progress count as sales (they are expected to be paid). Paid amounts are split by method.
+ * orders still in progress count as sales (they are expected to be paid). Paid amounts are split by method:
+ * a table order paid by a split account adds each portion of its breakdown to its method.
  */
 export function summarizeDay(orders: readonly OrderRecord[], date: string, currency: string, tips = 0): DailySummary {
   const summary: DailySummary = {
@@ -40,7 +41,11 @@ export function summarizeDay(orders: readonly OrderRecord[], date: string, curre
     summary.byChannel[order.channel].total += order.total;
     if (order.paymentStatus === "paid") {
       summary.sales.paid += order.total;
-      if (order.paymentMethod) summary.byPaymentMethod[order.paymentMethod] += order.total;
+      if (order.paymentBreakdown.length > 0) {
+        for (const portion of order.paymentBreakdown) summary.byPaymentMethod[portion.method] += portion.amount;
+      } else if (order.paymentMethod) {
+        summary.byPaymentMethod[order.paymentMethod] += order.total;
+      }
     } else {
       summary.sales.unpaid += order.total;
     }

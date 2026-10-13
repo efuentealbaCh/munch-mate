@@ -4,8 +4,10 @@ import {
   type OrderView,
   type TableSessionView,
 } from "@app/types";
+import { equalSplitState } from "@app/utils";
 import type { KeyValueStorage } from "./cart";
 import { formatPrice } from "./money";
+import { paymentKindLabel } from "./split-bill";
 
 /**
  * Thermal printing (phase 8): kitchen tickets ("comandas") and table pre-bills, printed by the browser on a
@@ -164,6 +166,8 @@ export function kitchenTicket(order: OrderView, restaurantName: string, timeZone
 /**
  * Table pre-bill ("precuenta"): the account with the suggested tip, stated as voluntary (Ley 20.918) and the
  * total with and without it. Uses the tip the customer chose when they asked for the bill, if any.
+ * A split account adds its plan ("4 partes de $5.000", from `equalSplitState`) and, once someone paid, each
+ * payment (tips apart) and what is left.
  */
 export function preBillTicket(session: TableSessionView, restaurantName: string, at: Date = new Date()): Ticket {
   const money = (amount: number) => formatPrice(amount, session.currency);
@@ -178,6 +182,25 @@ export function preBillTicket(session: TableSessionView, restaurantName: string,
     totals.push({ label: "Total sin propina", amount: money(session.subtotal) });
   } else {
     totals.push({ label: "Total", amount: money(session.subtotal), strong: true });
+  }
+  if (session.split?.mode === "equal") {
+    const paidParts = session.payments.filter((p) => p.kind === "equal" && p.part !== null).map((p) => p.part!);
+    const state = equalSplitState(session.remaining, session.split.parts, paidParts);
+    if (state.pendingParts.length > 0 && state.amount > 0) {
+      totals.push({
+        label:
+          state.pendingParts.length === session.split.parts
+            ? `${session.split.parts} partes de`
+            : `Faltan ${state.pendingParts.length} de ${session.split.parts} partes de`,
+        amount: money(state.amount),
+      });
+    }
+  }
+  if (session.payments.length > 0) {
+    for (const payment of session.payments) {
+      totals.push({ label: `Pagado: ${paymentKindLabel(payment)} · ${PAYMENT_METHOD_LABELS[payment.method]}`, amount: money(payment.amount) });
+    }
+    totals.push({ label: "Falta", amount: money(session.remaining), strong: true });
   }
   return {
     headline: session.tableLabel,
