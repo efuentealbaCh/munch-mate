@@ -90,6 +90,11 @@ describe("table bill on the customer's phone", () => {
     billRequestedAt: null,
     requestedTip: null,
     closedAt: null,
+    split: null,
+    payments: [],
+    paid: 0,
+    remaining: 23450,
+    equalPart: null,
   };
 
   it("turns the tip choice into an amount", () => {
@@ -132,7 +137,14 @@ describe("the floor", () => {
     requestedTip: null,
     tip: null,
     paymentMethod: null,
+    paymentMethods: [],
     closedByName: null,
+    split: null,
+    payments: [],
+    paid: 0,
+    remaining: 10000,
+    itemLines: [],
+    equalPart: null,
     ...over,
   });
 
@@ -258,6 +270,9 @@ describe("printing", () => {
         requestedTip: null,
         paymentMethod: null,
         lines: [{ name: "Lomo", options: [], quantity: 1, total: 23450 }],
+        split: null,
+        payments: [],
+        remaining: 23450,
       } as unknown as TableSessionView,
       "Forno Rosso",
       TUESDAY,

@@ -46,6 +46,12 @@ export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
 
 export type PaymentStatus = "unpaid" | "paid";
 
+/** A portion of an order's payment: a table account split among several payments pays it with more than one method. */
+export interface PaymentPortion {
+  method: PaymentMethod;
+  amount: number;
+}
+
 export const ORDER_CHANNEL_LABELS: Record<OrderChannel, string> = {
   dine_in: "En la mesa",
   pickup: "Para retirar",
@@ -250,7 +256,13 @@ export interface OrderView {
   status: OrderStatus;
   statusHistory: OrderStatusChange[];
   paymentStatus: PaymentStatus;
+  /** With a split table account: the method of the largest portion (`paymentBreakdown` has them all). */
   paymentMethod: PaymentMethod | null;
+  /**
+   * How a table order was paid when its account was charged (one portion per method, Σ = total); [] for
+   * orders paid on their own. Reports sum the portions instead of `paymentMethod` when present.
+   */
+  paymentBreakdown: PaymentPortion[];
   items: OrderItemView[];
   subtotal: number;
   total: number;
@@ -363,6 +375,83 @@ export interface BillLine {
   /** Options, as "Grupo: opción" texts. */
   options: string[];
   quantity: number;
+  /** Units already paid by "pay by products" payments (the phone crosses them out). */
+  paidQuantity: number;
+  total: number;
+}
+
+export const SPLIT_LIMITS = {
+  /** Equal parts a table account can be split into (at least 2). */
+  partsMin: 2,
+  partsMax: 20,
+  /** Lines one "pay by products" payment may list. */
+  itemsMax: 200,
+} as const;
+
+/**
+ * How the staff split a table account (a display plan; payments of another kind remain valid): equal parts,
+ * by products (each person pays what they had) or free amounts. null = not split.
+ */
+export type TableSplit = { mode: "equal"; parts: number } | { mode: "items" } | { mode: "amounts" };
+
+export const TABLE_PAYMENT_KINDS = ["equal", "items", "amount"] as const;
+export type TablePaymentKind = (typeof TABLE_PAYMENT_KINDS)[number];
+
+/** A line of one order of the account (`line` = index in the order's items), as "pay by products" refers to it. */
+export interface TablePaymentItem {
+  orderId: string;
+  line: number;
+  quantity: number;
+}
+
+/** A partial payment of a table account, as the floor staff see it. Amounts without the tip. */
+export interface TablePaymentView {
+  id: string;
+  kind: TablePaymentKind;
+  amount: number;
+  tip: number;
+  method: PaymentMethod;
+  /** Equal parts: which part (1-based); null otherwise. */
+  part: number | null;
+  /** By products: units paid (Σ quantities); 0 otherwise. */
+  itemCount: number;
+  /** By products: the lines paid; [] otherwise. */
+  items: TablePaymentItem[];
+  at: string;
+  /** Who registered it. */
+  byName: string | null;
+}
+
+/** A partial payment as the phones at the table see it: no names, no ids, no tip. */
+export interface PublicTablePayment {
+  kind: TablePaymentKind;
+  amount: number;
+  method: PaymentMethod;
+  part: number | null;
+  itemCount: number;
+}
+
+/** With an equal split: what the next pending part pays (computed by the server) and which parts are pending. */
+export interface EqualPartView {
+  amount: number;
+  /** Part numbers not paid yet (1-based), ascending. */
+  pendingParts: number[];
+}
+
+/**
+ * A line of one order of the account, not grouped (the staff pick from these to pay by products). Only
+ * orders that count (not rejected or cancelled).
+ */
+export interface BillItemLine {
+  orderId: string;
+  /** Index in the order's items. */
+  line: number;
+  name: string;
+  options: string[];
+  quantity: number;
+  paidQuantity: number;
+  /** lineTotal / quantity: what one unit costs, options included. */
+  unitAmount: number;
   total: number;
 }
 
@@ -390,6 +479,16 @@ export interface PublicTableBill {
   requestedTip: number | null;
   /** Set right after the account is paid, until the next order opens a new one. */
   closedAt: string | null;
+  /** How the staff split the account, or null. */
+  split: TableSplit | null;
+  /** Partial payments registered so far, oldest first. */
+  payments: PublicTablePayment[];
+  /** Σ payments (tips apart). */
+  paid: number;
+  /** What is left to pay (0 once closed). */
+  remaining: number;
+  /** With an equal split while open: the amount of each pending part and which ones are pending. */
+  equalPart: EqualPartView | null;
 }
 
 /** A table account as the floor staff see it. */
@@ -413,10 +512,28 @@ export interface TableSessionView {
   waiterCalledAt: string | null;
   billRequestedAt: string | null;
   requestedTip: number | null;
-  /** Once closed: what was charged. */
+  /** Once closed: the tips of every payment (for the staff, not part of sales). */
   tip: number | null;
+  /** Once closed: the method of every payment, or null when they used more than one ("Dividido"). */
   paymentMethod: PaymentMethod | null;
+  /** Once closed: the different methods used, in order of first use. */
+  paymentMethods: PaymentMethod[];
   closedByName: string | null;
+  /** How the staff split the account, or null. */
+  split: TableSplit | null;
+  /** Partial payments registered so far, oldest first. */
+  payments: TablePaymentView[];
+  /** Σ payments (tips apart). */
+  paid: number;
+  /**
+   * What is left to pay: orders that count and were not paid on their own, minus the payments. 0 once
+   * closed and never negative (an order cancelled after being paid for shows 0, and closing is refused).
+   */
+  remaining: number;
+  /** Lines per order, not grouped: what "pay by products" chooses from. */
+  itemLines: BillItemLine[];
+  /** With an equal split while open: the amount of the next pending part and which ones are pending. */
+  equalPart: EqualPartView | null;
 }
 
 /** Body of `POST /api/public/tables/:token/request-bill`. */
@@ -424,12 +541,27 @@ export interface RequestBillInput {
   tip: TipChoice;
 }
 
-/** Body of `POST /restaurants/:id/table-sessions/:sessionId/close`: pays every unpaid order and the tip. */
+/**
+ * Body of `POST /restaurants/:id/table-sessions/:sessionId/close`: charges what is left to pay (one payment
+ * with this method and tip) and closes the account.
+ */
 export interface CloseTableInput {
   method: PaymentMethod;
   /** Final tip amount (0 = none). */
   tip: number;
 }
+
+/** Body of `PUT /restaurants/:id/table-sessions/:sessionId/split`: `{ mode: null }` removes the plan. */
+export type SetTableSplitInput = TableSplit | { mode: null };
+
+/**
+ * Body of `POST /restaurants/:id/table-sessions/:sessionId/payments`. The server computes the amount of
+ * equal parts and of products; `tip` (0 = none) is apart from the amount.
+ */
+export type CreateTablePaymentInput =
+  | { kind: "equal"; part: number; method: PaymentMethod; tip: number }
+  | { kind: "items"; items: TablePaymentItem[]; method: PaymentMethod; tip: number }
+  | { kind: "amount"; amount: number; method: PaymentMethod; tip: number };
 
 // ── Delivery zones ──────────────────────────────────────────────────────────
 

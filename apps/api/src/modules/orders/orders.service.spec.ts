@@ -58,6 +58,7 @@ function order(overrides: Partial<OrderRecord> = {}): OrderRecord {
     statusHistory: [{ status: "pending", at: new Date(), byUserId: null, byName: null, reason: null }],
     paymentStatus: "unpaid",
     paymentMethod: null,
+    paymentBreakdown: [],
     items: [],
     subtotal: 1000,
     deliveryFee: 0,
@@ -101,6 +102,10 @@ function setup(
     mapAvailable?: boolean;
     customerOrders?: OrderRecord[];
     messagingChannel?: "whatsapp" | "sms" | null;
+    /** Payments already registered on the table account of the order (split bill). */
+    tablePayments?: number;
+    /** A payment lands on the account between the check and the write. */
+    paymentRace?: boolean;
   } = {},
 ) {
   const emitted: string[] = [];
@@ -171,6 +176,7 @@ function setup(
         _o: string,
         _expected: { status: string; revision: number },
         change: { items: OrderRecord["items"]; subtotal: number; total: number; clearCashAmount: boolean; edit: OrderRecord["edits"][number] },
+        _tx?: unknown,
       ): Promise<OrderRecord | null> => {
         const current = options.current ?? order();
         return order({
@@ -187,6 +193,11 @@ function setup(
         });
       },
     ),
+  };
+  const tableAccounts = {
+    getOrOpen: jest.fn(async () => ({ id: "s1" })),
+    findOne: jest.fn(async () => ({ id: "s1", payments: Array.from({ length: options.tablePayments ?? 0 }, (_, i) => ({ id: `pay${i}` })) })),
+    lockWithoutPayments: jest.fn(async () => !options.paymentRace && !options.tablePayments),
   };
   const service = new OrdersService(
     orders as unknown as OrdersRepository,
@@ -234,10 +245,10 @@ function setup(
     push as unknown as PushService,
     messaging as unknown as MessagingService,
     tableSessions as unknown as TableSessionsService,
-    { getOrOpen: jest.fn(async () => ({ id: "s1" })) } as unknown as TableSessionsRepository,
+    tableAccounts as unknown as TableSessionsRepository,
     { warn: jest.fn() } as unknown as PinoLogger,
   );
-  return { service, orders, emitted, pdfQueue, storage, tracking, push, messaging, tableSessions };
+  return { service, orders, emitted, pdfQueue, storage, tracking, push, messaging, tableSessions, tableAccounts };
 }
 
 const input = { clientOrderId: "c-1", items: [{ productId: "p1", quantity: 1, modifiers: [] }] };
@@ -999,6 +1010,43 @@ describe("OrdersService.editItems", () => {
 
     await expect(service.editItems(tenant, "u1", "o1", edit())).rejects.toMatchObject({ status: 409, response: { code } });
     expect(orders.editItems).not.toHaveBeenCalled();
+  });
+
+  it("refuses to edit a table order once its account has payments (split bill)", async () => {
+    const tableOrder = order({ status: "accepted", items: [completo(2)], tableSessionId: "s1" });
+    const paid = setup({ current: tableOrder, tablePayments: 1 });
+    await expect(paid.service.editItems(tenant, "u1", "o1", edit())).rejects.toMatchObject({
+      status: 409,
+      response: { code: "TABLE_HAS_PAYMENTS" },
+    });
+    expect(paid.orders.editItems).not.toHaveBeenCalled();
+
+    // A payment registered between the check and the write: the transaction's lock misses.
+    const raced = setup({ current: tableOrder, paymentRace: true });
+    await expect(raced.service.editItems(tenant, "u1", "o1", edit())).rejects.toMatchObject({
+      response: { code: "TABLE_HAS_PAYMENTS" },
+    });
+    expect(raced.orders.editItems).not.toHaveBeenCalled();
+
+    const free = setup({ current: tableOrder });
+    await free.service.editItems(tenant, "u1", "o1", edit());
+    expect(free.tableAccounts.lockWithoutPayments).toHaveBeenCalledWith("r1", "s1", {});
+    expect(free.orders.editItems.mock.calls[0]![4]).toEqual({});
+  });
+
+  it("refuses to mark a table order paid on its own once its account has payments", async () => {
+    const cashier: TenantContext = { ...tenant, roles: ["cashier"] };
+    const tableOrder = order({ status: "served", tableSessionId: "s1" });
+    const paid = setup({ current: tableOrder, paymentRace: true });
+    await expect(paid.service.markPaid(cashier, "u1", "o1", "cash")).rejects.toMatchObject({
+      status: 409,
+      response: { code: "TABLE_HAS_PAYMENTS" },
+    });
+    expect(paid.orders.markPaid).not.toHaveBeenCalled();
+
+    const free = setup({ current: tableOrder });
+    await free.service.markPaid(cashier, "u1", "o1", "cash");
+    expect(free.orders.markPaid).toHaveBeenCalledWith("r1", "o1", "cash", {});
   });
 
   it("allows only the roles that work the order's channel", async () => {

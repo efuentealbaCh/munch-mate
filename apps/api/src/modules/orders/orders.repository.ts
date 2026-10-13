@@ -5,6 +5,7 @@ import {
   type OrderChannel,
   type OrderStatus,
   type PaymentMethod,
+  type PaymentPortion,
 } from "@app/types";
 import { Injectable } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
@@ -53,6 +54,8 @@ export interface OrderRecord {
   statusHistory: StatusChangeRecord[];
   paymentStatus: "unpaid" | "paid";
   paymentMethod: PaymentMethod | null;
+  /** Table orders paid by a split account: each method's share (Σ = total); [] = all with paymentMethod. */
+  paymentBreakdown: PaymentPortion[];
   items: PricedItem[];
   subtotal: number;
   deliveryFee: number;
@@ -328,6 +331,7 @@ export class OrdersRepository {
       clearCashAmount: boolean;
       edit: OrderEditRecord;
     },
+    session?: ClientSession,
   ): Promise<OrderRecord | null> {
     if (!Types.ObjectId.isValid(orderId)) return null;
     const doc = await this.orders
@@ -350,7 +354,7 @@ export class OrdersRepository {
           $inc: { revision: 1 },
           $push: { edits: { ...change.edit, byUserId: oid(change.edit.byUserId) } },
         },
-        { returnDocument: "after" },
+        { returnDocument: "after", session },
       )
       .lean();
     return doc ? toRecord(doc) : null;
@@ -387,32 +391,49 @@ export class OrdersRepository {
     return docs.map(toRecord);
   }
 
-  /** Charging a table account pays every unpaid order of it (rejected and cancelled ones excepted). */
-  async payTableSession(
+  /**
+   * Charging a table account pays its unpaid orders, each with its share of the account's payments (one write
+   * per order, in the closing transaction). Orders already paid, rejected or cancelled are left as they are.
+   */
+  async payTableOrders(
     restaurantId: string,
     tableSessionId: string,
-    method: PaymentMethod,
+    payments: { orderId: string; method: PaymentMethod; breakdown: PaymentPortion[] }[],
     session?: ClientSession,
   ): Promise<void> {
-    await this.orders.updateMany(
-      {
-        restaurantId: oid(restaurantId),
-        tableSessionId: oid(tableSessionId),
-        paymentStatus: "unpaid",
-        status: { $nin: ["rejected", "cancelled"] },
-      },
-      { $set: { paymentStatus: "paid", paymentMethod: method } },
-      { session },
+    if (payments.length === 0) return;
+    await this.orders.bulkWrite(
+      payments.map((payment) => ({
+        updateOne: {
+          filter: {
+            _id: oid(payment.orderId),
+            restaurantId: oid(restaurantId),
+            tableSessionId: oid(tableSessionId),
+            paymentStatus: "unpaid" as const,
+            status: { $nin: ["rejected", "cancelled"] as OrderStatus[] },
+          },
+          update: {
+            $set: { paymentStatus: "paid" as const, paymentMethod: payment.method, paymentBreakdown: payment.breakdown },
+          },
+        },
+      })),
+      { session, ordered: true },
     );
   }
 
-  async markPaid(restaurantId: string, orderId: string, method: PaymentMethod): Promise<OrderRecord | null> {
+  /** Pays the whole order with one method (a breakdown from an earlier split account no longer applies). */
+  async markPaid(
+    restaurantId: string,
+    orderId: string,
+    method: PaymentMethod,
+    session?: ClientSession,
+  ): Promise<OrderRecord | null> {
     if (!Types.ObjectId.isValid(orderId)) return null;
     const doc = await this.orders
       .findOneAndUpdate(
         { _id: oid(orderId), restaurantId: oid(restaurantId) },
-        { $set: { paymentStatus: "paid", paymentMethod: method } },
-        { returnDocument: "after" },
+        { $set: { paymentStatus: "paid", paymentMethod: method, paymentBreakdown: [] } },
+        { returnDocument: "after", session },
       )
       .lean();
     return doc ? toRecord(doc) : null;
@@ -439,6 +460,7 @@ function toRecord(doc: OrderDoc): OrderRecord {
     })),
     paymentStatus: doc.paymentStatus,
     paymentMethod: doc.paymentMethod ?? null,
+    paymentBreakdown: (doc.paymentBreakdown ?? []).map((portion) => ({ method: portion.method, amount: portion.amount })),
     items: doc.items.map((item) => ({
       productId: item.productId.toString(),
       name: item.name,

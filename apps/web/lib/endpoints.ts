@@ -3,6 +3,7 @@ import type {
   ChangeOrderStatusInput,
   CreatedOrder,
   CreateDeliveryOrderInput,
+  CreateTablePaymentInput,
   CreateDineInOrderInput,
   CreatePickupOrderInput,
   CustomerOrdersPage,
@@ -40,6 +41,7 @@ import type {
   SalesReport,
   SavedAddressInput,
   SavedAddressView,
+  SetTableSplitInput,
   SlugAvailability,
   TableContext,
   TableSessionView,
@@ -346,15 +348,45 @@ export const tableSessionsApi = {
       method: "POST",
       body: { kind },
     }),
+  /** One account (open or just closed): what the charge dialog reads again after a conflict. */
+  get: (restaurantId: string, sessionId: string) =>
+    api.request<TableSessionView>(`${restaurantPath(restaurantId)}/table-sessions/${segment(sessionId)}`),
   /**
-   * Pays every unpaid order of the account with `method` and records the tip.
-   * @throws ApiError TABLE_ORDERS_IN_PROGRESS (409), TABLE_SESSION_NOT_FOUND (404: already charged).
+   * Charges what is left of the account as one payment with `method` and the tip, and closes it ("Todo junto").
+   * @throws ApiError TABLE_ORDERS_IN_PROGRESS (409), TABLE_OVERPAID (409: delete a payment first),
+   *   TABLE_SESSION_NOT_FOUND (404: already charged).
    */
   close: (restaurantId: string, sessionId: string, body: { method: PaymentMethod; tip: number }) =>
     api.request<TableSessionView>(`${restaurantPath(restaurantId)}/table-sessions/${segment(sessionId)}/close`, {
       method: "POST",
       body,
     }),
+  /**
+   * Sets how the account is split (`{ mode: null }` removes the plan); the table's phones see it.
+   * @throws ApiError INVALID_SPLIT_PARTS (400), SPLIT_PARTS_PAID (409), TABLE_SESSION_CHANGED (409).
+   */
+  setSplit: (restaurantId: string, sessionId: string, body: SetTableSplitInput) =>
+    api.request<TableSessionView>(`${restaurantPath(restaurantId)}/table-sessions/${segment(sessionId)}/split`, {
+      method: "PUT",
+      body,
+    }),
+  /**
+   * Registers a partial payment (the api computes equal parts and products). The one that completes the bill
+   * closes the account: the answer then has `status: "closed"`.
+   * @throws ApiError TABLE_ORDERS_IN_PROGRESS, PAYMENT_EXCEEDS_BALANCE, SPLIT_PART_PAID, TABLE_SESSION_CHANGED (409),
+   *   INVALID_SPLIT_ITEMS, INVALID_AMOUNT, INVALID_TIP (400), TABLE_SESSION_NOT_FOUND (404).
+   */
+  addPayment: (restaurantId: string, sessionId: string, body: CreateTablePaymentInput) =>
+    api.request<TableSessionView>(`${restaurantPath(restaurantId)}/table-sessions/${segment(sessionId)}/payments`, {
+      method: "POST",
+      body,
+    }),
+  /** Cancels a payment of an open account. @throws ApiError TABLE_SESSION_CLOSED (409), TABLE_PAYMENT_NOT_FOUND (404). */
+  deletePayment: (restaurantId: string, sessionId: string, paymentId: string) =>
+    api.request<TableSessionView>(
+      `${restaurantPath(restaurantId)}/table-sessions/${segment(sessionId)}/payments/${segment(paymentId)}`,
+      { method: "DELETE" },
+    ),
 };
 
 /** Platform administration (platformRole "admin"; anyone else gets 404 NOT_FOUND). */

@@ -13,6 +13,7 @@ function order(overrides: Partial<OrderRecord>): OrderRecord {
     statusHistory: [],
     paymentStatus: "unpaid",
     paymentMethod: null,
+    paymentBreakdown: [],
     items: [],
     subtotal: 0,
     deliveryFee: 0,
@@ -86,6 +87,28 @@ describe("summarizeDay", () => {
       { name: "Completo italiano", quantity: 4, total: 15_000 },
       { name: "Papas", quantity: 1, total: 3000 },
     ]);
+  });
+
+  it("adds each portion of a split table order to its method", () => {
+    const summary = summarizeDay(
+      [
+        order({
+          total: 12_000,
+          paymentStatus: "paid",
+          paymentMethod: "cash",
+          paymentBreakdown: [
+            { method: "cash", amount: 7000 },
+            { method: "card_pos", amount: 5000 },
+          ],
+        }),
+        order({ total: 3000, paymentStatus: "paid", paymentMethod: "transfer" }),
+      ],
+      "2026-10-08",
+      "CLP",
+    );
+
+    expect(summary.byPaymentMethod).toEqual({ cash: 7000, card_pos: 5000, transfer: 3000 });
+    expect(summary.sales.paid).toBe(15_000);
   });
 
   it("returns zeros for a day without orders", () => {

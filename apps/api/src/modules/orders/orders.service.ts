@@ -46,7 +46,7 @@ import {
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { InjectConnection } from "@nestjs/mongoose";
-import type { Connection } from "mongoose";
+import type { ClientSession, Connection } from "mongoose";
 import { InjectPinoLogger, PinoLogger } from "nestjs-pino";
 import { hashToken } from "../../common/crypto/tokens";
 import { apiError } from "../../common/errors/api-error";
@@ -87,6 +87,9 @@ const notAccepting = () =>
   new ConflictException(apiError("NOT_ACCEPTING_ORDERS", "El local no está recibiendo pedidos en este momento"));
 const orderChanged = () =>
   new ConflictException(apiError("ORDER_CHANGED", "Alguien actualizó este pedido; revisa su estado"));
+const tableHasPayments = (message: string) => new ConflictException(apiError("TABLE_HAS_PAYMENTS", message));
+const EDIT_WITH_PAYMENTS = "Esta mesa ya tiene pagos registrados; bórralos en Salón para modificar el pedido";
+const PAY_WITH_PAYMENTS = "Esta mesa ya tiene pagos registrados; cobra lo que falta desde Salón";
 
 /**
  * The restaurant's cap on units (sum of quantities) per order: new carts and edited orders alike.
@@ -657,8 +660,8 @@ export class OrdersService {
    * mistake). Kept lines keep their price snapshot; added lines are priced against the current menu like a
    * new order. The open switch and the schedule are not checked: the restaurant already took this order.
    * @throws NotFoundException ORDER_NOT_FOUND; ForbiddenException FORBIDDEN_ROLE; ConflictException
-   *   ORDER_NOT_EDITABLE, ORDER_ALREADY_PAID, ORDER_CHANGED, TOO_MANY_ITEMS, BELOW_MINIMUM_ORDER and the pricing
-   *   errors; BadRequestException INVALID_EDIT, ORDER_EMPTY, NOTHING_CHANGED.
+   *   ORDER_NOT_EDITABLE, ORDER_ALREADY_PAID, ORDER_CHANGED, TABLE_HAS_PAYMENTS, TOO_MANY_ITEMS,
+   *   BELOW_MINIMUM_ORDER and the pricing errors; BadRequestException INVALID_EDIT, ORDER_EMPTY, NOTHING_CHANGED.
    */
   async editItems(
     tenant: TenantContext,
@@ -685,6 +688,12 @@ export class OrdersService {
       throw new ConflictException(apiError("ORDER_ALREADY_PAID", "Este pedido ya está pagado; ya no se puede modificar"));
     }
     if (input.revision !== order.revision) throw orderChanged();
+    // A table order whose account already has payments stays as it is: "pay by products" payments point at its
+    // lines by index, and what was already charged must not end up above the account's total.
+    if (order.tableSessionId) {
+      const account = await this.tableAccounts.findOne(tenant.restaurantId, order.tableSessionId);
+      if (account && account.payments.length > 0) throw tableHasPayments(EDIT_WITH_PAYMENTS);
+    }
     try {
       checkEdit(order.items, input.keep, input.add.length);
     } catch (error) {
@@ -707,24 +716,25 @@ export class OrdersService {
     const cash = order.expectedPayment?.cashAmount ?? null;
 
     const user = await this.users.findById(userId);
-    const updated = await this.orders.editItems(
-      tenant.restaurantId,
-      order.id,
-      { status: order.status, revision: order.revision },
-      {
-        items: edited.items,
-        subtotal: edited.subtotal,
-        total,
-        clearCashAmount: cash !== null && cash < total,
-        edit: {
-          at: new Date(),
-          byUserId: userId,
-          byName: user?.name ?? null,
-          reason: input.reason?.trim() || null,
-          changes: edited.changes,
-        },
+    const expected = { status: order.status, revision: order.revision };
+    const change = {
+      items: edited.items,
+      subtotal: edited.subtotal,
+      total,
+      clearCashAmount: cash !== null && cash < total,
+      edit: {
+        at: new Date(),
+        byUserId: userId,
+        byName: user?.name ?? null,
+        reason: input.reason?.trim() || null,
+        changes: edited.changes,
       },
-    );
+    };
+    const updated = order.tableSessionId
+      ? await this.inTableAccount(tenant.restaurantId, order.tableSessionId, EDIT_WITH_PAYMENTS, (tx) =>
+          this.orders.editItems(tenant.restaurantId, order.id, expected, change, tx),
+        )
+      : await this.orders.editItems(tenant.restaurantId, order.id, expected, change);
     // Started, paid or edited by someone else between our read and our write.
     if (!updated) throw orderChanged();
 
@@ -827,13 +837,15 @@ export class OrdersService {
 
   /**
    * Cash, card terminal or transfer. Independent of the order status. The cashier and the owner register any
-   * payment; a rider only the ones of deliveries assigned to them (cash on delivery).
-   * @throws NotFoundException ORDER_NOT_FOUND; ForbiddenException NOT_YOUR_DELIVERY.
+   * payment; a rider only the ones of deliveries assigned to them (cash on delivery). A table order whose
+   * account already has (split) payments is charged from the account instead.
+   * @throws NotFoundException ORDER_NOT_FOUND; ForbiddenException NOT_YOUR_DELIVERY; ConflictException
+   *   TABLE_HAS_PAYMENTS.
    */
   async markPaid(tenant: TenantContext, userId: string, orderId: string, method: PaymentMethod): Promise<OrderView> {
+    const order = await this.orders.findOne(tenant.restaurantId, orderId);
+    if (!order) throw orderNotFound();
     if (!tenant.roles.some((role) => role === "owner" || role === "cashier")) {
-      const order = await this.orders.findOne(tenant.restaurantId, orderId);
-      if (!order) throw orderNotFound();
       const waiterAtTable = order.channel === "dine_in" && tenant.roles.includes("waiter");
       const riderOfIt = order.channel === "delivery" && order.riderId === userId;
       if (!waiterAtTable && !riderOfIt) {
@@ -843,11 +855,35 @@ export class OrdersService {
           : notYourDelivery();
       }
     }
-    const updated = await this.orders.markPaid(tenant.restaurantId, orderId, method);
+    // Paying a table order on its own once its account has payments would charge it twice: the payments
+    // already cover part of the account, this order included.
+    const updated = order.tableSessionId
+      ? await this.inTableAccount(tenant.restaurantId, order.tableSessionId, PAY_WITH_PAYMENTS, (tx) =>
+          this.orders.markPaid(tenant.restaurantId, orderId, method, tx),
+        )
+      : await this.orders.markPaid(tenant.restaurantId, orderId, method);
     if (!updated) throw orderNotFound();
     this.realtime.toStaffOf(tenant.restaurantId, [updated.riderId]).emit("order.updated", toOrderView(updated));
     if (updated.tableSessionId) await this.tableSessions.notifyChange(tenant.restaurantId, updated.tableSessionId);
     return toOrderView(updated);
+  }
+
+  /**
+   * Runs a write on a table order inside a transaction that first checks (and bumps the revision of) its
+   * account: while the account has no payments the write goes ahead, and a payment computed meanwhile misses
+   * (TABLE_SESSION_CHANGED); once it has payments, the write is refused.
+   * @throws ConflictException TABLE_HAS_PAYMENTS with `message`.
+   */
+  private async inTableAccount<T>(
+    restaurantId: string,
+    tableSessionId: string,
+    message: string,
+    write: (tx: ClientSession) => Promise<T>,
+  ): Promise<T> {
+    return this.connection.transaction(async (tx) => {
+      if (!(await this.tableAccounts.lockWithoutPayments(restaurantId, tableSessionId, tx))) throw tableHasPayments(message);
+      return write(tx);
+    });
   }
 
   /** Members with the rider role, for the assignment picker. */

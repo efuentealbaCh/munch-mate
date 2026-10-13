@@ -7,4 +7,5 @@ export * from "./phone";
 export * from "./promo";
 export * from "./push";
 export * from "./slug";
+export * from "./split";
 export * from "./tip";
