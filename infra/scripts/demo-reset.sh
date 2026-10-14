@@ -62,6 +62,10 @@ fi
 step "Levantando el stack (construye las imágenes; la primera vez tarda varios minutos)"
 $COMPOSE up -d --build --wait
 
+step "Confiando en el certificado local de Caddy (fotos de media.localhost y «No es seguro»)"
+# Not fatal: the demo works without it, the browser just shows warnings and hides the photos.
+node infra/scripts/trust-cert.mjs || echo "• Sigue sin el certificado; puedes repetirlo luego con pnpm cert:trust."
+
 step "Inicializando Garage (layout, llave y buckets)"
 sh infra/scripts/garage-init.sh compose.yaml compose.prod.yaml compose.local.yaml
 
@@ -86,4 +90,4 @@ cat <<EOF
   Mailpit:     http://localhost:8025
   Los links de mesa (/m/…) son los que imprimió el paso de la demo, más arriba.
 EOF
-echo "  ¿Fotos que no cargan o «No es seguro»? Haz que Windows confíe en el certificado local de Caddy (README, problemas comunes)."
+echo "  ¿Fotos que no cargan o «No es seguro»? Corre pnpm cert:trust y reinicia el navegador."

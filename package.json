@@ -23,6 +23,7 @@
     "stack:down": "docker compose -f compose.yaml -f compose.prod.yaml -f compose.local.yaml down",
     "smoke": "sh infra/scripts/smoke.sh",
     "seed:demo": "node infra/scripts/seed-demo.mjs",
+    "cert:trust": "node infra/scripts/trust-cert.mjs",
     "demo:reset": "sh infra/scripts/demo-reset.sh",
     "demo:load": "sh infra/scripts/demo-reset.sh --keep-data",
     "platform:admin": "sh infra/scripts/platform-admin.sh",

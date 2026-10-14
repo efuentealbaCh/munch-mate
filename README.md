@@ -156,9 +156,11 @@ Las mismas imágenes que irían al VPS, detrás de Caddy y HTTPS en `https://loc
 ```bash
 pnpm infra:down   # solo si tenías el modo desarrollo arriba
 pnpm stack:up
+pnpm cert:trust   # una vez por certificado: Windows confía en el HTTPS local (pide confirmar)
 ```
 
-- **Deberías ver:** los 8 contenedores en «Healthy» (caddy, web, api, workers, mongo, valkey, garage, mailpit), y <https://localhost> con la página de inicio (acepta el certificado local).
+- **Deberías ver:** los 8 contenedores en «Healthy» (caddy, web, api, workers, mongo, valkey, garage, mailpit), y <https://localhost> con la página de inicio, sin aviso de «No es seguro».
+- **Certificado local:** Caddy firma `localhost`, `media.localhost` (fotos) y `s3.localhost` con su propia autoridad. `pnpm cert:trust` la copia a `.local-ca/caddy-root.crt` y la instala en el almacén de confianza de tu usuario de Windows (sin permisos de administrador; si ya está, no hace nada). Después **cierra el navegador por completo** y ábrelo de nuevo. Sin esto las fotos del menú no cargan: el navegador las bloquea sin avisar. Firefox usa su propio almacén: en `about:config` activa `security.enterprise_roots.enabled`. El certificado solo cambia si borras los volúmenes de Caddy (`down -v`); `pnpm demo:reset` los conserva.
 - **Si falla:** si ves una página de Apache, XAMPP ocupa los puertos 80/443: detenlo y repite. La primera vez construir la web tarda varios minutos.
 </details>
 
@@ -219,7 +221,7 @@ pnpm seed:demo
 
 Crea 3 locales con menú, fotos (todos los productos y logos), mesas, retiro, ubicación en el mapa y zonas de delivery dibujadas, y la cuenta del repartidor (`repartidor@munchmate.local`, misma contraseña) invitada a los locales con delivery, usando la API como lo haría un usuario. Imprime un link `/m/…` para pedir desde una mesa de cada local. Se puede repetir: lo que ya existe no se duplica y solo sube las fotos que faltan. Las fotos se descargan una vez en `.demo-cache/`.
 
-**Todo de una vez** (Git Bash 🐚): `pnpm demo:reset` borra los datos del stack (pide escribir `BORRAR`) y deja la demo lista: levanta el stack, inicializa Garage, sube el mapa, carga los locales con sus fotos y te da el rol de administrador de plataforma (pasos 11, 12, 13, 16 y 17). `pnpm demo:load` hace lo mismo sin borrar nada. Agrega `--no-map` para omitir el mapa (`pnpm demo:reset --no-map`) o `--yes` para no confirmar.
+**Todo de una vez** (Git Bash 🐚): `pnpm demo:reset` borra los datos del stack (pide escribir `BORRAR`) y deja la demo lista: levanta el stack, hace que Windows confíe en su certificado (`pnpm cert:trust`), inicializa Garage, sube el mapa, carga los locales con sus fotos y te da el rol de administrador de plataforma (pasos 11, 12, 13, 16 y 17). `pnpm demo:load` hace lo mismo sin borrar nada. Agrega `--no-map` para omitir el mapa (`pnpm demo:reset --no-map`) o `--yes` para no confirmar.
 
 **Cuenta:** `demo@munchmate.local` / `munchmate demo 2026`
 </details>
@@ -322,8 +324,8 @@ pnpm --filter @app/print-agent build:exe
 pnpm --filter @app/print-agent sign:exe     # sin certificado avisa y lo deja sin firmar (funciona igual)
 
 # 2. Confiar en el certificado local de Caddy (https://localhost) y aislar la configuración de pruebas
-docker cp munch-mate-caddy-1:/data/caddy/pki/authorities/local/root.crt "$env:TEMP\caddy-root.crt"
-$env:NODE_EXTRA_CA_CERTS = "$env:TEMP\caddy-root.crt"
+pnpm cert:trust                                              # deja .local-ca\caddy-root.crt (paso 11)
+$env:NODE_EXTRA_CA_CERTS = "$PWD\.local-ca\caddy-root.crt"
 $env:MUNCHMATE_AGENT_HOME = "$env:TEMP\munchmate-agent"     # no toca %APPDATA%\MunchMate
 $env:MUNCHMATE_PRINT_DIR  = "$env:TEMP\munchmate-tickets"   # impresora «Archivo (pruebas)»
 
@@ -380,7 +382,7 @@ Regenera [docs/capturas/delivery](docs/capturas/delivery/README.md): un recorrid
 
 | Síntoma | Causa | Solución |
 | --- | --- | --- |
-| Las fotos de productos y logos no cargan (ícono roto) aunque el panel funciona | Las imágenes vienen de `https://media.localhost`, cuyo certificado local el navegador no acepta: lo bloquea sin avisar (aceptar el aviso en `localhost` no alcanza) | Rápido: abre <https://media.localhost/> y acepta el aviso. Definitivo (PowerShell, stack arriba): `docker cp munch-mate-caddy-1:/data/caddy/pki/authorities/local/root.crt "$env:TEMP\caddy-root.crt"` y `Import-Certificate -FilePath "$env:TEMP\caddy-root.crt" -CertStoreLocation Cert:\CurrentUser\Root`; reinicia el navegador. `pnpm demo:reset` conserva ese certificado; borrar los volúmenes a mano (`down -v`) lo regenera |
+| Las fotos de productos y logos no cargan (ícono roto) aunque el panel funciona | Las imágenes vienen de `https://media.localhost`, cuyo certificado local el navegador no acepta: lo bloquea sin avisar (aceptar el aviso en `localhost` no alcanza) | `pnpm cert:trust` (stack arriba) y cierra el navegador por completo. Atajo sin instalar nada: abre <https://media.localhost/> y acepta el aviso. `pnpm demo:reset` conserva el certificado; borrar los volúmenes a mano (`down -v`) lo regenera y hay que repetirlo |
 | Página de Apache en `https://localhost` | XAMPP/IIS ocupa los puertos 80/443 | Detenlo antes de `pnpm stack:up` |
 | `sh` no se reconoce / rutas tipo `C:/Program Files/Git/...` | Script `sh` ejecutado desde PowerShell o CMD | Usa Git Bash, o `pnpm config set script-shell` |
 | `&&` da error en PowerShell | PowerShell 5.1 no lo soporta | Un comando por línea, o `cmd1; if ($?) { cmd2 }` |
@@ -395,7 +397,7 @@ Regenera [docs/capturas/delivery](docs/capturas/delivery/README.md): un recorrid
 | No aparece **Modificar** en un pedido | Ya se empezó a preparar, está pagado, o tu rol no trabaja ese canal | Solo antes de **Empezar** y sin pagar; si la mesa tiene pagos registrados, anúlalos en **Salón** primero |
 | «Alguien registró otro pago de esta mesa» | Dos personas cobraron la misma mesa a la vez | La cuenta se recarga sola; revisa lo pagado y lo que falta y vuelve a cobrar |
 | El agente dice «unauthorized» o «fue desvinculado» | El equipo se desvinculó en **Impresoras**, o el token ya no vale | Genera un código nuevo y vuelve a vincularlo |
-| El agente no conecta a `https://localhost` (error de certificado) | Node no confía en la CA local de Caddy | `NODE_EXTRA_CA_CERTS` con el `root.crt` de Caddy, como en [Computador de cocina](#computador-de-cocina-agente-de-impresión) |
+| El agente no conecta a `https://localhost` (error de certificado) | Node no confía en la CA local de Caddy | `pnpm cert:trust` y `NODE_EXTRA_CA_CERTS` apuntando a `.local-ca\caddy-root.crt`, como en [Computador de cocina](#computador-de-cocina-agente-de-impresión) |
 | El agente se cuelga o da ECONNRESET contra `localhost` | `localhost` resuelve primero a `::1` y en Windows lo puede tomar `wslrelay` o Docker Desktop por IPv6 (lo mismo que afecta a Playwright) | Detén el servicio de WSL que escucha en `::1:443`, o prueba con `$env:NODE_OPTIONS = "--dns-result-order=ipv4first"` antes de abrir el agente (no verificado con el `.exe`) |
 | La impresora aparece «No disponible» en **Impresoras** | El agente no la encontró al arrancar (apagada o desenchufada) | Enciéndela: en menos de un minuto vuelve con todos sus ajustes. Si ya no existe, **Quitar** |
 | Las comandas salen dos veces | Imprimen el agente y también el navegador del tablero | En **Pedidos**, usa el aviso «desactívala aquí» para apagar la impresión automática del navegador |
