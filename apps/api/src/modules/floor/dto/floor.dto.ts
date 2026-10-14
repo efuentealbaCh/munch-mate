@@ -4,9 +4,11 @@ import {
   type FloorPlan,
   type FloorRect,
   type SaveFloorPlanInput,
+  TABLE_ROTATIONS,
   TABLE_SEATS,
   TABLE_SHAPES,
-  type TableLayout,
+  type TableLayoutInput,
+  type TableRotation,
   type TableSeats,
   type TableShape,
 } from "@app/types";
@@ -90,7 +92,7 @@ export class FloorPlanDto {
   door?: FloorCellDto | null;
 }
 
-export class TableLayoutDto implements TableLayout {
+export class TableLayoutDto implements TableLayoutInput {
   @IsInt(CELL)
   @Min(0, CELL)
   @Max(MAX_CELL, CELL)
@@ -106,6 +108,11 @@ export class TableLayoutDto implements TableLayout {
 
   @IsIn(TABLE_SEATS, { message: "Las mesas pueden ser de 2, 4, 6 u 8 puestos" })
   seats!: TableSeats;
+
+  /** Missing = 0 (horizontal), so clients older than the rotation keep working. */
+  @IsOptional()
+  @IsIn(TABLE_ROTATIONS, { message: "La mesa puede estar horizontal (0) o vertical (90)" })
+  rotation?: TableRotation;
 }
 
 export class TablePlacementDto {

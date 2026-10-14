@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AccessDenied } from "@/components/access-denied";
 import { FormError } from "@/components/form-error";
+import { CameraControls } from "@/components/live-floor/camera-controls";
 import { LiveScene, type SceneData, type SceneTooltip } from "@/components/live-floor/live-scene";
 import { DetailPanel, type DetailContext, GLASS, KpiCards, LiveStatus, TableLegend, TrackingStrip, WorkQueue } from "@/components/live-floor/panels";
 import { RidersCard } from "@/components/live-floor/riders-card";
@@ -17,22 +18,28 @@ import { useMapConfig } from "@/hooks/use-map-config";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { useNow } from "@/hooks/use-now";
 import { useSocketEvent } from "@/hooks/use-realtime";
+import { localStore } from "@/lib/browser-storage";
 import type { AppSocket } from "@/lib/realtime";
 import { canViewSales } from "@/lib/daily-summary";
 import { deliveryZonesApi, floorApi, liveApi, ordersApi, tableSessionsApi } from "@/lib/endpoints";
 import { upsertSession } from "@/lib/floor";
 import {
+  type CameraTurns,
   channelPlace,
   KITCHEN_GROUPS,
+  loadCameraTurns,
   type LiveModel,
   liveModel,
   type LiveTarget,
   orderWho,
   payingChip,
   resolveTarget,
+  rotateLayout,
+  saveCameraTurns,
   TABLE_STATE_LABELS,
   ticketTimer,
   timerLabel,
+  turnCamera,
 } from "@/lib/live-floor";
 import { formatAgo, type TrackedPosition, trackPosition } from "@/lib/maps";
 import { mergeFetched, upsertOrder } from "@/lib/orders-board";
@@ -222,6 +229,38 @@ function dayAndTime(now: number, timeZone: string): string {
   }
 }
 
+/**
+ * The camera of the scene: quarter turns remembered per device and restaurant (`mm:live-camera:<id>`), turned
+ * with the buttons or the «[» / «]» keys while the scene is shown (never while typing, in a dialog or with a
+ * modifier).
+ */
+function useCamera(restaurantId: string, sceneShown: boolean) {
+  const [turns, setTurns] = useState<CameraTurns>(() => loadCameraTurns(localStore(), restaurantId));
+  const turn = useCallback(
+    (delta: -1 | 1) =>
+      setTurns((current) => {
+        const next = turnCamera(current, delta);
+        saveCameraTurns(localStore(), restaurantId, next);
+        return next;
+      }),
+    [restaurantId],
+  );
+  useEffect(() => {
+    if (!sceneShown) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "[" && event.key !== "]") return;
+      if (event.ctrlKey || event.metaKey || event.altKey || event.defaultPrevented) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("input, textarea, select, [contenteditable=''], [contenteditable='true'], [role='dialog']")) return;
+      event.preventDefault();
+      turn(event.key === "[" ? -1 : 1);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [sceneShown, turn]);
+  return { turns, turn };
+}
+
 /** Order the ring on the floor follows: a moto on its way, its bag on the counter, its table, or the kitchen. */
 function ringOf(target: LiveTarget, model: LiveModel): LiveTarget {
   if (target.kind !== "order") return target;
@@ -249,6 +288,7 @@ function LiveFloor() {
   const [selected, setSelected] = useState<LiveTarget | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [showPlan, setShowPlan] = useState(false);
+  const camera = useCamera(restaurant.id, wide || showPlan);
 
   const ready = floor.view !== null && active.orders !== null && open.sessions !== null;
   const model = useMemo(
@@ -272,7 +312,8 @@ function LiveFloor() {
     () =>
       model
         ? {
-            layout: model.layout,
+            // Only the scene sees the turned plan; panels, lists and selection work with ids.
+            layout: rotateLayout(model.layout, camera.turns),
             restaurantName: restaurant.name,
             tableStates: model.tableStates,
             groups: model.groups,
@@ -282,7 +323,7 @@ function LiveFloor() {
           }
         : null,
     // The ring depends on the target's key only (a new object every render would redraw the scene).
-    [model, restaurant.name, wide, target.kind, "id" in target ? target.id : ""],
+    [model, restaurant.name, wide, camera.turns, target.kind, "id" in target ? target.id : ""],
   );
 
   if (!model || !sceneData) {
@@ -411,6 +452,7 @@ function LiveFloor() {
       </div>
       <div className="flex flex-wrap items-center gap-3">
         {wide && model.layout.dining ? <TableLegend /> : null}
+        {wide ? <CameraControls turns={camera.turns} onTurn={camera.turn} /> : null}
         {/* The plan can be changed as often as needed: without a plan the notice below links to the editor. */}
         {isOwner && model.layout.hasPlan ? (
           <Link href={planHref} className={buttonVariants({ variant: "outline", size: "sm" })} data-testid="edit-floor-plan">
@@ -434,8 +476,9 @@ function LiveFloor() {
           {showPlan ? "Ocultar plano" : "Ver plano"}
         </Button>
         {showPlan ? (
-          <div className="overflow-hidden rounded-2xl border border-border bg-[#f4f2ef]">
-            <LiveScene data={sceneData} label={sceneLabel} onSelect={select} describe={describe} className="aspect-[4/3] w-full" />
+          <div className="relative overflow-hidden rounded-2xl border border-border bg-[#f4f2ef]">
+            <LiveScene data={sceneData} label={sceneLabel} onSelect={select} describe={describe} camera={camera.turns} className="aspect-[4/3] w-full" />
+            <CameraControls turns={camera.turns} onTurn={camera.turn} className="absolute top-2 right-2 z-[2] rounded-lg bg-background/70 p-0.5 backdrop-blur-sm" />
           </div>
         ) : null}
         <ZoneLists model={model} now={now} onSelect={select} riders={ridersCard("h-64 border-0 p-0 shadow-none")} />
@@ -479,6 +522,7 @@ function LiveFloor() {
           label={sceneLabel}
           onSelect={select}
           describe={describe}
+          camera={camera.turns}
           className="col-span-2 aspect-[16/10] xl:absolute xl:top-[132px] xl:right-[368px] xl:bottom-[146px] xl:left-0 xl:aspect-auto"
         />
         {/* Front-left corner of the scene: the kitchen and the tickets usually sit at the back or on the right. */}

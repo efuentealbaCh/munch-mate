@@ -1,4 +1,4 @@
-import { TABLE_SEATS, TABLE_SHAPES, type TableSeats, type TableShape } from "@app/types";
+import { TABLE_ROTATIONS, TABLE_SEATS, TABLE_SHAPES, type TableRotation, type TableSeats, type TableShape } from "@app/types";
 import { Prop, Schema, SchemaFactory } from "@nestjs/mongoose";
 import { type HydratedDocument, Types } from "mongoose";
 
@@ -16,6 +16,10 @@ export class TableLayoutDoc {
 
   @Prop({ type: Number, enum: TABLE_SEATS, required: true })
   seats!: TableSeats;
+
+  /** 0 = horizontal, 90 = vertical. Missing in layouts saved before it existed: read as 0. */
+  @Prop({ type: Number, enum: TABLE_ROTATIONS, default: 0 })
+  rotation!: TableRotation;
 }
 const TableLayoutSchema = SchemaFactory.createForClass(TableLayoutDoc);
 

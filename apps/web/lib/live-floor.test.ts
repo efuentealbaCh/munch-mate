@@ -1,7 +1,8 @@
 import type { FloorPlan, FloorPlanView, LiveSummary, OrderStatus, OrderView, TableSessionView } from "@app/types";
-import { floorPlanProblem } from "@app/utils";
+import { floorPlanProblem, tableFootprint } from "@app/utils";
 import { describe, expect, it } from "vitest";
 import {
+  cameraAngle,
   CELL,
   changeLabel,
   defaultPlan,
@@ -16,7 +17,9 @@ import {
   kitchenGauge,
   kitchenGroups,
   liveLayout,
+  loadCameraTurns,
   nameSpot,
+  normalizeTurns,
   orderWho,
   paintOrder,
   paintsBefore,
@@ -24,7 +27,10 @@ import {
   pickupQueue,
   project,
   resolveTarget,
+  rotateLayout,
+  rotatePlanView,
   salesComparison,
+  saveCameraTurns,
   sceneFrame,
   sparkline,
   tablesSummary,
@@ -32,6 +38,9 @@ import {
   targetKey,
   timerLabel,
   trackingSteps,
+  turnCamera,
+  turnCell,
+  turnRect,
 } from "./live-floor";
 
 const NOW = Date.parse("2026-10-14T23:41:00.000Z");
@@ -116,8 +125,8 @@ function view(plan: FloorPlan | null, tables: FloorPlanView["tables"] = []): Flo
   return { plan, tables };
 }
 
-const TABLE_A = { id: "t1", label: "Mesa 1", active: true, layout: { x: 5, y: 4, shape: "round" as const, seats: 4 as const } };
-const TABLE_B = { id: "t2", label: "Mesa 2", active: true, layout: { x: 7, y: 4, shape: "square" as const, seats: 6 as const } };
+const TABLE_A = { id: "t1", label: "Mesa 1", active: true, layout: { x: 5, y: 4, shape: "round" as const, seats: 4 as const, rotation: 0 as const } };
+const TABLE_B = { id: "t2", label: "Mesa 2", active: true, layout: { x: 7, y: 4, shape: "square" as const, seats: 6 as const, rotation: 0 as const } };
 
 describe("isometric projection", () => {
   it("puts +x down-right and +y down-left at 30°, z straight up", () => {
@@ -209,7 +218,7 @@ describe("which zones are drawn", () => {
   });
 
   it("draws the active placed tables with their footprint", () => {
-    const layout = liveLayout(view(PLAN, [TABLE_A, TABLE_B, { id: "t3", label: "Mesa 3", active: false, layout: { x: 9, y: 6, shape: "round", seats: 2 } }]), flags(false, false));
+    const layout = liveLayout(view(PLAN, [TABLE_A, TABLE_B, { id: "t3", label: "Mesa 3", active: false, layout: { x: 9, y: 6, shape: "round", seats: 2, rotation: 0 } }]), flags(false, false));
     expect(layout.dining).toBe(true);
     expect(layout.tables.map((t) => [t.id, t.rect])).toEqual([
       ["t1", { x: 5, y: 4, w: 1, h: 1 }],
@@ -480,5 +489,142 @@ describe("the whole view", () => {
     expect(liveModel({ ...base, restaurant: { ...restaurant, pickupEnabled: true, deliveryEnabled: true } }).tabs).toEqual(["kitchen", "pickup", "delivery"]);
     expect(statusTone("pending")).toBe("warn");
     expect(statusTone("out_for_delivery")).toBe("rid");
+  });
+});
+
+describe("camera", () => {
+  const flags = { pickupEnabled: true, deliveryEnabled: true };
+  // A vertical long table, a horizontal one, a 2-seat round one and a turned 4-seat square one.
+  const TABLES: FloorPlanView["tables"] = [
+    { id: "v", label: "Mesa 1", active: true, layout: { x: 5, y: 3, shape: "square", seats: 8, rotation: 90 } },
+    { id: "h", label: "Mesa 2", active: true, layout: { x: 7, y: 4, shape: "round", seats: 6, rotation: 0 } },
+    { id: "r", label: "Mesa 3", active: true, layout: { x: 10, y: 6, shape: "round", seats: 2, rotation: 0 } },
+    { id: "s", label: "Mesa 4", active: true, layout: { x: 2, y: 6, shape: "square", seats: 4, rotation: 90 } },
+  ];
+  const layout = liveLayout(view(PLAN, TABLES), flags);
+  const all = { plan: layout.plan, tables: layout.tables };
+
+  it("turns cells and rectangles clockwise, swapping width and depth", () => {
+    // 14 × 9: the corners go round clockwise on the turned 9 × 14 grid.
+    expect(turnCell({ x: 0, y: 0 }, 9)).toEqual({ x: 8, y: 0 });
+    expect(turnCell({ x: 13, y: 0 }, 9)).toEqual({ x: 8, y: 13 });
+    expect(turnCell({ x: 13, y: 8 }, 9)).toEqual({ x: 0, y: 13 });
+    expect(turnCell({ x: 0, y: 8 }, 9)).toEqual({ x: 0, y: 0 });
+    expect(turnRect({ x: 0, y: 0, w: 4, h: 3 }, 9)).toEqual({ x: 6, y: 0, w: 3, h: 4 });
+    expect(turnRect({ x: 11, y: 0, w: 3, h: 2 }, 9)).toEqual({ x: 7, y: 11, w: 2, h: 3 });
+  });
+
+  it("each angle swaps cols and rows on 90° and 270° and moves every area to its turned cells", () => {
+    const at = (turns: number) => rotatePlanView(layout.plan, layout.tables, turns).plan;
+    expect(at(0)).toEqual(layout.plan);
+    expect(at(1)).toEqual({ cols: 9, rows: 14, kitchen: { x: 6, y: 0, w: 3, h: 4 }, pickup: { x: 7, y: 11, w: 2, h: 3 }, door: { x: 0, y: 13 } });
+    expect(at(2)).toEqual({ cols: 14, rows: 9, kitchen: { x: 10, y: 6, w: 4, h: 3 }, pickup: { x: 0, y: 7, w: 3, h: 2 }, door: { x: 0, y: 0 } });
+    expect(at(3)).toEqual({ cols: 9, rows: 14, kitchen: { x: 0, y: 10, w: 3, h: 4 }, pickup: { x: 0, y: 0, w: 2, h: 3 }, door: { x: 8, y: 0 } });
+  });
+
+  it("four turns (or three and one more, or one back) give the same plan back; the input is not changed", () => {
+    const copy = structuredClone(layout);
+    let current = all;
+    for (let i = 0; i < 4; i++) current = rotatePlanView(current.plan, current.tables, 1);
+    expect(current).toEqual(all);
+    expect(rotatePlanView(layout.plan, layout.tables, 4)).toEqual(all);
+    const three = rotatePlanView(layout.plan, layout.tables, 3);
+    expect(rotatePlanView(three.plan, three.tables, 1)).toEqual(all);
+    expect(rotatePlanView(layout.plan, layout.tables, -1)).toEqual(three);
+    expect(layout).toEqual(copy);
+  });
+
+  it("the turned plan stays valid and every table sits on its own footprint", () => {
+    for (let turns = 0; turns < 4; turns++) {
+      const turned = rotatePlanView(layout.plan, layout.tables, turns);
+      expect(floorPlanProblem(turned.plan, turned.tables.map((t) => ({ tableId: t.id, layout: t.layout })))).toBeNull();
+      for (const table of turned.tables) expect(tableFootprint(table.layout)).toEqual(table.rect);
+    }
+  });
+
+  it("a long table alternates between vertical and horizontal, and the chairs swap sides", () => {
+    const byId = (turns: number) => new Map(rotatePlanView(layout.plan, layout.tables, turns).tables.map((t) => [t.id, t]));
+    const zero = byId(0);
+    expect(zero.get("v")).toMatchObject({ rect: { x: 5, y: 3, w: 1, h: 2 }, chairs: "left-right" });
+    expect(zero.get("h")).toMatchObject({ rect: { x: 7, y: 4, w: 2, h: 1 }, chairs: "top-bottom" });
+    // Round tables of 2–4 seats ignore their rotation (tableChairs): chairs above and below.
+    expect(zero.get("r")?.chairs).toBe("top-bottom");
+    expect(zero.get("s")?.chairs).toBe("left-right");
+    const one = byId(1);
+    expect(one.get("v")).toMatchObject({ rect: { x: 4, y: 5, w: 2, h: 1 }, layout: { x: 4, y: 5, rotation: 0 }, chairs: "top-bottom" });
+    expect(one.get("h")).toMatchObject({ rect: { x: 4, y: 7, w: 1, h: 2 }, layout: { x: 4, y: 7, rotation: 90 }, chairs: "left-right" });
+    expect(one.get("r")).toMatchObject({ rect: { x: 2, y: 10, w: 1, h: 1 }, chairs: "left-right" });
+    const two = byId(2);
+    expect(two.get("v")).toMatchObject({ rect: { x: 8, y: 4, w: 1, h: 2 }, layout: { rotation: 90 }, chairs: "left-right" });
+    expect(two.get("h")).toMatchObject({ rect: { x: 5, y: 4, w: 2, h: 1 }, layout: { rotation: 0 }, chairs: "top-bottom" });
+  });
+
+  it("the door follows its edge clockwise: east → south → west → north", () => {
+    const plan: FloorPlan = { ...PLAN, door: { x: 13, y: 4 } };
+    const sides = [0, 1, 2, 3].map((turns) => {
+      const turned = rotatePlanView(plan, [], turns).plan;
+      return doorSide(turned.door!, turned.cols, turned.rows);
+    });
+    expect(sides).toEqual(["east", "south", "west", "north"]);
+  });
+
+  it("paints back to front with vertical tables at every angle", () => {
+    for (let turns = 0; turns < 4; turns++) {
+      const turned = rotatePlanView(layout.plan, layout.tables, turns);
+      const rects = [turned.plan.kitchen, turned.plan.pickup!, ...turned.tables.map((t) => t.rect)];
+      const order = paintOrder(rects, (r) => r);
+      // Nothing painted later is behind something painted earlier.
+      for (let i = 0; i < order.length; i++) for (let j = i + 1; j < order.length; j++) expect(paintsBefore(order[j]!, order[i]!)).toBe(false);
+    }
+    // A table behind the front cell of a vertical one (along x) goes first; one beside its back cell, after it.
+    const vertical = { x: 5, y: 2, w: 1, h: 2 };
+    const left = { x: 4, y: 3, w: 1, h: 1 };
+    const right = { x: 6, y: 2, w: 1, h: 1 };
+    expect(paintOrder([right, vertical, left], (r) => r)).toEqual([left, vertical, right]);
+  });
+
+  it("rotateLayout keeps the zones in use and only turns the plan and the tables", () => {
+    expect(rotateLayout(layout, 0)).toBe(layout);
+    expect(rotateLayout(layout, 4)).toBe(layout);
+    const turned = rotateLayout(layout, 1);
+    expect(turned).toMatchObject({ hasPlan: true, dining: true, pickup: true, delivery: true });
+    expect([turned.plan.cols, turned.plan.rows]).toEqual([9, 14]);
+    expect(turned.tables.map((t) => t.id)).toEqual(layout.tables.map((t) => t.id));
+  });
+
+  it("turns left and right through four angles and remembers them per restaurant", () => {
+    expect(turnCamera(0, 1)).toBe(1);
+    expect(turnCamera(3, 1)).toBe(0);
+    expect(turnCamera(0, -1)).toBe(3);
+    expect([0, 1, 2, 3].map((t) => cameraAngle(normalizeTurns(t)))).toEqual([0, 90, 180, 270]);
+    expect(normalizeTurns(-5)).toBe(3);
+
+    const data = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => data.get(key) ?? null,
+      setItem: (key: string, value: string) => void data.set(key, value),
+      removeItem: (key: string) => void data.delete(key),
+    };
+    expect(loadCameraTurns(storage, "r1")).toBe(0);
+    saveCameraTurns(storage, "r1", 3);
+    expect(data.get("mm:live-camera:r1")).toBe("3");
+    expect(loadCameraTurns(storage, "r1")).toBe(3);
+    expect(loadCameraTurns(storage, "r2")).toBe(0);
+    for (const junk of ["1.5", "abc", ""]) {
+      data.set("mm:live-camera:r1", junk);
+      expect(loadCameraTurns(storage, "r1")).toBe(0);
+    }
+    const broken = {
+      getItem: (): string | null => {
+        throw new Error("denied");
+      },
+      setItem: () => {
+        throw new Error("full");
+      },
+      removeItem: () => undefined,
+    };
+    expect(loadCameraTurns(broken, "r1")).toBe(0);
+    expect(() => saveCameraTurns(broken, "r1", 2)).not.toThrow();
+    expect(loadCameraTurns(undefined, "r1")).toBe(0);
   });
 });

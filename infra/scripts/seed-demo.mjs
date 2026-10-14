@@ -282,7 +282,11 @@ async function seedRestaurant(spec, existing) {
         plan,
         tables: current.tables.map((table) => {
           const place = places.find((p) => p.label === table.label);
-          return { tableId: table.id, layout: place ? { x: place.x, y: place.y, shape: place.shape, seats: place.seats } : null };
+          if (!place) return { tableId: table.id, layout: null };
+          const layout = { x: place.x, y: place.y, shape: place.shape, seats: place.seats };
+          // Optional: 90 = vertical (a long table one cell under the other); missing = horizontal.
+          if (place.rotation !== undefined) layout.rotation = place.rotation;
+          return { tableId: table.id, layout };
         }),
       });
       console.log(`✓ ${spec.name}: plano del local con ${places.length} mesas`);

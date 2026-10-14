@@ -9,10 +9,12 @@ import {
   type OrderStatus,
   type OrderView,
   type TableLayout,
+  type TableRotation,
   type TableSessionView,
 } from "@app/types";
 import { tableFootprint } from "@app/utils";
-import { shortTableLabel } from "./floor-editor";
+import type { KeyValueStorage } from "./cart";
+import { shortTableLabel, tableChairs } from "./floor-editor";
 import { formatPrice } from "./money";
 import { minutesSince } from "./orders-board";
 
@@ -176,6 +178,11 @@ export interface PlacedTable {
   layout: TableLayout;
   /** Cells it takes (tableFootprint). */
   rect: GridRect;
+  /**
+   * Sides of the table with chairs as seen on screen (`tableChairs`; a camera turned a quarter swaps them). Tables
+   * of 4 seats on one cell are drawn with a chair on every side, so it only matters to 2 and 6–8 seats.
+   */
+  chairs: "top-bottom" | "left-right";
 }
 
 export interface LiveLayout {
@@ -224,7 +231,9 @@ export function liveLayout(
   const tables: PlacedTable[] =
     own && view
       ? view.tables.flatMap((table) =>
-          table.active && table.layout ? [{ id: table.id, label: table.label, layout: table.layout, rect: tableFootprint(table.layout) }] : [],
+          table.active && table.layout
+            ? [{ id: table.id, label: table.label, layout: table.layout, rect: tableFootprint(table.layout), chairs: tableChairs(table.layout).sides }]
+            : [],
         )
       : [];
   return {
@@ -235,6 +244,98 @@ export function liveLayout(
     delivery,
     tables,
   };
+}
+
+// ── Camera ──────────────────────────────────────────────────────────────────
+
+/** Quarter turns of the camera: 0 = the plan as the owner drew it, then 90°, 180° and 270° clockwise. */
+export type CameraTurns = 0 | 1 | 2 | 3;
+
+/** Any whole number of quarter turns (negative too) as 0–3. */
+export function normalizeTurns(quarterTurns: number): CameraTurns {
+  const turns = Number.isFinite(quarterTurns) ? Math.trunc(quarterTurns) : 0;
+  return (((turns % 4) + 4) % 4) as CameraTurns;
+}
+
+/** «Girar a la izquierda» (−1) / «Girar a la derecha» (+1). */
+export function turnCamera(turns: CameraTurns, delta: -1 | 1): CameraTurns {
+  return normalizeTurns(turns + delta);
+}
+
+/** Degrees of the camera (0, 90, 180, 270). */
+export function cameraAngle(turns: CameraTurns): number {
+  return turns * 90;
+}
+
+/**
+ * One quarter turn clockwise (seen from above) of a cell of a grid with `rows` rows: the first row becomes the
+ * last column. The turned grid has the columns and rows swapped.
+ */
+export function turnCell(cell: FloorCell, rows: number): FloorCell {
+  return { x: rows - 1 - cell.y, y: cell.x };
+}
+
+/** One quarter turn clockwise of a rectangle of cells (see {@link turnCell}): its width and depth swap. */
+export function turnRect(rect: GridRect, rows: number): GridRect {
+  return { x: rows - rect.y - rect.h, y: rect.x, w: rect.h, h: rect.w };
+}
+
+/**
+ * The plan as the camera sees it after `quarterTurns` clockwise quarter turns: the grid turned (cols and rows
+ * swapped on 90° and 270°), the kitchen, counter and door moved to their turned cells, and each table on its
+ * turned footprint. A long table turns from horizontal to vertical and back (its view `rotation` alternates),
+ * and the sides of its chairs swap. Only the camera turns: the saved plan never changes. Four turns give the
+ * same plan back. Then the scene draws it as always: the walls of the x = 0 and y = 0 edges stay at the back.
+ */
+export function rotatePlanView<T extends PlacedTable>(plan: FloorPlan, tables: readonly T[], quarterTurns: number): { plan: FloorPlan; tables: T[] } {
+  let current = { plan, tables: [...tables] };
+  for (let turn = 0; turn < normalizeTurns(quarterTurns); turn++) {
+    const { rows } = current.plan;
+    current = {
+      plan: {
+        cols: current.plan.rows,
+        rows: current.plan.cols,
+        kitchen: turnRect(current.plan.kitchen, rows),
+        pickup: current.plan.pickup ? turnRect(current.plan.pickup, rows) : null,
+        door: current.plan.door ? turnCell(current.plan.door, rows) : null,
+      },
+      tables: current.tables.map((table) => {
+        const rect = turnRect(table.rect, rows);
+        const rotation: TableRotation = table.layout.rotation === 90 ? 0 : 90;
+        const chairs: PlacedTable["chairs"] = table.chairs === "top-bottom" ? "left-right" : "top-bottom";
+        return { ...table, rect, layout: { ...table.layout, x: rect.x, y: rect.y, rotation }, chairs } as T;
+      }),
+    };
+  }
+  return current;
+}
+
+/** The live layout seen from the camera (only the plan and the tables move; the zones in use stay). */
+export function rotateLayout(layout: LiveLayout, quarterTurns: number): LiveLayout {
+  if (normalizeTurns(quarterTurns) === 0) return layout;
+  const turned = rotatePlanView(layout.plan, layout.tables, quarterTurns);
+  return { ...layout, plan: turned.plan, tables: turned.tables };
+}
+
+const CAMERA_STORAGE_KEY = "mm:live-camera";
+
+/** The camera angle this device last used for this restaurant (0 when unknown or unreadable). */
+export function loadCameraTurns(storage: KeyValueStorage | undefined, restaurantId: string): CameraTurns {
+  try {
+    const raw = storage?.getItem(`${CAMERA_STORAGE_KEY}:${restaurantId}`);
+    const value = raw ? Number(raw) : 0;
+    return Number.isInteger(value) ? normalizeTurns(value) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+export function saveCameraTurns(storage: KeyValueStorage | undefined, restaurantId: string, turns: CameraTurns): void {
+  try {
+    storage?.setItem(`${CAMERA_STORAGE_KEY}:${restaurantId}`, String(turns));
+  } catch {
+    // Private mode or full storage: the angle lasts until the page closes.
+  }
 }
 
 // ── Tables ──────────────────────────────────────────────────────────────────

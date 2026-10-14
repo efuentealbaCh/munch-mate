@@ -1,10 +1,10 @@
 "use client";
 
-import type { FloorCell, FloorRect, FloorTableView } from "@app/types";
+import type { FloorCell, FloorRect, FloorTableView, TableLayout } from "@app/types";
 import { isEdgeCell, tableFootprint } from "@app/utils";
 import { ChefHatIcon, DoorOpenIcon, ShoppingBagIcon } from "lucide-react";
 import type { CSSProperties, MouseEvent, PointerEvent, ReactNode, RefObject } from "react";
-import { cellKey, type FloorDraft, type FloorItem, itemKey, shortTableLabel } from "@/lib/floor-editor";
+import { cellKey, type FloorDraft, type FloorItem, itemKey, shortTableLabel, tableChairs } from "@/lib/floor-editor";
 import { cn } from "@/lib/utils";
 
 /** Smallest and largest cell on screen (px): phones scroll sideways instead of shrinking cells below a tap target. */
@@ -12,6 +12,24 @@ const CELL_MIN_PX = 36;
 const CELL_MAX_PX = 64;
 
 const SHAPE_NAMES = { round: "redonda", square: "cuadrada" } as const;
+
+/** Where each row of chairs goes inside the table button (its padding leaves room for them). */
+const CHAIR_ROWS = {
+  "top-bottom": ["inset-x-2 top-0 h-1.5 flex-row", "inset-x-2 bottom-0 h-1.5 flex-row"],
+  "left-right": ["inset-y-2 left-0 w-1.5 flex-col", "inset-y-2 right-0 w-1.5 flex-col"],
+} as const;
+
+/** The chairs of a table, small bars along its long sides (see `tableChairs`). */
+function Chairs({ layout }: { layout: Pick<TableLayout, "shape" | "seats" | "rotation"> }) {
+  const { sides, perSide } = tableChairs(layout);
+  return CHAIR_ROWS[sides].map((row) => (
+    <span key={row} aria-hidden className={cn("pointer-events-none absolute flex items-center justify-evenly", row)}>
+      {Array.from({ length: perSide }, (_, i) => (
+        <span key={i} className={cn("rounded-full bg-stone-400", sides === "top-bottom" ? "h-1 w-2" : "h-2 w-1")} />
+      ))}
+    </span>
+  ));
+}
 
 const area = (rect: FloorRect): CSSProperties => ({
   gridColumn: `${rect.x + 1} / span ${rect.w}`,
@@ -147,9 +165,16 @@ export function FloorGrid({
             const layout = layouts[table.id];
             if (!layout) return null;
             const rect = tableFootprint(layout);
-            const label = `${table.label}, ${SHAPE_NAMES[layout.shape]}, ${layout.seats} puestos${table.active ? "" : ", inactiva"}`;
+            // The orientation is named only where it shows (see `tableChairs`).
+            const turned = tableChairs(layout).sides === "left-right";
+            const label = `${table.label}, ${SHAPE_NAMES[layout.shape]}, ${layout.seats} puestos${turned ? ", vertical" : ""}${table.active ? "" : ", inactiva"}`;
             return (
-              <button key={table.id} {...itemProps({ kind: "table", id: table.id }, rect, label, "bg-transparent p-0.5")}>
+              <button
+                key={table.id}
+                {...itemProps({ kind: "table", id: table.id }, rect, label, "bg-transparent p-1.5")}
+                data-rotation={layout.rotation}
+              >
+                <Chairs layout={layout} />
                 <span
                   className={cn(
                     "flex size-full min-w-0 flex-col items-center justify-center border leading-none",

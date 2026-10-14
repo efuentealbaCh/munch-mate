@@ -101,7 +101,13 @@ export class TablesRepository {
             filter: { _id: oid(entry.tableId), restaurantId: oid(restaurantId) },
             update: {
               $set: {
-                layout: { x: entry.layout.x, y: entry.layout.y, shape: entry.layout.shape, seats: entry.layout.seats },
+                layout: {
+                  x: entry.layout.x,
+                  y: entry.layout.y,
+                  shape: entry.layout.shape,
+                  seats: entry.layout.seats,
+                  rotation: entry.layout.rotation,
+                },
               },
             },
           },
@@ -126,7 +132,14 @@ function toRecord(doc: Table & { _id: Types.ObjectId }): TableRecord {
     token: doc.token,
     active: doc.active,
     layout: doc.layout
-      ? { x: doc.layout.x, y: doc.layout.y, shape: doc.layout.shape, seats: doc.layout.seats }
+      ? {
+          x: doc.layout.x,
+          y: doc.layout.y,
+          shape: doc.layout.shape,
+          seats: doc.layout.seats,
+          // Layouts saved before the rotation existed lack the field (lean reads skip schema defaults).
+          rotation: doc.layout.rotation === 90 ? 90 : 0,
+        }
       : null,
   };
 }

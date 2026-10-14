@@ -77,8 +77,9 @@ export class FloorPlanService {
       throw new BadRequestException(apiError("INVALID_FLOOR_PLAN", FLOOR_PLAN_MESSAGES[problem], { problem }));
     }
 
-    const placed = entries.flatMap((entry) =>
-      entry.layout ? [{ tableId: entry.tableId, layout: entry.layout as TableLayout }] : [],
+    // A layout sent without rotation is horizontal: stored as 0 so the views always carry it.
+    const placed = entries.flatMap((entry): { tableId: string; layout: TableLayout }[] =>
+      entry.layout ? [{ tableId: entry.tableId, layout: { ...entry.layout, rotation: entry.layout.rotation ?? 0 } }] : [],
     );
     await this.connection.transaction(async (session) => {
       if (!(await this.restaurants.setFloorPlan(restaurantId, input.plan, session))) throw notFound();

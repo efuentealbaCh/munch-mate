@@ -21,10 +21,13 @@ import {
   resizeArea,
   resizeGrid,
   resizeRect,
+  ROTATE_REFUSAL_MESSAGES,
+  rotateTable,
   sameDraft,
   saveInput,
   serviceWarnings,
   shortTableLabel,
+  tableChairs,
   unplacedTables,
   withTables,
 } from "./floor-editor";
@@ -37,7 +40,7 @@ const everything = { pickupEnabled: true, deliveryEnabled: true };
 function draft(): FloorDraft {
   return {
     plan: { cols: 8, rows: 6, kitchen: { x: 6, y: 0, w: 2, h: 2 }, pickup: null, door: null },
-    layouts: { a: { x: 0, y: 5, shape: "square", seats: 4 }, b: null },
+    layouts: { a: { x: 0, y: 5, shape: "square", seats: 4, rotation: 0 }, b: null },
   };
 }
 
@@ -56,9 +59,9 @@ describe("defaultFloorPlan", () => {
     const list = [table("1"), table("2", false), table("3")];
     const result = defaultFloorPlan(everything, list);
     expect(result.layouts).toEqual({
-      "1": { x: 1, y: 1, shape: "square", seats: 4 },
+      "1": { x: 1, y: 1, shape: "square", seats: 4, rotation: 0 },
       "2": null,
-      "3": { x: 3, y: 1, shape: "square", seats: 4 },
+      "3": { x: 3, y: 1, shape: "square", seats: 4, rotation: 0 },
     });
     expect(problemOf(result, list)).toBeNull();
   });
@@ -127,32 +130,96 @@ describe("door", () => {
 
 describe("tables", () => {
   it("places and moves a table on a free cell", () => {
-    const placed = placeTable(draft(), "b", { x: 2, y: 2, shape: "round", seats: 2 });
+    const placed = placeTable(draft(), "b", { x: 2, y: 2, shape: "round", seats: 2, rotation: 0 });
     expect(isRefusal(placed)).toBe(false);
-    const moved = placeTable(placed as FloorDraft, "a", { x: 4, y: 4, shape: "square", seats: 4 });
-    expect(isRefusal(moved) ? null : moved.layouts.a).toEqual({ x: 4, y: 4, shape: "square", seats: 4 });
+    const moved = placeTable(placed as FloorDraft, "a", { x: 4, y: 4, shape: "square", seats: 4, rotation: 0 });
+    expect(isRefusal(moved) ? null : moved.layouts.a).toEqual({ x: 4, y: 4, shape: "square", seats: 4, rotation: 0 });
   });
 
   it("refuses taken cells and cells outside the grid, counting long tables as two cells", () => {
-    expect(placeTable(draft(), "b", { x: 0, y: 5, shape: "square", seats: 4 })).toBe("taken");
-    expect(placeTable(draft(), "b", { x: 5, y: 0, shape: "square", seats: 8 })).toBe("taken");
-    expect(placeTable(draft(), "b", { x: 7, y: 3, shape: "square", seats: 6 })).toBe("out_of_bounds");
-    expect(placeTable(draft(), "b", { x: 6, y: 3, shape: "square", seats: 6 })).not.toBe("out_of_bounds");
+    expect(placeTable(draft(), "b", { x: 0, y: 5, shape: "square", seats: 4, rotation: 0 })).toBe("taken");
+    expect(placeTable(draft(), "b", { x: 5, y: 0, shape: "square", seats: 8, rotation: 0 })).toBe("taken");
+    expect(placeTable(draft(), "b", { x: 7, y: 3, shape: "square", seats: 6, rotation: 0 })).toBe("out_of_bounds");
+    expect(placeTable(draft(), "b", { x: 6, y: 3, shape: "square", seats: 6, rotation: 0 })).not.toBe("out_of_bounds");
     // A table may move onto cells it already takes.
-    expect(isRefusal(placeTable(draft(), "a", { x: 0, y: 5, shape: "round", seats: 6 }))).toBe(false);
+    expect(isRefusal(placeTable(draft(), "a", { x: 0, y: 5, shape: "round", seats: 6, rotation: 0 }))).toBe(false);
   });
 
   it("finds the first free cell for a table", () => {
-    expect(firstFreeCell(draft(), "b", { shape: "square", seats: 4 })).toEqual({ x: 0, y: 0 });
-    expect(firstFreeCell(draft(), "b", { shape: "square", seats: 8 })).toEqual({ x: 0, y: 0 });
+    expect(firstFreeCell(draft(), "b", { shape: "square", seats: 4, rotation: 0 })).toEqual({ x: 0, y: 0 });
+    expect(firstFreeCell(draft(), "b", { shape: "square", seats: 8, rotation: 0 })).toEqual({ x: 0, y: 0 });
     const full: FloorDraft = { plan: { ...draft().plan, cols: 6, rows: 4, kitchen: { x: 0, y: 0, w: 6, h: 4 } }, layouts: {} };
-    expect(firstFreeCell(full, "b", { shape: "round", seats: 2 })).toBeNull();
+    expect(firstFreeCell(full, "b", { shape: "round", seats: 2, rotation: 0 })).toBeNull();
   });
 
   it("takes a table off the plan and lists the active unplaced ones", () => {
     const removed = removeTable(draft(), "a");
     expect(removed.layouts.a).toBeNull();
     expect(unplacedTables(removed, [table("a"), table("b", false)]).map((t) => t.id)).toEqual(["a"]);
+  });
+});
+
+describe("rotation", () => {
+  it("turns a long table under itself and back", () => {
+    const long: FloorDraft = { ...draft(), layouts: { a: { x: 0, y: 3, shape: "square", seats: 6, rotation: 0 } } };
+    const turned = rotateTable(long, "a");
+    expect(isRefusal(turned) ? null : turned.layouts.a).toEqual({ x: 0, y: 3, shape: "square", seats: 6, rotation: 90 });
+    expect(isRefusal(turned) ? null : itemByKey(turned, "table:a")?.rect).toEqual({ x: 0, y: 3, w: 1, h: 2 });
+    const back = isRefusal(turned) ? turned : rotateTable(turned, "a");
+    expect(isRefusal(back) ? null : back.layouts.a?.rotation).toBe(0);
+  });
+
+  it("refuses a turn that falls outside the plan or onto something", () => {
+    // Last row: the second cell would be row 6 of a 6-row plan.
+    const bottom: FloorDraft = { ...draft(), layouts: { a: { x: 2, y: 5, shape: "round", seats: 8, rotation: 0 } } };
+    expect(rotateTable(bottom, "a")).toBe("out_of_bounds");
+    // Another table right below the first cell.
+    const blocked: FloorDraft = {
+      ...draft(),
+      layouts: { a: { x: 2, y: 2, shape: "square", seats: 6, rotation: 0 }, b: { x: 2, y: 3, shape: "round", seats: 2, rotation: 0 } },
+    };
+    expect(rotateTable(blocked, "a")).toBe("taken");
+    expect(ROTATE_REFUSAL_MESSAGES.taken).toBe("No cabe girada: hay algo al lado");
+    expect(ROTATE_REFUSAL_MESSAGES.out_of_bounds).toMatch(/fuera del plano/);
+  });
+
+  it("turns small tables in their own cell, and leaves unplaced tables alone", () => {
+    const turned = rotateTable(draft(), "a");
+    expect(isRefusal(turned) ? null : turned.layouts.a).toEqual({ x: 0, y: 5, shape: "square", seats: 4, rotation: 90 });
+    expect(rotateTable(draft(), "b")).toEqual(draft());
+    expect(rotateTable(draft(), "missing")).toEqual(draft());
+  });
+
+  it("keeps the orientation when the table changes seats, moves or is dragged", () => {
+    const vertical: FloorDraft = { ...draft(), layouts: { a: { x: 0, y: 3, shape: "square", seats: 4, rotation: 90 } } };
+    // Growing to 6 seats takes the cell below (0, 4), not the one beside it.
+    const grown = placeTable(vertical, "a", { x: 0, y: 3, shape: "square", seats: 6, rotation: 90 });
+    expect(isRefusal(grown) ? null : itemByKey(grown, "table:a")?.rect).toEqual({ x: 0, y: 3, w: 1, h: 2 });
+    expect(placeTable(vertical, "a", { x: 0, y: 5, shape: "square", seats: 6, rotation: 90 })).toBe("out_of_bounds");
+    // A dragged vertical table is kept inside the grid by its height.
+    const long: FloorDraft = { ...draft(), layouts: { a: { x: 0, y: 3, shape: "round", seats: 8, rotation: 90 } } };
+    const moved = dropAt(long, { kind: "table", id: "a" }, { x: 9, y: 9 });
+    expect(moved.rect).toEqual({ x: 7, y: 4, w: 1, h: 2 });
+    expect(isRefusal(moved.result) ? null : moved.result.layouts.a?.rotation).toBe(90);
+    // firstFreeCell honors the orientation it is given (the kitchen fills rows 0–1).
+    const narrow: FloorDraft = { plan: { ...draft().plan, cols: 6, rows: 4, kitchen: { x: 0, y: 0, w: 6, h: 2 } }, layouts: {} };
+    expect(firstFreeCell(narrow, "b", { shape: "square", seats: 6, rotation: 90 })).toEqual({ x: 0, y: 2 });
+  });
+
+  it("draws the chairs along the long sides", () => {
+    expect(tableChairs({ shape: "square", seats: 4, rotation: 0 })).toEqual({ sides: "top-bottom", perSide: 2 });
+    expect(tableChairs({ shape: "square", seats: 4, rotation: 90 })).toEqual({ sides: "left-right", perSide: 2 });
+    expect(tableChairs({ shape: "round", seats: 2, rotation: 90 })).toEqual({ sides: "top-bottom", perSide: 1 });
+    expect(tableChairs({ shape: "round", seats: 8, rotation: 90 })).toEqual({ sides: "left-right", perSide: 4 });
+    expect(tableChairs({ shape: "square", seats: 6, rotation: 0 })).toEqual({ sides: "top-bottom", perSide: 3 });
+  });
+
+  it("saves the rotation and validates the vertical footprint like the api", () => {
+    const vertical: FloorDraft = { ...draft(), layouts: { a: { x: 7, y: 2, shape: "square", seats: 6, rotation: 90 }, b: null } };
+    expect(saveInput(vertical, [table("a")]).tables).toEqual([{ tableId: "a", layout: { x: 7, y: 2, shape: "square", seats: 6, rotation: 90 } }]);
+    expect(problemOf(vertical, [table("a"), table("b")])).toBeNull();
+    const intoKitchen: FloorDraft = { ...draft(), layouts: { a: { x: 6, y: 1, shape: "square", seats: 6, rotation: 90 } } };
+    expect(problemOf(intoKitchen, [table("a")])).toBe("overlap");
   });
 });
 
@@ -179,7 +246,7 @@ describe("saving", () => {
     expect(saveInput(draft(), [table("a"), table("b"), table("c")])).toEqual({
       plan: draft().plan,
       tables: [
-        { tableId: "a", layout: { x: 0, y: 5, shape: "square", seats: 4 } },
+        { tableId: "a", layout: { x: 0, y: 5, shape: "square", seats: 4, rotation: 0 } },
         { tableId: "b", layout: null },
         { tableId: "c", layout: null },
       ],
@@ -235,12 +302,12 @@ describe("dropAt", () => {
   it("places the door only on a free edge, and tables only on free cells", () => {
     expect(dropAt(draft(), { kind: "door" }, { x: 3, y: 2 }).result).toBe("not_on_edge");
     const added = dropAt(draft(), { kind: "new-table", id: "b" }, { x: 3, y: 3 });
-    expect(isRefusal(added.result) ? null : added.result.layouts.b).toEqual({ x: 3, y: 3, shape: "square", seats: 4 });
+    expect(isRefusal(added.result) ? null : added.result.layouts.b).toEqual({ x: 3, y: 3, shape: "square", seats: 4, rotation: 0 });
     expect(dropAt(draft(), { kind: "new-table", id: "b" }, { x: 0, y: 5 }).result).toBe("taken");
   });
 
   it("keeps a dragged table inside the grid", () => {
-    const long: FloorDraft = { ...draft(), layouts: { a: { x: 0, y: 5, shape: "round", seats: 8 } } };
+    const long: FloorDraft = { ...draft(), layouts: { a: { x: 0, y: 5, shape: "round", seats: 8, rotation: 0 } } };
     const moved = dropAt(long, { kind: "table", id: "a" }, { x: 9, y: 9 });
     expect(moved.rect).toEqual({ x: 6, y: 5, w: 2, h: 1 });
     expect(isRefusal(moved.result)).toBe(false);

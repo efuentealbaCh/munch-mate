@@ -23,6 +23,14 @@ describe("tableFootprint", () => {
     expect(tableFootprint({ x: 3, y: 2, seats: 6 })).toEqual({ x: 3, y: 2, w: 2, h: 1 });
     expect(tableFootprint({ x: 3, y: 2, seats: 8 })).toEqual({ x: 3, y: 2, w: 2, h: 1 });
   });
+
+  it("turns long tables one cell under the other when vertical, and leaves small tables in one cell", () => {
+    expect(tableFootprint({ x: 3, y: 2, seats: 6, rotation: 0 })).toEqual({ x: 3, y: 2, w: 2, h: 1 });
+    expect(tableFootprint({ x: 3, y: 2, seats: 6, rotation: 90 })).toEqual({ x: 3, y: 2, w: 1, h: 2 });
+    expect(tableFootprint({ x: 3, y: 2, seats: 8, rotation: 90 })).toEqual({ x: 3, y: 2, w: 1, h: 2 });
+    expect(tableFootprint({ x: 3, y: 2, seats: 4, rotation: 90 })).toEqual({ x: 3, y: 2, w: 1, h: 1 });
+    expect(tableFootprint({ x: 3, y: 2, seats: 2, rotation: 90 })).toEqual({ x: 3, y: 2, w: 1, h: 1 });
+  });
 });
 
 describe("geometry helpers", () => {
@@ -125,9 +133,31 @@ describe("floorPlanProblem", () => {
     expect(floorPlanProblem(plan({ door: null }), [table("t1", { x: 13, y: 8 })])).toBeNull();
   });
 
-  it("rejects unknown shapes and seat counts", () => {
+  it("places vertical long tables by their two cells one under the other", () => {
+    // Fits where a horizontal one would not (x 13 is the last column) …
+    expect(floorPlanProblem(plan(), [table("t1", { x: 13, y: 4, seats: 6, rotation: 90 })])).toBeNull();
+    // … and reaches the row below: the bottom edge counts.
+    expect(floorPlanProblem(plan(), [table("t1", { x: 5, y: 8, seats: 8, rotation: 90 })])).toBe("out_of_bounds");
+    expect(floorPlanProblem(plan(), [table("t1", { x: 5, y: 7, seats: 8, rotation: 90 })])).toBeNull();
+    // Its second cell (5, 5) is taken by the other table; side by side they fit.
+    expect(
+      floorPlanProblem(plan(), [table("t1", { x: 5, y: 4, seats: 6, rotation: 90 }), table("t2", { x: 5, y: 5 })]),
+    ).toBe("overlap");
+    expect(
+      floorPlanProblem(plan(), [table("t1", { x: 5, y: 4, seats: 6, rotation: 90 }), table("t2", { x: 6, y: 5 })]),
+    ).toBeNull();
+    // Its second cell would block the door (13, 8).
+    expect(floorPlanProblem(plan(), [table("t1", { x: 13, y: 7, seats: 6, rotation: 90 })])).toBe("overlap");
+    // A small table turned keeps its single cell.
+    expect(floorPlanProblem(plan(), [table("t1", { x: 5, y: 8, shape: "square", rotation: 90 })])).toBeNull();
+  });
+
+  it("rejects unknown shapes, seat counts and rotations", () => {
     expect(floorPlanProblem(plan(), [table("t1", { shape: "oval" as TableLayout["shape"] })])).toBe("invalid_table");
     expect(floorPlanProblem(plan(), [table("t1", { seats: 3 as TableLayout["seats"] })])).toBe("invalid_table");
+    expect(floorPlanProblem(plan(), [table("t1", { rotation: 45 as TableLayout["rotation"] })])).toBe("invalid_table");
+    expect(floorPlanProblem(plan(), [table("t1", { rotation: 180 as TableLayout["rotation"] })])).toBe("invalid_table");
+    expect(floorPlanProblem(plan(), [table("t1", { rotation: 0 })])).toBeNull();
   });
 
   it("rejects the same table twice, even when one copy is off the plan", () => {

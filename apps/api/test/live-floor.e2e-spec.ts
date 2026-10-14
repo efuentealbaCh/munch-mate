@@ -68,9 +68,10 @@ describe("Phase 9: live floor (e2e)", () => {
       const kitchen = await f.staff(s.owner.agent, s.restaurant.id, ["kitchen"]);
       const read = (await kitchen.agent.get(`${s.base}/floor-plan`).expect(200)).body as FloorPlanView;
       expect(read).toEqual(saved);
+      // Sent without rotation (older clients): they come back horizontal.
       expect(read.tables).toEqual([
-        { id: s.table1.id, label: "Mesa 1", active: true, layout: round },
-        { id: s.table2.id, label: "Mesa 2", active: true, layout: long },
+        { id: s.table1.id, label: "Mesa 1", active: true, layout: { ...round, rotation: 0 } },
+        { id: s.table2.id, label: "Mesa 2", active: true, layout: { ...long, rotation: 0 } },
       ]);
 
       // Tables left out of the next save come off the plan.
@@ -81,13 +82,41 @@ describe("Phase 9: live floor (e2e)", () => {
           .expect(200)
       ).body as FloorPlanView;
       expect(moved.plan).toEqual({ ...PLAN, pickup: null, door: null });
-      expect(moved.tables.map((t) => t.layout)).toEqual([null, { ...long, y: 6 }]);
+      expect(moved.tables.map((t) => t.layout)).toEqual([null, { ...long, y: 6, rotation: 0 }]);
 
       // A null plan deletes the plan and every layout.
       const cleared = (await s.owner.agent.put(`${s.base}/floor-plan`).send({ plan: null, tables: [] }).expect(200))
         .body as FloorPlanView;
       expect(cleared.plan).toBeNull();
       expect(cleared.tables.every((t) => t.layout === null)).toBe(true);
+    });
+
+    it("saves vertical tables by their footprint", async () => {
+      const s = await setup();
+      const put = (body: unknown) => s.owner.agent.put(`${s.base}/floor-plan`).send(body as object);
+      // 6 seats turned: (13, 4) and (13, 5), on the last column where a horizontal one would not fit.
+      const vertical = { x: 13, y: 4, shape: "square", seats: 6, rotation: 90 } as const;
+
+      const saved = (await put({ plan: PLAN, tables: [{ tableId: s.table1.id, layout: vertical }] }).expect(200))
+        .body as FloorPlanView;
+      expect(saved.tables.map((t) => t.layout)).toEqual([vertical, null]);
+      const read = (await s.owner.agent.get(`${s.base}/floor-plan`).expect(200)).body as FloorPlanView;
+      expect(read.tables[0]?.layout).toEqual(vertical);
+
+      // Its second cell (13, 5) is where the other table is.
+      const crash = await put({
+        plan: PLAN,
+        tables: [
+          { tableId: s.table1.id, layout: vertical },
+          { tableId: s.table2.id, layout: { x: 13, y: 5, shape: "round", seats: 2 } },
+        ],
+      }).expect(400);
+      expect(crash.body).toMatchObject({ code: "INVALID_FLOOR_PLAN", meta: { problem: "overlap" } });
+      // Only 0 and 90 (caught by the DTO).
+      await put({ plan: PLAN, tables: [{ tableId: s.table1.id, layout: { ...vertical, rotation: 45 } }] }).expect(400);
+      expect(((await s.owner.agent.get(`${s.base}/floor-plan`).expect(200)).body as FloorPlanView).tables[0]?.layout).toEqual(
+        vertical,
+      );
     });
 
     it("only the owner edits it; riders cannot read it; other tenants get 404", async () => {

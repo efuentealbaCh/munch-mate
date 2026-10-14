@@ -58,15 +58,27 @@ export const TABLE_SEATS = [2, 4, 6, 8] as const;
 export type TableSeats = (typeof TABLE_SEATS)[number];
 
 /**
+ * Orientation of a table on the plan, in degrees: 0 = horizontal, 90 = vertical (turned a quarter). It changes
+ * the footprint of tables of 6–8 seats (2 × 1 → 1 × 2); on tables of 2–4 seats it only turns the chairs.
+ */
+export const TABLE_ROTATIONS = [0, 90] as const;
+export type TableRotation = (typeof TABLE_ROTATIONS)[number];
+
+/**
  * Where a table sits on the plan. `x, y` is its top-left cell; tables of 2–4 seats take 1 cell, of 6–8
- * seats 2 × 1 (horizontal): see `tableFootprint` in @app/utils.
+ * seats 2 × 1 (horizontal, `rotation` 0) or 1 × 2 (vertical, `rotation` 90): see `tableFootprint` in @app/utils.
  */
 export interface TableLayout {
   x: number;
   y: number;
   shape: TableShape;
   seats: TableSeats;
+  /** Always present in views (documents saved before it existed read as 0). */
+  rotation: TableRotation;
 }
+
+/** A table layout as clients send it: `rotation` may be omitted (= 0), so older clients keep working. */
+export type TableLayoutInput = Omit<TableLayout, "rotation"> & { rotation?: TableRotation };
 
 /** A table as the floor plan editor and the live view see it. */
 export interface FloorTableView {
@@ -92,7 +104,7 @@ export interface FloorPlanView {
  */
 export interface SaveFloorPlanInput {
   plan: FloorPlan | null;
-  tables: { tableId: string; layout: TableLayout | null }[];
+  tables: { tableId: string; layout: TableLayoutInput | null }[];
 }
 
 /** `GET /api/restaurants/:id/live` (owner, cashier): the indicators on top of the live view. */

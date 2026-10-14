@@ -15,7 +15,7 @@ const PLAN: FloorPlan = {
   pickup: null,
   door: { x: 13, y: 8 },
 };
-const ROUND4: TableLayout = { x: 5, y: 4, shape: "round", seats: 4 };
+const ROUND4: TableLayout = { x: 5, y: 4, shape: "round", seats: 4, rotation: 0 };
 
 const tableRecord = (id: string, overrides: Partial<TableRecord> = {}): TableRecord => ({
   id,
@@ -102,6 +102,52 @@ describe("FloorPlanService", () => {
     });
     expect(realtime.toRestaurant).toHaveBeenCalledWith("r1");
     expect(emit).toHaveBeenCalledWith("floor-plan.updated", view);
+  });
+
+  it("stores a layout sent without rotation as horizontal and keeps vertical tables", async () => {
+    const { service, tables } = setup();
+    const long: TableLayout = { x: 7, y: 2, shape: "square", seats: 8, rotation: 90 };
+
+    const view = await service.save(tenant, {
+      plan: PLAN,
+      tables: [
+        { tableId: "t1", layout: { x: 5, y: 4, shape: "round", seats: 4 } },
+        { tableId: "t2", layout: long },
+      ],
+    });
+
+    expect(tables.replaceLayouts).toHaveBeenCalledWith(
+      "r1",
+      [
+        { tableId: "t1", layout: ROUND4 },
+        { tableId: "t2", layout: long },
+      ],
+      { id: "tx" },
+    );
+    expect(view.tables.map((t) => t.layout)).toEqual([ROUND4, long]);
+  });
+
+  it("validates the footprint of vertical tables", async () => {
+    const { service, connection } = setup();
+
+    // The vertical 6-seat table at (5, 3) takes (5, 4), where the round table is.
+    await expect(
+      service.save(tenant, {
+        plan: PLAN,
+        tables: [
+          { tableId: "t1", layout: ROUND4 },
+          { tableId: "t2", layout: { x: 5, y: 3, shape: "square", seats: 6, rotation: 90 } },
+        ],
+      }),
+    ).rejects.toMatchObject({ status: 400, response: { code: "INVALID_FLOOR_PLAN", meta: { problem: "overlap" } } });
+    // The last row: its second cell would fall outside the plan.
+    await expect(
+      service.save(tenant, {
+        plan: PLAN,
+        tables: [{ tableId: "t1", layout: { x: 6, y: 8, shape: "round", seats: 8, rotation: 90 } }],
+      }),
+    ).rejects.toMatchObject({ response: { code: "INVALID_FLOOR_PLAN", meta: { problem: "out_of_bounds" } } });
+    expect(connection.transaction).not.toHaveBeenCalled();
   });
 
   it("rejects tables of another restaurant or that do not exist, writing nothing", async () => {

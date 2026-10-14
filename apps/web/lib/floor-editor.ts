@@ -8,6 +8,7 @@ import {
   type RestaurantView,
   type SaveFloorPlanInput,
   type TableLayout,
+  type TableRotation,
 } from "@app/types";
 import { isEdgeCell, rectInGrid, rectsOverlap, tableFootprint } from "@app/utils";
 
@@ -30,8 +31,8 @@ export type FloorItem = { kind: "kitchen" } | { kind: "pickup" } | { kind: "door
 /** Size of a new kitchen and pickup counter (cells). */
 export const DEFAULT_KITCHEN = { w: 4, h: 3 } as const;
 export const DEFAULT_PICKUP = { w: 3, h: 2 } as const;
-/** A table placed by the editor starts square with 4 seats. */
-export const DEFAULT_TABLE: Pick<TableLayout, "shape" | "seats"> = { shape: "square", seats: 4 };
+/** A table placed by the editor starts square with 4 seats, horizontal. */
+export const DEFAULT_TABLE: Pick<TableLayout, "shape" | "seats" | "rotation"> = { shape: "square", seats: 4, rotation: 0 };
 
 /** Stable key of an item ("kitchen", "pickup", "door", "table:<id>"), for sets and React keys. */
 export function itemKey(item: FloorItem): string {
@@ -75,7 +76,7 @@ export function draftItems(draft: FloorDraft): { item: FloorItem; rect: FloorRec
 /**
  * The plan a restaurant starts with: a 14 × 9 grid, a 4 × 3 kitchen in the top right corner, a 3 × 2 pickup
  * counter in the bottom right corner (only with pickup enabled), the delivery door in the middle of the bottom
- * edge (only with delivery enabled) and the active tables, square with 4 seats, in rows with one free cell
+ * edge (only with delivery enabled) and the active tables, square with 4 seats and horizontal, in rows with one free cell
  * between them and around the areas. Tables that do not fit stay unplaced; the result is always valid for
  * `floorPlanProblem`.
  * @param tables Every table of the restaurant; inactive ones are left unplaced.
@@ -222,6 +223,43 @@ export function placeTable(draft: FloorDraft, tableId: string, layout: TableLayo
   return { ...draft, layouts: { ...draft.layouts, [tableId]: layout } };
 }
 
+/** The other orientation: horizontal (0) ↔ vertical (90). */
+export function nextRotation(rotation: TableRotation): TableRotation {
+  return rotation === 90 ? 0 : 90;
+}
+
+/** Messages when a table cannot be turned where it stands (its long side would not fit). */
+export const ROTATE_REFUSAL_MESSAGES: Record<Exclude<PlaceRefusal, "not_on_edge">, string> = {
+  out_of_bounds: "No cabe girada: queda fuera del plano",
+  taken: "No cabe girada: hay algo al lado",
+};
+
+/**
+ * Turns a placed table a quarter (horizontal ↔ vertical) on its top-left cell. Tables of 6–8 seats change
+ * their footprint (2 × 1 ↔ 1 × 2), so the turn is refused when the new cells fall outside or are taken; tables
+ * of 2–4 seats keep their cell and only turn the chairs.
+ * @returns The new draft (unchanged for a table that is not on the plan), or why it cannot turn.
+ */
+export function rotateTable(draft: FloorDraft, tableId: string): FloorDraft | PlaceRefusal {
+  const layout = draft.layouts[tableId];
+  if (!layout) return draft;
+  return placeTable(draft, tableId, { ...layout, rotation: nextRotation(layout.rotation) });
+}
+
+/**
+ * How the editor draws the chairs of a table: along its long sides, half on each. Horizontal tables have them
+ * above and below, vertical ones (rotation 90) on the left and right. A round table of 2–4 seats looks the same
+ * either way, so its rotation is ignored (it is still saved).
+ * @returns The sides holding chairs and how many go on each.
+ */
+export function tableChairs(layout: Pick<TableLayout, "shape" | "seats" | "rotation">): {
+  sides: "top-bottom" | "left-right";
+  perSide: number;
+} {
+  const turned = layout.rotation === 90 && (layout.shape === "square" || layout.seats >= 6);
+  return { sides: turned ? "left-right" : "top-bottom", perSide: Math.ceil(layout.seats / 2) };
+}
+
 /** Takes a table off the plan (it goes back to «Sin ubicar»). */
 export function removeTable(draft: FloorDraft, tableId: string): FloorDraft {
   return { ...draft, layouts: { ...draft.layouts, [tableId]: null } };
@@ -313,7 +351,11 @@ export function unplacedTables<T extends Pick<FloorTableView, "id" | "active">>(
  * (keyboard users and quick placing).
  * @returns null when the plan is full.
  */
-export function firstFreeCell(draft: FloorDraft, tableId: string, layout: Pick<TableLayout, "shape" | "seats">): FloorCell | null {
+export function firstFreeCell(
+  draft: FloorDraft,
+  tableId: string,
+  layout: Pick<TableLayout, "shape" | "seats" | "rotation">,
+): FloorCell | null {
   for (let y = 0; y < draft.plan.rows; y++) {
     for (let x = 0; x < draft.plan.cols; x++) {
       if (!isRefusal(placeTable(draft, tableId, { x, y, ...layout }))) return { x, y };
@@ -360,9 +402,10 @@ export function dropAt(draft: FloorDraft, target: FloorTarget, cell: FloorCell):
       return { result: placeDoor(draft, cell), rect: cellRect(cell) };
     case "table":
     case "new-table": {
+      // A dragged table keeps its orientation, so a vertical one stays vertical (and inside the grid).
       const base = draft.layouts[target.id] ?? { x: 0, y: 0, ...DEFAULT_TABLE };
-      const width = tableFootprint(base).w;
-      const layout: TableLayout = { ...base, x: clamp(cell.x, 0, cols - width), y: clamp(cell.y, 0, rows - 1) };
+      const { w, h } = tableFootprint(base);
+      const layout: TableLayout = { ...base, x: clamp(cell.x, 0, cols - w), y: clamp(cell.y, 0, rows - h) };
       return { result: placeTable(draft, target.id, layout), rect: tableFootprint(layout) };
     }
   }

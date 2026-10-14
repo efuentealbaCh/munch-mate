@@ -146,7 +146,8 @@ interface Chair {
 /** Half the length of a long (6–8 seats) table top, local units. */
 const LONG_HALF = 3.4;
 
-function chairsFor(seats: number): { back: Chair[]; front: Chair[] } {
+/** Where the chairs of a table go, before turning it (back = drawn before the table, front = after). */
+function chairsFor(seats: number, sides: "top-bottom" | "left-right"): { back: Chair[]; front: Chair[] } {
   if (seats >= 6) {
     const xs = seats === 8 ? [-2.4, 0, 2.4] : [-1.4, 1.4];
     return {
@@ -154,14 +155,17 @@ function chairsFor(seats: number): { back: Chair[]; front: Chair[] } {
       front: [...xs.map((x) => ({ x, y: 2.1, dir: "S" as const })), { x: LONG_HALF + 0.8, y: 0, dir: "E" }],
     };
   }
-  const back: Chair[] = [{ x: 0, y: -2.1, dir: "N" }];
-  const front: Chair[] = [{ x: 0, y: 2.1, dir: "S" }];
-  if (seats >= 4) {
-    back.push({ x: -2.1, y: 0, dir: "W" });
-    front.push({ x: 2.1, y: 0, dir: "E" });
-  }
-  return { back, front };
+  // 4 seats: one chair on every side, whatever the rotation; 2 seats: on the sides the table faces.
+  const topBottom = seats >= 4 || sides === "top-bottom";
+  const leftRight = seats >= 4 || sides === "left-right";
+  return {
+    back: [...(topBottom ? [{ x: 0, y: -2.1, dir: "N" as const }] : []), ...(leftRight ? [{ x: -2.1, y: 0, dir: "W" as const }] : [])],
+    front: [...(topBottom ? [{ x: 0, y: 2.1, dir: "S" as const }] : []), ...(leftRight ? [{ x: 2.1, y: 0, dir: "E" as const }] : [])],
+  };
 }
+
+/** The same chair on a table turned to the vertical (x and y swapped: its back faces the other way). */
+const SWAP_DIR = { N: "W", S: "E", W: "N", E: "S" } as const;
 
 function ChairArt({ chair }: { chair: Chair }) {
   const { x, y, dir } = chair;
@@ -183,28 +187,57 @@ export const TABLE_TOP_Z = 1.5;
 /**
  * A table with its chairs (local origin = its center): round or square, 2/4 seats on one cell, 6/8 seats as a
  * long table. The top takes the state color; what is on it hints the state (water while waiting, plates
- * when served).
+ * when served). `vertical` lays a long table along y (its footprint is 1 × 2): the drawing is built with x and
+ * y swapped rather than mirrored, so the lit faces of every box stay on the same side as the rest of the scene.
+ * `chairs` puts the 2 chairs of a 2-seat table above and below or left and right.
  */
-export function TableArt({ shape, seats, top, side, food }: { shape: "round" | "square"; seats: number; top: string; side: string; food: TableFood }) {
+export function TableArt({
+  shape,
+  seats,
+  top,
+  side,
+  food,
+  vertical = false,
+  chairs = "top-bottom",
+}: {
+  shape: "round" | "square";
+  seats: number;
+  top: string;
+  side: string;
+  food: TableFood;
+  vertical?: boolean;
+  chairs?: "top-bottom" | "left-right";
+}) {
   const z = 1.25;
   const long = seats >= 6;
+  const turn = long && vertical;
   const half = long ? LONG_HALF : 1.3;
-  const { back, front } = chairsFor(seats);
+  // Local (x, y) of the horizontal drawing → where it goes on this table.
+  const at = (x: number, y: number): [number, number] => (turn ? [y, x] : [x, y]);
+  const box = (x: number, y: number, w: number, d: number) => (turn ? { x: y, y: x, w: d, d: w } : { x, y, w, d });
+  const turnChair = (chair: Chair): Chair => (turn ? { x: chair.y, y: chair.x, dir: SWAP_DIR[chair.dir] } : chair);
+  const set = chairsFor(seats, chairs);
+  const back = set.back.map(turnChair);
+  const front = set.front.map(turnChair);
   const topTone = { t: top, l: side, r: shade(side, 0.1) };
-  const places = long
-    ? [...(seats === 8 ? [-2.4, 0, 2.4] : [-1.4, 1.4]).flatMap((x) => [[x, -0.78], [x, 0.78]] as const)]
-    : seats >= 4
-      ? ([[0, -0.78], [0, 0.78], [-0.78, 0], [0.78, 0]] as const)
-      : ([[0, -0.78], [0, 0.78]] as const);
+  const places = (
+    long
+      ? [...(seats === 8 ? [-2.4, 0, 2.4] : [-1.4, 1.4]).flatMap((x) => [[x, -0.78], [x, 0.78]] as const)]
+      : seats >= 4
+        ? ([[0, -0.78], [0, 0.78], [-0.78, 0], [0.78, 0]] as const)
+        : chairs === "left-right"
+          ? ([[-0.78, 0], [0.78, 0]] as const)
+          : ([[0, -0.78], [0, 0.78]] as const)
+  ).map(([px, py]) => at(px, py));
 
   let tableBody;
   if (shape === "square") {
     tableBody = (
       <>
         {(long ? [-(half - 1.2), half - 1.2] : [0]).map((px) => (
-          <IsoBox key={px} x={px - 0.25} y={-0.25} w={0.5} d={0.5} h={z} c={PALETTE.pedestal} />
+          <IsoBox key={px} {...box(px - 0.25, -0.25, 0.5, 0.5)} h={z} c={PALETTE.pedestal} />
         ))}
-        <IsoBox x={-half} y={-1.3} z={z} w={half * 2} d={2.6} h={0.25} c={topTone} />
+        <IsoBox {...box(-half, -1.3, half * 2, 2.6)} z={z} h={0.25} c={topTone} />
       </>
     );
   } else if (!long) {
@@ -215,16 +248,16 @@ export function TableArt({ shape, seats, top, side, food }: { shape: "round" | "
       </>
     );
   } else {
-    // Long round table: a capsule (two half-round ends and a straight middle).
+    // Long round table: a capsule (two half-round ends and a straight middle), back end first.
     const end = half - 1.3;
     tableBody = (
       <>
         {[-end, end].map((px) => (
-          <Cyl key={px} x={px} y={0} r={0.22} h={z} top="#bcb6b0" side="#a8a29e" />
+          <Cyl key={px} x={at(px, 0)[0]} y={at(px, 0)[1]} r={0.22} h={z} top="#bcb6b0" side="#a8a29e" />
         ))}
-        <Cyl x={-end} y={0} z={z} r={1.3} h={0.25} top={top} side={side} />
-        <IsoBox x={-end} y={-1.3} z={z} w={end * 2} d={2.6} h={0.25} c={topTone} />
-        <Cyl x={end} y={0} z={z} r={1.3} h={0.25} top={top} side={side} />
+        <Cyl x={at(-end, 0)[0]} y={at(-end, 0)[1]} z={z} r={1.3} h={0.25} top={top} side={side} />
+        <IsoBox {...box(-end, -1.3, end * 2, 2.6)} z={z} h={0.25} c={topTone} />
+        <Cyl x={at(end, 0)[0]} y={at(end, 0)[1]} z={z} r={1.3} h={0.25} top={top} side={side} />
       </>
     );
   }
@@ -232,7 +265,7 @@ export function TableArt({ shape, seats, top, side, food }: { shape: "round" | "
   return (
     <g>
       {back.map((chair) => (
-        <ChairArt key={`${chair.dir}${chair.x}`} chair={chair} />
+        <ChairArt key={`${chair.dir}${chair.x},${chair.y}`} chair={chair} />
       ))}
       {tableBody}
       {food === "plates"
@@ -258,7 +291,7 @@ export function TableArt({ shape, seats, top, side, food }: { shape: "round" | "
           ))
         : null}
       {front.map((chair) => (
-        <ChairArt key={`${chair.dir}${chair.x}`} chair={chair} />
+        <ChairArt key={`${chair.dir}${chair.x},${chair.y}`} chair={chair} />
       ))}
     </g>
   );

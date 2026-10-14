@@ -3,9 +3,11 @@ import {
   type FloorPlan,
   type FloorRect,
   FLOOR_LIMITS,
+  TABLE_ROTATIONS,
   TABLE_SEATS,
   TABLE_SHAPES,
   type TableLayout,
+  type TableLayoutInput,
 } from "@app/types";
 
 /**
@@ -19,7 +21,7 @@ import {
  * - overlap: two of kitchen, pickup counter and tables share a cell, or a table blocks the door.
  * - door_not_on_edge: the door is not on the first/last column or row.
  * - door_inside_area: the door is inside the kitchen or the pickup counter.
- * - invalid_table: a table layout with an unknown shape or number of seats.
+ * - invalid_table: a table layout with an unknown shape, number of seats or rotation.
  * - duplicate_table: the same table listed twice.
  * - table_without_plan: tables placed while there is no plan.
  */
@@ -46,17 +48,19 @@ export const FLOOR_PLAN_MESSAGES: Record<FloorPlanProblem, string> = {
   overlap: "Hay elementos superpuestos en el plano (mesas, cocina, mesón de retiro o puerta)",
   door_not_on_edge: "La puerta de delivery debe estar en el borde del plano",
   door_inside_area: "La puerta de delivery no puede quedar dentro de la cocina ni del mesón de retiro",
-  invalid_table: "Las mesas deben ser redondas o cuadradas, de 2, 4, 6 u 8 puestos",
+  invalid_table: "Las mesas deben ser redondas o cuadradas, de 2, 4, 6 u 8 puestos, horizontales o verticales",
   duplicate_table: "Una mesa aparece dos veces en el plano",
   table_without_plan: "Dibuja el plano antes de ubicar las mesas",
 };
 
 /**
- * The cells a table takes on the plan: tables of 2–4 seats take their own cell; tables of 6–8 seats are long
- * and take two cells side by side (2 × 1, horizontal), starting at `x, y`.
+ * The cells a table takes on the plan, starting at `x, y`: tables of 2–4 seats take their own cell (their
+ * rotation only turns the chairs); tables of 6–8 seats are long and take two cells, side by side when
+ * horizontal (`rotation` 0 or missing: 2 × 1) or one under the other when vertical (90: 1 × 2).
  */
-export function tableFootprint(layout: Pick<TableLayout, "x" | "y" | "seats">): FloorRect {
-  return { x: layout.x, y: layout.y, w: layout.seats >= 6 ? 2 : 1, h: 1 };
+export function tableFootprint(layout: Pick<TableLayoutInput, "x" | "y" | "seats" | "rotation">): FloorRect {
+  if (layout.seats < 6) return { x: layout.x, y: layout.y, w: 1, h: 1 };
+  return layout.rotation === 90 ? { x: layout.x, y: layout.y, w: 1, h: 2 } : { x: layout.x, y: layout.y, w: 2, h: 1 };
 }
 
 /** Whether two rectangles share at least one cell (touching edges do not overlap). */
@@ -99,7 +103,7 @@ function areaProblem(rect: FloorRect, cols: number, rows: number): FloorPlanProb
  */
 export function floorPlanProblem(
   plan: FloorPlan | null,
-  tables: readonly { tableId: string; layout: TableLayout | null }[],
+  tables: readonly { tableId: string; layout: TableLayout | TableLayoutInput | null }[],
 ): FloorPlanProblem | null {
   const ids = new Set<string>();
   for (const table of tables) {
@@ -140,7 +144,12 @@ export function floorPlanProblem(
   // The door counts as taken: a table there would block the riders' way out.
   const taken: FloorRect[] = [...areas, ...(door ? [cellRect(door)] : [])];
   for (const layout of placed) {
-    if (!(TABLE_SHAPES as readonly unknown[]).includes(layout.shape) || !(TABLE_SEATS as readonly unknown[]).includes(layout.seats)) {
+    if (
+      !(TABLE_SHAPES as readonly unknown[]).includes(layout.shape) ||
+      !(TABLE_SEATS as readonly unknown[]).includes(layout.seats) ||
+      // Missing = horizontal (clients older than the rotation).
+      (layout.rotation !== undefined && !(TABLE_ROTATIONS as readonly unknown[]).includes(layout.rotation))
+    ) {
       return "invalid_table";
     }
     if (!isInt(layout.x) || !isInt(layout.y)) return "not_integer";

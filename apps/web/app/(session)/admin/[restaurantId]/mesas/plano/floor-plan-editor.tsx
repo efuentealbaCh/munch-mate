@@ -23,6 +23,7 @@ import {
   MousePointer2Icon,
   MoveIcon,
   PlusIcon,
+  RotateCwIcon,
   ShoppingBagIcon,
   Trash2Icon,
   TriangleAlertIcon,
@@ -45,6 +46,7 @@ import { useSocketEvent } from "@/hooks/use-realtime";
 import { floorApi } from "@/lib/endpoints";
 import { errorMessage, hasCode } from "@/lib/errors";
 import {
+  DEFAULT_TABLE,
   defaultFloorPlan,
   draftFromView,
   dropAt,
@@ -61,6 +63,8 @@ import {
   removeFromPlan,
   removeTable,
   resizeArea,
+  ROTATE_REFUSAL_MESSAGES,
+  rotateTable,
   resizeGrid,
   sameDraft,
   saveInput,
@@ -278,7 +282,7 @@ function FloorPlanEditor({ restaurantId, initial }: { restaurantId: string; init
 
   function placeFreely() {
     if (!draft || !pendingTable) return;
-    const cell = firstFreeCell(draft, pendingTable.id, { shape: "square", seats: 4 });
+    const cell = firstFreeCell(draft, pendingTable.id, DEFAULT_TABLE);
     if (!cell) {
       toast.error("No queda espacio libre: agranda el plano o mueve algo.");
       return;
@@ -296,18 +300,50 @@ function FloorPlanEditor({ restaurantId, initial }: { restaurantId: string; init
 
   function changeTable(id: string, layout: TableLayout, change: Partial<Pick<TableLayout, "shape" | "seats">>) {
     if (!draft) return;
+    // The current orientation decides where the second cell of a long table goes (beside it or below it).
     const next = { ...layout, ...change };
     const result = placeTable(draft, id, next);
     if (isRefusal(result)) {
+      const grown = tableFootprint(next);
+      const before = tableFootprint(layout);
       toast.error(
-        tableFootprint(next).w > tableFootprint(layout).w
-          ? `Una mesa de ${next.seats} puestos ocupa 2 celdas y la de al lado no está libre. Muévela a un lugar con espacio.`
+        grown.w * grown.h > before.w * before.h
+          ? `Una mesa de ${next.seats} puestos ocupa 2 celdas y la ${grown.h > 1 ? "de abajo" : "de al lado"} no está libre. Muévela a un lugar con espacio o gírala.`
           : PLACE_REFUSAL_MESSAGES[result],
       );
       return;
     }
     setDraft(result);
   }
+
+  /** «Rotar» (or the R key): turns the selected table a quarter, refused with a toast when it does not fit. */
+  function rotateSelected() {
+    if (!draft || selection?.kind !== "table" || !draft.layouts[selection.id]) return;
+    const result = rotateTable(draft, selection.id);
+    if (isRefusal(result)) {
+      toast.error(ROTATE_REFUSAL_MESSAGES[result === "out_of_bounds" ? "out_of_bounds" : "taken"]);
+      return;
+    }
+    setDraft(result);
+  }
+  const rotateRef = useRef(rotateSelected);
+  useEffect(() => {
+    rotateRef.current = rotateSelected;
+  });
+
+  // Keyboard shortcut R with a table selected; never while typing in a field or with a modifier (Ctrl+R reloads).
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "r" && event.key !== "R") return;
+      if (event.ctrlKey || event.metaKey || event.altKey || event.repeat || event.defaultPrevented) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("input, textarea, select, [contenteditable=''], [contenteditable='true'], [role='dialog']")) return;
+      event.preventDefault();
+      rotateRef.current();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   function setGridSize(nextCols: number, nextRows: number) {
     if (!draft) return;
@@ -477,6 +513,7 @@ function FloorPlanEditor({ restaurantId, initial }: { restaurantId: string; init
                 onMove={() => setMoving((on) => !on)}
                 onNudge={nudge}
                 onTable={changeTable}
+                onRotate={rotateSelected}
                 onResize={(area, w, h) => setDraft(resizeArea(draft, area, w, h))}
                 onRemove={() => {
                   if (selection.kind === "table") setDraft(removeTable(draft, selection.id));
@@ -760,6 +797,7 @@ function SelectionPanel({
   onMove,
   onNudge,
   onTable,
+  onRotate,
   onResize,
   onRemove,
   onClose,
@@ -771,6 +809,7 @@ function SelectionPanel({
   onMove(): void;
   onNudge(dx: number, dy: number): void;
   onTable(id: string, layout: TableLayout, change: Partial<Pick<TableLayout, "shape" | "seats">>): void;
+  onRotate(): void;
   onResize(area: "kitchen" | "pickup", w: number, h: number): void;
   onRemove(): void;
   onClose(): void;
@@ -812,7 +851,19 @@ function SelectionPanel({
             options={TABLE_SEATS.map((seats) => [seats, String(seats)] as const)}
             onChange={(seats) => onTable(item.id, layout, { seats })}
           />
-          <p className="text-xs text-muted-foreground">Las mesas de 6 y 8 puestos ocupan 2 celdas.</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" onClick={onRotate} aria-keyshortcuts="R" data-testid="rotate-table">
+              <RotateCwIcon aria-hidden data-icon="inline-start" />
+              Rotar
+            </Button>
+            <span className="text-sm text-muted-foreground" data-testid="table-orientation">
+              {layout.rotation === 90 ? "Vertical" : "Horizontal"}
+            </span>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Las mesas de 6 y 8 puestos ocupan 2 celdas: una al lado de la otra, o una bajo la otra si la giras. «Rotar» (tecla R) gira la
+            mesa en el plano.
+          </p>
         </>
       ) : null}
 

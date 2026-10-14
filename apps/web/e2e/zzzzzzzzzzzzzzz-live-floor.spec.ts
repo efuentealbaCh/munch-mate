@@ -87,6 +87,31 @@ test("the live view draws only the zones in use and follows a table order into t
     await expect(page.getByTestId("live-detail")).toContainText("Pedido en cocina");
     await expect(page.getByTestId("live-detail")).toContainText("2 × Lomo a lo pobre");
 
+    // Turning the camera redraws the plan seen from another side (the 6-seat table turns vertical on screen),
+    // the tables stay selectable and the angle is remembered by this browser after a reload.
+    const mesa2 = page.locator('[data-testid="live-table"][data-label="Mesa 2"]');
+    await expect(page.getByTestId("camera-angle")).toHaveAttribute("aria-label", "Ángulo 0°");
+    await expect(mesa2).toHaveAttribute("data-orientation", "horizontal");
+    await page.getByRole("button", { name: "Girar a la derecha" }).click();
+    await expect(page.getByTestId("camera-angle")).toHaveAttribute("aria-label", "Ángulo 90°");
+    await expect(page.getByTestId("live-camera")).toHaveAttribute("data-angle", "90");
+    await expect(mesa2).toHaveAttribute("data-orientation", "vertical");
+    await mesa2.click();
+    await expect(page.getByTestId("live-detail-title")).toHaveText("Mesa 2");
+    // Keyboard shortcuts (outside any field): «]» turns right, «[» back.
+    await page.keyboard.press("]");
+    await expect(page.getByTestId("camera-angle")).toHaveAttribute("aria-label", "Ángulo 180°");
+    await page.keyboard.press("[");
+    await expect(page.getByTestId("camera-angle")).toHaveAttribute("aria-label", "Ángulo 90°");
+    await page.reload();
+    await waitForHydration(page);
+    await expect(page.getByTestId("camera-angle")).toHaveAttribute("aria-label", "Ángulo 90°");
+    await expect(page.getByTestId("live-table")).toHaveCount(2);
+    await expect(mesa2).toHaveAttribute("data-orientation", "vertical");
+    await mesa1.click();
+    await expect(page.getByTestId("live-detail-title")).toHaveText("Mesa 1");
+    await expect(mesa1).toHaveAttribute("data-state", "kitchen");
+
     // Still no counter nor door: the restaurant does not use pickup or delivery.
     await expect(page.getByTestId("live-pickup")).toHaveCount(0);
     await expect(page.getByTestId("live-door")).toHaveCount(0);

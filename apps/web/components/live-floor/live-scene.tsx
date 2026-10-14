@@ -1,7 +1,7 @@
 "use client";
 
 import type { OrderView } from "@app/types";
-import { type FocusEvent, type KeyboardEvent, memo, type PointerEvent, type ReactNode, useId, useMemo, useRef, useState } from "react";
+import { type FocusEvent, type KeyboardEvent, memo, type PointerEvent, type ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   ALERT_COLORS,
   artPoint,
@@ -83,6 +83,11 @@ function hit(target: LiveTarget, label: string, focusable = true) {
     "data-id": targetKey(target),
     ...(focusable ? { tabIndex: 0, role: "button", "aria-label": label } : {}),
   };
+}
+
+/** Center of a table's footprint on the floor (world units): long tables take 2 × 1 or 1 × 2 cells. */
+function tableCenter(rect: GridRect): [number, number] {
+  return [(rect.x + rect.w / 2) * CELL, (rect.y + rect.h / 2) * CELL];
 }
 
 /** Where the motorbikes stand: outside a front door (on the street), inside a back door. */
@@ -212,9 +217,8 @@ const SceneSvg = memo(function SceneSvg({ data, ids, label }: { data: SceneData;
   for (const table of layout.tables) {
     const state = tableStates.get(table.id);
     if (state?.paidFraction == null) continue;
-    const cx = (table.rect.x + table.rect.w / 2) * CELL;
-    const cy = (table.rect.y + 0.5) * CELL;
-    const ringPath = floorEllipse(cx, cy, (table.rect.w * CELL) / 2 - 0.15, CELL / 2 - 0.15);
+    const [cx, cy] = tableCenter(table.rect);
+    const ringPath = floorEllipse(cx, cy, (table.rect.w * CELL) / 2 - 0.15, (table.rect.h * CELL) / 2 - 0.15);
     floorfx.push(
       <g key={`pay-${table.id}`} pointerEvents="none">
         <path d={ringPath.d} fill="none" stroke="#e2ded9" strokeWidth={4} />
@@ -270,7 +274,8 @@ const SceneSvg = memo(function SceneSvg({ data, ids, label }: { data: SceneData;
     const state = tableStates.get(table.id);
     const base = state?.base ?? "free";
     const colors = TABLE_COLORS[base];
-    const [tx, ty] = project((table.rect.x + table.rect.w / 2) * CELL, (table.rect.y + 0.5) * CELL);
+    const [tx, ty] = project(...tableCenter(table.rect));
+    const vertical = table.rect.h > table.rect.w;
     const indicator = state?.indicator ?? "free";
     items.push({
       key: `t-${table.id}`,
@@ -281,9 +286,18 @@ const SceneSvg = memo(function SceneSvg({ data, ids, label }: { data: SceneData;
           data-testid="live-table"
           data-state={indicator}
           data-label={table.label}
+          data-orientation={vertical ? "vertical" : "horizontal"}
           transform={`translate(${r1(tx)},${r1(ty)}) scale(${TABLE_SCALE})`}
         >
-          <TableArt shape={table.layout.shape} seats={table.layout.seats} top={colors.top} side={colors.side} food={base === "kitchen" ? "water" : base === "eating" ? "plates" : "none"} />
+          <TableArt
+            shape={table.layout.shape}
+            seats={table.layout.seats}
+            top={colors.top}
+            side={colors.side}
+            food={base === "kitchen" ? "water" : base === "eating" ? "plates" : "none"}
+            vertical={vertical}
+            chairs={table.chairs}
+          />
         </g>
       ),
     });
@@ -419,7 +433,7 @@ const SceneSvg = memo(function SceneSvg({ data, ids, label }: { data: SceneData;
   for (const table of layout.tables) {
     const state = tableStates.get(table.id);
     const indicator = state?.indicator ?? "free";
-    const [X, Y] = project((table.rect.x + table.rect.w / 2) * CELL, (table.rect.y + 0.5) * CELL, TABLE_TOP_Z * TABLE_SCALE);
+    const [X, Y] = project(...tableCenter(table.rect), TABLE_TOP_Z * TABLE_SCALE);
     const text = shortLabel(table.label);
     const target = hit({ kind: "table", id: table.id }, "", false);
     if (indicator === "waiter" || indicator === "bill") {
@@ -693,7 +707,7 @@ function ringShape(ring: LiveTarget | null, layout: LiveLayout, motos: readonly 
     case "table": {
       const table = layout.tables.find((t) => t.id === ring.id);
       if (!table) return null;
-      return floorEllipse((table.rect.x + table.rect.w / 2) * CELL, (table.rect.y + 0.5) * CELL, (table.rect.w * CELL) / 2 + 0.2, CELL / 2 + 0.2).d;
+      return floorEllipse(...tableCenter(table.rect), (table.rect.w * CELL) / 2 + 0.2, (table.rect.h * CELL) / 2 + 0.2).d;
     }
     case "order": {
       const index = motos.findIndex((o) => o.id === ring.id);
@@ -717,18 +731,21 @@ export interface SceneTooltip {
 /**
  * The interactive isometric scene: hover highlights and shows a tooltip, click/Enter selects. Event
  * delegation through `data-id` (see `targetKey`), so the memoized drawing never re-renders on hover.
+ * `camera` (quarter turns, already applied to `data.layout`) only drives the short fade when it changes.
  */
 export function LiveScene({
   data,
   label,
   onSelect,
   describe,
+  camera = 0,
   className,
 }: {
   data: SceneData;
   label: string;
   onSelect(target: LiveTarget): void;
   describe(target: LiveTarget): SceneTooltip | null;
+  camera?: number;
   className?: string;
 }) {
   const reactId = useId();
@@ -737,6 +754,22 @@ export function LiveScene({
   const wrapRef = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<string | null>(null);
   const [tip, setTip] = useState<{ key: string; x: number; y: number } | null>(null);
+  // The drawing fades in after the camera turns (not on the first paint); the tooltip would point at the old spot.
+  const [shownCamera, setShownCamera] = useState(camera);
+  const [fade, setFade] = useState(false);
+  if (shownCamera !== camera) {
+    setShownCamera(camera);
+    setFade(true);
+    setHover(null);
+    setTip(null);
+  }
+  // Turning redraws the scene: the element that had the keyboard focus (a table, the kitchen) gets it back.
+  const focused = useRef<string | null>(null);
+  useEffect(() => {
+    const key = focused.current;
+    if (!key || (document.activeElement && document.activeElement !== document.body)) return;
+    wrapRef.current?.querySelector<SVGElement>(`[data-id="${key}"][tabindex]`)?.focus();
+  }, [camera]);
 
   const keyOf = (element: EventTarget | null) => (element instanceof Element ? (element.closest("[data-id]")?.getAttribute("data-id") ?? null) : null);
 
@@ -750,6 +783,7 @@ export function LiveScene({
 
   function onFocus(event: FocusEvent<HTMLDivElement>) {
     const key = keyOf(event.target);
+    focused.current = key;
     setHover(key);
     const box = wrapRef.current?.getBoundingClientRect();
     if (!key || !box || !(event.target instanceof Element)) return;
@@ -787,7 +821,9 @@ export function LiveScene({
       }}
       onKeyDown={onKeyDown}
       onFocus={onFocus}
-      onBlur={() => {
+      onBlur={(event) => {
+        // Focus moved somewhere else; null = the focused element went away (the drawing was redrawn).
+        if (event.relatedTarget) focused.current = null;
         setHover(null);
         setTip(null);
       }}
@@ -795,7 +831,9 @@ export function LiveScene({
       {/* Only [\w:-] reach the selector (targetKey/parseTarget), so the rule cannot be broken out of. */}
       {hover && parseTarget(hover) ? <style>{hoverCss}</style> : null}
       <SceneIdsContext.Provider value={ids}>
-        <SceneSvg data={data} ids={ids} label={label} />
+        <div key={camera} className={cn("h-full w-full", fade && "animate-in duration-300 fade-in-0 motion-reduce:animate-none")} data-testid="live-camera" data-angle={camera * 90}>
+          <SceneSvg data={data} ids={ids} label={label} />
+        </div>
       </SceneIdsContext.Provider>
       {tip && tipText ? (
         <div

@@ -865,7 +865,8 @@
             "x": 1,
             "y": 3,
             "shape": "square",
-            "seats": 8
+            "seats": 8,
+            "rotation": 90
           },
           {
             "label": "Mesa 6",
