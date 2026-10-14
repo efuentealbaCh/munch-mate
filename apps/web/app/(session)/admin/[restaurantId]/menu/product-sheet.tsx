@@ -26,6 +26,7 @@ import { formatPriceInput, parsePriceInput } from "@/lib/money";
 import { nameTakenFromError, nameTakenMessage } from "@/lib/unique-names";
 import { type ProductValues, productSchema } from "@/lib/validation";
 import { ModifierGroupsPicker } from "./modifier-groups-picker";
+import { PromoField } from "./promo-field";
 
 const MIN_SIDE = MENU_LIMITS.imageMinSide;
 
@@ -246,6 +247,8 @@ function ProductForm({
             />
           )}
         />
+
+        {product ? <PromoField restaurantId={restaurantId} product={product} onSaved={(saved) => onSaved(saved, false)} /> : null}
 
         <Separator />
         {product ? (

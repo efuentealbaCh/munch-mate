@@ -2,12 +2,15 @@
 
 import type { RestaurantRole, RestaurantView } from "@app/types";
 import {
+  ActivityIcon,
   ArrowLeftIcon,
   BikeIcon,
   BookOpenIcon,
   ClipboardListIcon,
+  ConciergeBellIcon,
   LayoutDashboardIcon,
   PackageCheckIcon,
+  PrinterIcon,
   QrCodeIcon,
   ReceiptIcon,
   SearchXIcon,
@@ -28,7 +31,8 @@ import { hasCode } from "@/lib/errors";
 import { canManageAvailability } from "@/lib/menu";
 import { liveOpenState } from "@/lib/opening-hours";
 import { canViewSales } from "@/lib/daily-summary";
-import { canWorkOrders, isRider } from "@/lib/orders-board";
+import { canServeTables, canWorkOrders, isRider } from "@/lib/orders-board";
+import { canSeePrintJobs } from "@/lib/printers";
 import { cn } from "@/lib/utils";
 import { RestaurantContext, type RestaurantContextValue } from "./restaurant-context";
 import { RestaurantRealtimeProvider } from "./restaurant-realtime";
@@ -80,7 +84,7 @@ export function RestaurantShell({ children }: { children: ReactNode }) {
       {/* Reconnected after a gap: the open/closed state may have changed meanwhile. */}
       <RestaurantRealtimeProvider restaurantId={restaurant.id} onAccepting={setAccepting} onResync={reload}>
         <div className="flex flex-col gap-6">
-          <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-3 print:hidden">
             <Button asChild variant="ghost" size="sm" className="-ml-2 self-start">
               <Link href="/admin">
                 <ArrowLeftIcon aria-hidden data-icon="inline-start" />
@@ -118,13 +122,18 @@ function SectionTabs({
   // Tabs a member cannot use are hidden (the api would answer 403 anyway); direct URLs explain why.
   const tabs = [
     { href: base, label: "Resumen", icon: LayoutDashboardIcon, show: true },
+    // The live floor view (phase 9) shows sales, so the same roles as «Ventas».
+    { href: `${base}/en-vivo`, label: "En vivo", icon: ActivityIcon, show: canViewSales(roles) },
     { href: `${base}/pedidos`, label: "Pedidos", icon: ClipboardListIcon, show: canWorkOrders(roles) },
+    { href: `${base}/salon`, label: "Salón", icon: ConciergeBellIcon, show: canServeTables(roles) },
     { href: `${base}/repartos`, label: "Repartos", icon: BikeIcon, show: isRider(roles) },
     { href: `${base}/ventas`, label: "Ventas", icon: ReceiptIcon, show: canViewSales(roles) },
     { href: `${base}/menu`, label: "Menú", icon: BookOpenIcon, show: isOwner },
     { href: `${base}/disponibilidad`, label: "Disponibilidad", icon: PackageCheckIcon, show: canManageAvailability(roles) },
     { href: `${base}/mesas`, label: "Mesas", icon: QrCodeIcon, show: isOwner },
     { href: `${base}/equipo`, label: "Equipo", icon: UsersIcon, show: isOwner },
+    // Owner: the print agents; cashier: only the failed print jobs (phase 8).
+    { href: `${base}/impresoras`, label: "Impresoras", icon: PrinterIcon, show: canSeePrintJobs(roles) },
   ].filter((tab) => tab.show);
 
   return (

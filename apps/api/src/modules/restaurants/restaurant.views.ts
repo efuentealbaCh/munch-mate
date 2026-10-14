@@ -24,6 +24,7 @@ export function toRestaurantView(
   restaurant: RestaurantRecord,
   myRoles: RestaurantRole[],
   media: MediaService,
+  messagingAvailable: boolean,
 ): RestaurantView {
   return {
     id: restaurant.id,
@@ -39,6 +40,10 @@ export function toRestaurantView(
     openState: openState(restaurant),
     maxItemsPerOrder: restaurant.maxItemsPerOrder,
     location: restaurant.location,
+    tipPercent: restaurant.tipPercent,
+    kitchenTargetMinutes: restaurant.kitchenTargetMinutes,
+    messaging: restaurant.messaging,
+    messagingAvailable,
     currency: restaurant.currency,
     timezone: restaurant.timezone,
     status: restaurant.status,

@@ -126,7 +126,7 @@ export function useRealtime(key: string, options: RealtimeOptions): { socket: Ap
 /** Helper for subscribe callbacks: emits with a timeout so a silent server cannot hang the hook. */
 export function subscribeWithTimeout(
   socket: AppSocket,
-  event: "restaurant.subscribe" | "order.subscribe",
+  event: "restaurant.subscribe" | "order.subscribe" | "table.subscribe",
   argument: string,
 ): Promise<SubscribeResult> {
   return socket.timeout(SUBSCRIBE_TIMEOUT_MS).emitWithAck(event, argument);

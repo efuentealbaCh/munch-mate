@@ -1,36 +1,42 @@
 "use client";
 
-import { type OrderStatus, type OrderView, PAYMENT_METHOD_LABELS } from "@app/types";
+import type { OrderStatus, OrderView } from "@app/types";
 import { formatPhone } from "@app/utils";
 import {
   AlarmClockIcon,
   BikeIcon,
+  ChevronDownIcon,
   ClockIcon,
   DownloadIcon,
   MailIcon,
   MapPinIcon,
   MessageSquareTextIcon,
+  MonitorSmartphoneIcon,
   NavigationIcon,
+  PencilIcon,
   PhoneIcon,
+  PrinterIcon,
   ShoppingBagIcon,
   UserIcon,
   WalletIcon,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Spinner } from "@/components/ui/spinner";
 import { formatClockTime, telHref } from "@/lib/format";
 import { formatPrice, formatPriceDelta } from "@/lib/money";
 import { addressLine, expectedPaymentLabel, mapsSearchUrl } from "@/lib/delivery";
 import { estimateLabel, showsReadyEstimate } from "@/lib/order-tracking";
 import { ACTION_LABELS, destinationLabel, elapsedLabel, isFinalStatus, isPastReadyTime, minutesSince } from "@/lib/orders-board";
+import { paymentBadgeLabel } from "@/lib/split-bill";
 import { cn } from "@/lib/utils";
 
-/** Paid with its method, or "Sin pagar". */
+/** Paid with its method (each portion when a split table account paid it with several), or "Sin pagar". */
 export function PaymentBadge({ order }: { order: OrderView }) {
   return order.paymentStatus === "paid" ? (
-    <Badge variant="secondary" className="bg-success/10 text-success">
-      Pagado{order.paymentMethod ? ` · ${PAYMENT_METHOD_LABELS[order.paymentMethod]}` : ""}
+    <Badge variant="secondary" className="h-auto bg-success/10 whitespace-normal text-success" data-testid="payment-badge">
+      {paymentBadgeLabel(order)}
     </Badge>
   ) : (
     <Badge variant="outline">Sin pagar</Badge>
@@ -43,6 +49,17 @@ interface OrderCardProps {
   actions: OrderStatus[];
   canPay: boolean;
   now: number;
+  /**
+   * «Comanda»: prints the kitchen ticket, on the print agent's kitchen printer when the restaurant has one,
+   * else on this device's receipt printer (phase 8).
+   */
+  onPrint?(): void;
+  /** Passed while «Comanda» goes to the print agent: «Imprimir en este dispositivo» forces the browser. */
+  onPrintHere?(): void;
+  /** The ticket is being sent to the print agent. */
+  printBusy?: boolean;
+  /** "Modificar": change the items (only passed while this member may edit the order). */
+  onEdit?(): void;
   /** Just arrived: highlighted for a few seconds. */
   fresh: boolean;
   /** A request for this order is in flight (its buttons are disabled). */
@@ -68,6 +85,10 @@ export function OrderCard({
   actions,
   canPay,
   now,
+  onPrint,
+  onPrintHere,
+  printBusy = false,
+  onEdit,
   fresh,
   busy,
   onAction,
@@ -114,6 +135,11 @@ export function OrderCard({
         </div>
         <div className="flex flex-col items-end gap-1 text-right">
           {fresh ? <Badge>Nuevo</Badge> : null}
+          {order.edits.length > 0 ? (
+            <Badge variant="outline" className="border-warning-foreground/40 bg-warning text-warning-foreground" data-testid="order-edited">
+              Modificado
+            </Badge>
+          ) : null}
           <span className={cn("flex items-center gap-1 text-sm", minutes >= 15 ? "font-semibold text-destructive" : "text-muted-foreground")}>
             <ClockIcon className="size-3.5" aria-hidden />
             {now ? elapsedLabel(minutes) : null}
@@ -188,6 +214,8 @@ export function OrderCard({
         ))}
       </ul>
 
+      {order.edits.length > 0 ? <EditHistory order={order} /> : null}
+
       {order.note ? (
         <p className="flex items-start gap-1.5 rounded-lg bg-warning px-2 py-1.5 text-sm text-warning-foreground">
           <MessageSquareTextIcon className="mt-0.5 size-4 shrink-0" aria-hidden />
@@ -197,7 +225,9 @@ export function OrderCard({
 
       <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-2">
         <span className="flex flex-col">
-          <span className="font-bold tabular-nums">{formatPrice(order.total, order.currency)}</span>
+          <span className="font-bold tabular-nums" data-testid="order-total">
+            {formatPrice(order.total, order.currency)}
+          </span>
           {order.deliveryFee > 0 ? (
             <span className="text-xs text-muted-foreground">incluye envío {formatPrice(order.deliveryFee, order.currency)}</span>
           ) : null}
@@ -205,7 +235,7 @@ export function OrderCard({
         <PaymentBadge order={order} />
       </div>
 
-      {forward.length > 0 || backward.length > 0 || (canPay && order.paymentStatus === "unpaid") || order.receiptAvailable ? (
+      {forward.length > 0 || backward.length > 0 || (canPay && order.paymentStatus === "unpaid") || order.receiptAvailable || onPrint || onEdit ? (
         <div className="flex flex-col gap-2">
           {forward.map((status, index) => (
             <Button
@@ -233,6 +263,55 @@ export function OrderCard({
                 Comprobante
               </Button>
             ) : null}
+            {onPrint ? (
+              <div className="flex flex-1">
+                <Button
+                  variant="outline"
+                  className={cn("flex-1", onPrintHere && "rounded-r-none")}
+                  onClick={onPrint}
+                  disabled={printBusy}
+                  aria-busy={printBusy || undefined}
+                  aria-label={`Imprimir comanda del pedido #${order.ticketNumber}`}
+                  data-testid="print-order"
+                >
+                  {printBusy ? <Spinner aria-hidden data-icon="inline-start" /> : <PrinterIcon aria-hidden data-icon="inline-start" />}
+                  Comanda
+                </Button>
+                {onPrintHere ? (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        className="-ml-px rounded-l-none"
+                        aria-label={`Más opciones de impresión del pedido #${order.ticketNumber}`}
+                      >
+                        <ChevronDownIcon aria-hidden />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-60">
+                      <DropdownMenuItem className="min-h-10" onSelect={onPrintHere}>
+                        <MonitorSmartphoneIcon aria-hidden />
+                        Imprimir en este dispositivo
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                ) : null}
+              </div>
+            ) : null}
+            {onEdit ? (
+              <Button
+                variant="outline"
+                className="flex-1"
+                disabled={disabled}
+                onClick={onEdit}
+                aria-label={`Modificar el pedido #${order.ticketNumber}`}
+                data-testid="edit-order"
+              >
+                <PencilIcon aria-hidden data-icon="inline-start" />
+                Modificar
+              </Button>
+            ) : null}
             {canPay && order.paymentStatus === "unpaid" ? (
               <Button variant="outline" className="flex-1" disabled={disabled} onClick={onPay}>
                 Registrar pago
@@ -255,6 +334,39 @@ export function OrderCard({
         </div>
       ) : null}
     </article>
+  );
+}
+
+/** Item edits by the staff, newest first, folded under one line ("Modificado 20:50 · Ana"). */
+function EditHistory({ order }: { order: OrderView }) {
+  const edits = [...order.edits].reverse();
+  const last = edits[0];
+  if (!last) return null;
+  return (
+    <details className="group rounded-lg bg-muted/60 px-2.5 py-1.5 text-sm" data-testid="order-edits">
+      <summary className="flex min-h-8 cursor-pointer items-center gap-1.5 rounded-md font-medium outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
+        <PencilIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+        <span>
+          Modificado {formatClockTime(last.at)}
+          {last.byName ? ` · ${last.byName}` : ""}
+          {edits.length > 1 ? <span className="font-normal text-muted-foreground"> ({edits.length} cambios)</span> : null}
+        </span>
+      </summary>
+      <ol className="mt-1 flex flex-col gap-2 pb-1">
+        {edits.map((edit, index) => (
+          <li key={`${edit.at}-${index}`} className="flex flex-col">
+            <span className="text-xs text-muted-foreground">
+              {formatClockTime(edit.at)}
+              {edit.byName ? ` · ${edit.byName}` : ""}
+            </span>
+            {edit.changes.map((change, changeIndex) => (
+              <span key={`${change}-${changeIndex}`}>{change}</span>
+            ))}
+            {edit.reason ? <span className="text-muted-foreground italic">Motivo: {edit.reason}</span> : null}
+          </li>
+        ))}
+      </ol>
+    </details>
   );
 }
 
@@ -300,6 +412,13 @@ function DeliveryBlock({
             {change !== null && change > 0 ? (
               <span className="mt-1 block font-bold text-foreground">
                 Llevar vuelto: <span className="tabular-nums">{formatPrice(change, order.currency)}</span>
+              </span>
+            ) : null}
+            {/* An edit raised the total above the announced bill (the api then drops it): ask before leaving.
+                Without edits a missing amount means the customer pays the exact total, as before. */}
+            {order.expectedPayment.method === "cash" && order.expectedPayment.cashAmount === null && order.edits.length > 0 ? (
+              <span className="mt-1 block font-bold text-foreground" data-testid="ask-cash-amount">
+                Pregunta con cuánto paga
               </span>
             ) : null}
           </span>

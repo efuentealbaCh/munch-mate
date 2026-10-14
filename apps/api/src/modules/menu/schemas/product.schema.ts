@@ -1,5 +1,5 @@
-import { MENU_LIMITS } from "@app/types";
-import { Prop, Schema, SchemaFactory } from "@nestjs/mongoose";
+import { MENU_LIMITS, PROMO_KINDS, type ProductPromo } from "@app/types";
+import { Prop, raw, Schema, SchemaFactory } from "@nestjs/mongoose";
 import { type HydratedDocument, Types } from "mongoose";
 
 @Schema({ collection: "products", timestamps: true })
@@ -35,6 +35,23 @@ export class Product {
   /** Reusable modifier groups, in display order. */
   @Prop({ type: [Types.ObjectId], default: [] })
   modifierGroupIds!: Types.ObjectId[];
+
+  /** Discount by percent or special price, optionally some weekdays and dates (phase 8); null = none. */
+  @Prop(
+    raw({
+      type: {
+        kind: { type: String, enum: PROMO_KINDS, required: true },
+        value: { type: Number, required: true },
+        days: { type: [Number], default: [] },
+        startsOn: { type: String, default: null },
+        endsOn: { type: String, default: null },
+        label: { type: String, default: "" },
+      },
+      default: null,
+      _id: false,
+    }),
+  )
+  promo!: ProductPromo | null;
 
   /** Display order within its category. */
   @Prop({ required: true })

@@ -8,6 +8,7 @@ import {
   type CreateDineInOrderInput,
   type CreatedOrder,
   type CreatePickupOrderInput,
+  type EditOrderItemsInput,
   type OrderItemInput,
   ORDER_LIMITS,
   type OrderStatus,
@@ -16,10 +17,23 @@ import {
   type PublicOrderView,
   READY_MINUTES_BY_CHANNEL,
   type RiderPosition,
+  REPORT_LIMITS,
   type RestaurantRole,
   type RiderView,
+  type SalesExportKind,
+  type SalesReport,
+  type OrderMessageEvent,
 } from "@app/types";
-import { checkTransition, formatMoney, normalizePhone, roundCoord } from "@app/utils";
+import {
+  canEditOrder,
+  checkTransition,
+  formatMoney,
+  isOrderEditable,
+  MESSAGING_PHONE_MESSAGES,
+  messagingPhoneProblem,
+  normalizePhone,
+  roundCoord,
+} from "@app/utils";
 import {
   BadRequestException,
   ConflictException,
@@ -32,7 +46,8 @@ import {
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { InjectConnection } from "@nestjs/mongoose";
-import type { Connection } from "mongoose";
+import type { ClientSession, Connection } from "mongoose";
+import { InjectPinoLogger, PinoLogger } from "nestjs-pino";
 import { hashToken } from "../../common/crypto/tokens";
 import { apiError } from "../../common/errors/api-error";
 import type { ApiEnv } from "../../config/env.validation";
@@ -48,9 +63,15 @@ import { MembershipsRepository } from "../restaurants/memberships.repository";
 import { openState } from "../restaurants/restaurant.views";
 import { UsersRepository } from "../users/users.repository";
 import { DeliveryZonesRepository } from "./delivery-zones.repository";
-import { OrderValidationError, type PricingMenu, priceOrder } from "./order-pricing";
+import { applyEdit, checkEdit, OrderEditError } from "./order-edit";
+import { OrderValidationError, type PricedItem, type PricingMenu, priceOrder } from "./order-pricing";
 import { businessDate, deriveAccessToken, isCalendarDate } from "./order-tokens";
 import { MapsService } from "../maps/maps.service";
+import { MessagingService } from "../messaging/messaging.service";
+import { salesCsv, summarizeRange } from "./sales-report";
+import { TableSessionsRepository } from "./table-sessions.repository";
+import { TableSessionsService } from "./table-sessions.service";
+import { PrintJobsService } from "../printing/print-jobs.service";
 import { PushService } from "../push/push.service";
 import { summarizeDay } from "./daily-summary";
 import { RiderTrackingService } from "./rider-tracking.service";
@@ -65,6 +86,43 @@ const tableNotFound = () =>
 const menuNotFound = () => new NotFoundException(apiError("MENU_NOT_FOUND", "No encontramos ese restaurante"));
 const notAccepting = () =>
   new ConflictException(apiError("NOT_ACCEPTING_ORDERS", "El local no está recibiendo pedidos en este momento"));
+const orderChanged = () =>
+  new ConflictException(apiError("ORDER_CHANGED", "Alguien actualizó este pedido; revisa su estado"));
+const tableHasPayments = (message: string) => new ConflictException(apiError("TABLE_HAS_PAYMENTS", message));
+const EDIT_WITH_PAYMENTS = "Esta mesa ya tiene pagos registrados; bórralos en Salón para modificar el pedido";
+const PAY_WITH_PAYMENTS = "Esta mesa ya tiene pagos registrados; cobra lo que falta desde Salón";
+
+/**
+ * The restaurant's cap on units (sum of quantities) per order: new carts and edited orders alike.
+ * @throws ConflictException TOO_MANY_ITEMS with `meta.max`.
+ */
+function checkItemCount(restaurant: Pick<RestaurantRecord, "maxItemsPerOrder">, items: { quantity: number }[]): void {
+  const units = items.reduce((sum, item) => sum + item.quantity, 0);
+  const max = restaurant.maxItemsPerOrder;
+  if (units > max) {
+    throw new ConflictException(
+      apiError(
+        "TOO_MANY_ITEMS",
+        `Este local acepta hasta ${max} ${max === 1 ? "producto" : "productos"} por pedido; quita algunos o haz otro pedido`,
+        { max: String(max) },
+      ),
+    );
+  }
+}
+
+/**
+ * A delivery zone's minimum subtotal: new delivery orders and edited ones alike.
+ * @throws ConflictException BELOW_MINIMUM_ORDER with `meta.minOrder`.
+ */
+function checkMinimumOrder(zone: { name: string; minOrder: number }, subtotal: number, currency: string): void {
+  if (subtotal < zone.minOrder) {
+    throw new ConflictException(
+      apiError("BELOW_MINIMUM_ORDER", `El pedido mínimo para ${zone.name} es ${formatMoney(zone.minOrder, currency)}`, {
+        minOrder: String(zone.minOrder),
+      }),
+    );
+  }
+}
 
 /** The customer's side of a new order, common to every channel. */
 interface OrderRequest {
@@ -97,6 +155,7 @@ type ChannelFields = Pick<
   | "tableLabel"
   | "delivery"
   | "expectedPayment"
+  | "notifyBy"
 >;
 
 /** Defaults of the channel fields; each channel overrides what it uses. */
@@ -108,13 +167,25 @@ const NO_CONTACT = {
   tableLabel: null,
   delivery: null,
   expectedPayment: null,
+  notifyBy: null,
 } satisfies Omit<ChannelFields, "channel">;
 
 /** Roles that work the whole board; anyone else (riders) only acts on deliveries assigned to them. */
-const FLOOR_ROLES: readonly RestaurantRole[] = ["owner", "cashier", "kitchen"];
+const FLOOR_ROLES: readonly RestaurantRole[] = ["owner", "cashier", "kitchen", "waiter"];
 const isFloor = (roles: readonly RestaurantRole[]) => roles.some((role) => FLOOR_ROLES.includes(role));
 const notYourDelivery = () =>
   new ForbiddenException(apiError("NOT_YOUR_DELIVERY", "Este reparto no está asignado a ti"));
+
+/** Which status change sends which text message (pickup and delivery orders whose customer asked for them). */
+function MESSAGE_EVENT_BY_STATUS(channel: OrderRecord["channel"], to: OrderStatus): OrderMessageEvent | null {
+  if (channel === "dine_in") return null;
+  if (to === "accepted") return "accepted";
+  if (to === "ready" && channel === "pickup") return "ready";
+  if (to === "out_for_delivery") return "on_the_way";
+  if (to === "rejected") return "rejected";
+  if (to === "cancelled") return "cancelled";
+  return null;
+}
 
 export type ReceiptResult = { status: "pending" } | { status: "ready"; pdf: Buffer; filename: string };
 
@@ -142,6 +213,11 @@ export class OrdersService {
     private readonly tracking: RiderTrackingService,
     private readonly maps: MapsService,
     private readonly push: PushService,
+    private readonly messaging: MessagingService,
+    private readonly tableSessions: TableSessionsService,
+    private readonly tableAccounts: TableSessionsRepository,
+    @InjectPinoLogger(OrdersService.name) private readonly logger: PinoLogger,
+    private readonly printing: PrintJobsService,
   ) {
     this.tokenSecret = config.get("ORDER_TOKEN_SECRET", { infer: true });
     this.appUrl = config.get("APP_URL", { infer: true });
@@ -178,7 +254,7 @@ export class OrdersService {
    */
   async createPickup(slug: string, input: WithCustomer<CreatePickupOrderInput>): Promise<CreatedOrder> {
     const restaurant = await this.publicRestaurant(slug);
-    const contact = this.contact(input);
+    const contact = this.contact(input, restaurant);
 
     return this.placeOrder(restaurant, input, async () => {
       if (!restaurant.pickupEnabled) {
@@ -198,7 +274,7 @@ export class OrdersService {
    */
   async createDelivery(slug: string, input: WithCustomer<CreateDeliveryOrderInput>): Promise<CreatedOrder> {
     const restaurant = await this.publicRestaurant(slug);
-    const contact = this.contact(input);
+    const contact = this.contact(input, restaurant);
 
     return this.placeOrder(restaurant, input, async () => {
       if (!restaurant.deliveryEnabled) {
@@ -245,15 +321,7 @@ export class OrdersService {
           expectedPayment: { method: input.payment.method, cashAmount: cash },
         },
         deliveryFee: (subtotal) => {
-          if (subtotal < zone.minOrder) {
-            throw new ConflictException(
-              apiError(
-                "BELOW_MINIMUM_ORDER",
-                `El pedido mínimo para ${zone.name} es ${formatMoney(zone.minOrder, restaurant.currency)}`,
-                { minOrder: String(zone.minOrder) },
-              ),
-            );
-          }
+          checkMinimumOrder(zone, subtotal, restaurant.currency);
           if (cash !== null && cash < subtotal + zone.fee) {
             throw new BadRequestException(
               apiError("CASH_AMOUNT_TOO_LOW", "El monto con que pagas debe cubrir el total del pedido"),
@@ -291,27 +359,10 @@ export class OrdersService {
         ),
       );
     }
-    const units = input.items.reduce((sum, item) => sum + item.quantity, 0);
-    if (units > restaurant.maxItemsPerOrder) {
-      throw new ConflictException(
-        apiError(
-          "TOO_MANY_ITEMS",
-          `Este local acepta hasta ${restaurant.maxItemsPerOrder} ${restaurant.maxItemsPerOrder === 1 ? "producto" : "productos"} por pedido; quita algunos o haz otro pedido`,
-          { max: String(restaurant.maxItemsPerOrder) },
-        ),
-      );
-    }
+    checkItemCount(restaurant, input.items);
     const { fields, deliveryFee: feeFor } = await prepare();
 
-    let priced;
-    try {
-      priced = priceOrder(input.items, await this.loadPricingMenu(restaurant.id));
-    } catch (error) {
-      if (error instanceof OrderValidationError) {
-        throw new ConflictException(apiError(error.code, error.message, { productId: error.productId }));
-      }
-      throw error;
-    }
+    const priced = await this.priceItems(restaurant, input.items);
     const deliveryFee = feeFor?.(priced.subtotal) ?? 0;
 
     const day = businessDate(new Date(), restaurant.timezone);
@@ -321,10 +372,16 @@ export class OrdersService {
         // Both counters and the insert share the transaction, so a failed insert never burns a number.
         const number = await this.counters.next(`order:${restaurant.id}`, session);
         const ticketNumber = await this.counters.next(`ticket:${restaurant.id}:${day}`, session);
+        // Table orders add up in the table's open account (opened by the first one).
+        const tableSessionId =
+          fields.channel === "dine_in" && fields.tableId
+            ? (await this.tableAccounts.getOrOpen(restaurant.id, { id: fields.tableId, label: fields.tableLabel ?? "" }, session)).id
+            : null;
         return this.orders.create(
           restaurant.id,
           {
             ...fields,
+            tableSessionId,
             number,
             ticketNumber,
             businessDate: day,
@@ -351,7 +408,9 @@ export class OrdersService {
     }
 
     this.realtime.toRestaurant(restaurant.id).emit("order.created", toOrderView(created));
+    if (created.tableSessionId) await this.tableSessions.notifyChange(restaurant.id, created.tableSessionId);
     await this.push.newOrder(created);
+    await this.printing.orderCreated(restaurant.id, toOrderView(created));
     return { accessToken, order: this.publicView(created, restaurant) };
   }
 
@@ -362,16 +421,33 @@ export class OrdersService {
     return restaurant;
   }
 
-  /** Name, normalized phone and email of a pickup/delivery customer. @throws BadRequestException INVALID_PHONE. */
-  private contact(input: CreatePickupOrderInput): Pick<ChannelFields, "customerName" | "customerPhone" | "customerEmail"> {
+  /**
+   * Name, normalized phone and email of a pickup/delivery customer, and the text-message notices they asked
+   * for (only when the restaurant offers them; the phone must then be able to receive them).
+   * @throws BadRequestException INVALID_PHONE, PHONE_NOT_MOBILE.
+   */
+  private contact(
+    input: CreatePickupOrderInput,
+    restaurant: RestaurantRecord,
+  ): Pick<ChannelFields, "customerName" | "customerPhone" | "customerEmail" | "notifyBy"> {
     const customerPhone = normalizePhone(input.customerPhone);
     if (!customerPhone) {
       throw new BadRequestException(apiError("INVALID_PHONE", "Revisa el teléfono, ej. +56 9 1234 5678"));
+    }
+    const channel = input.notifyByMessage ? this.messaging.offeredChannel(restaurant) : null;
+    if (channel) {
+      const problem = messagingPhoneProblem(customerPhone);
+      if (problem) {
+        throw new BadRequestException(
+          apiError(problem === "not_mobile" ? "PHONE_NOT_MOBILE" : "INVALID_PHONE", MESSAGING_PHONE_MESSAGES[problem]),
+        );
+      }
     }
     return {
       customerName: input.customerName.trim(),
       customerPhone,
       customerEmail: input.customerEmail?.trim().toLowerCase() ?? "",
+      notifyBy: channel,
     };
   }
 
@@ -448,8 +524,57 @@ export class OrdersService {
     if (day > today) {
       throw new BadRequestException(apiError("FUTURE_DATE", "Aún no hay ventas para esa fecha"));
     }
-    const orders = await this.orders.listByBusinessDate(tenant.restaurantId, day);
-    return summarizeDay(orders, day, restaurant.currency);
+    const [orders, tips] = await Promise.all([
+      this.orders.listByBusinessDate(tenant.restaurantId, day),
+      this.tableSessions.tipsByDay(tenant.restaurantId, day, day),
+    ]);
+    return summarizeDay(orders, day, restaurant.currency, tips.get(day) ?? 0);
+  }
+
+  /**
+   * Sales between two business days (inclusive), with one row per day and the tips of the table accounts.
+   * @throws BadRequestException INVALID_DATE, FUTURE_DATE, INVALID_RANGE, RANGE_TOO_LONG.
+   */
+  async salesReport(tenant: TenantContext, from: string, to: string): Promise<SalesReport> {
+    const { report } = await this.rangeData(tenant, from, to);
+    return report;
+  }
+
+  /** The same range as a CSV for Excel (orders, products or days). */
+  async salesExport(
+    tenant: TenantContext,
+    from: string,
+    to: string,
+    kind: SalesExportKind,
+  ): Promise<{ filename: string; csv: string }> {
+    const { report, orders, restaurant } = await this.rangeData(tenant, from, to);
+    const name = { orders: "pedidos", products: "productos", days: "dias" }[kind];
+    return {
+      filename: `ventas-${name}-${restaurant.slug}-${from}${from === to ? "" : `_${to}`}.csv`,
+      csv: salesCsv(kind, orders, report, restaurant.timezone),
+    };
+  }
+
+  private async rangeData(tenant: TenantContext, from: string, to: string) {
+    const restaurant = await this.restaurant(tenant.restaurantId);
+    const today = businessDate(new Date(), restaurant.timezone);
+    if (!isCalendarDate(from) || !isCalendarDate(to)) {
+      throw new BadRequestException(apiError("INVALID_DATE", "Esa fecha no existe; revisa el día y el mes"));
+    }
+    if (from > to) throw new BadRequestException(apiError("INVALID_RANGE", "La fecha de inicio debe ser anterior a la de término"));
+    if (from > today) throw new BadRequestException(apiError("FUTURE_DATE", "Aún no hay ventas para esa fecha"));
+    const lastDay = to > today ? today : to;
+    const days = (Date.parse(`${lastDay}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000 + 1;
+    if (days > REPORT_LIMITS.rangeDaysMax) {
+      throw new BadRequestException(
+        apiError("RANGE_TOO_LONG", `Elige como máximo ${REPORT_LIMITS.rangeDaysMax} días`, { max: String(REPORT_LIMITS.rangeDaysMax) }),
+      );
+    }
+    const [orders, tips] = await Promise.all([
+      this.orders.listByBusinessDateRange(tenant.restaurantId, from, lastDay),
+      this.tableSessions.tipsByDay(tenant.restaurantId, from, lastDay),
+    ]);
+    return { restaurant, orders, report: summarizeRange(orders, from, lastDay, restaurant.currency, tips) };
   }
 
   async get(tenant: TenantContext, orderId: string): Promise<OrderView> {
@@ -503,18 +628,142 @@ export class OrdersService {
         : {}),
     });
     // Someone else moved the order between our read and our write.
-    if (!updated) {
-      throw new ConflictException(apiError("ORDER_CHANGED", "Alguien actualizó este pedido; revisa su estado"));
-    }
-    if (to === "accepted" && hasReceipt(updated)) await this.requestReceipt(updated);
+    if (!updated) throw orderChanged();
+    if (to === "accepted" && hasReceipt(updated)) await this.requestReceipt(updated, { email: true });
+    if (to === "accepted") await this.printing.orderAccepted(tenant.restaurantId, toOrderView(updated));
     // Push to the customers following the order: ready to pick up, or on its way.
     if ((to === "ready" && updated.channel === "pickup") || to === "out_for_delivery") {
       await this.push.customerUpdate(updated, to === "ready" ? "ready" : "on_the_way", this.trackingUrl(updated));
     }
     // Delivered (or otherwise left the road): the rider's position is not shared any more.
     if (order.status === "out_for_delivery") await this.tracking.clear(order.id);
+    await this.messageCustomer(updated, MESSAGE_EVENT_BY_STATUS(updated.channel, to));
     await this.broadcast(updated);
     return toOrderView(updated);
+  }
+
+  /** WhatsApp/SMS notice of an order event, when the customer asked for them (pickup and delivery). */
+  private async messageCustomer(order: OrderRecord, event: OrderMessageEvent | null): Promise<void> {
+    if (!event || !order.notifyBy) return;
+    const restaurant = await this.restaurant(order.restaurantId);
+    const last = order.statusHistory.at(-1);
+    await this.messaging.orderEvent(order, restaurant, event, {
+      restaurantName: restaurant.name,
+      ticketNumber: order.ticketNumber,
+      channel: order.channel,
+      estimatedReadyAt: order.estimatedReadyAt,
+      timezone: restaurant.timezone,
+      riderName: order.riderName,
+      reason: event === "rejected" || event === "cancelled" ? (last?.reason ?? null) : null,
+      trackingUrl: `${this.appUrl}${this.trackingUrl(order)}`,
+    });
+  }
+
+  /**
+   * The staff change the items of an order before the kitchen starts it (the customer changed their mind, a
+   * mistake). Kept lines keep their price snapshot; added lines are priced against the current menu like a
+   * new order. The open switch and the schedule are not checked: the restaurant already took this order.
+   * @throws NotFoundException ORDER_NOT_FOUND; ForbiddenException FORBIDDEN_ROLE; ConflictException
+   *   ORDER_NOT_EDITABLE, ORDER_ALREADY_PAID, ORDER_CHANGED, TABLE_HAS_PAYMENTS, TOO_MANY_ITEMS,
+   *   BELOW_MINIMUM_ORDER and the pricing errors; BadRequestException INVALID_EDIT, ORDER_EMPTY, NOTHING_CHANGED.
+   */
+  async editItems(
+    tenant: TenantContext,
+    userId: string,
+    orderId: string,
+    input: EditOrderItemsInput,
+  ): Promise<OrderView> {
+    const order = await this.orders.findOne(tenant.restaurantId, orderId);
+    if (!order) throw orderNotFound();
+    if (!canEditOrder(order.channel, tenant.roles)) {
+      throw new ForbiddenException(apiError("FORBIDDEN_ROLE", "Tu rol no permite esta acción"));
+    }
+    if (!isOrderEditable(order.status)) {
+      throw new ConflictException(
+        apiError(
+          "ORDER_NOT_EDITABLE",
+          FINAL_ORDER_STATUSES.includes(order.status)
+            ? "Este pedido ya terminó; ya no se puede modificar"
+            : "Este pedido ya se empezó a preparar; ya no se puede modificar",
+        ),
+      );
+    }
+    if (order.paymentStatus === "paid") {
+      throw new ConflictException(apiError("ORDER_ALREADY_PAID", "Este pedido ya está pagado; ya no se puede modificar"));
+    }
+    if (input.revision !== order.revision) throw orderChanged();
+    // A table order whose account already has payments stays as it is: "pay by products" payments point at its
+    // lines by index, and what was already charged must not end up above the account's total.
+    if (order.tableSessionId) {
+      const account = await this.tableAccounts.findOne(tenant.restaurantId, order.tableSessionId);
+      if (account && account.payments.length > 0) throw tableHasPayments(EDIT_WITH_PAYMENTS);
+    }
+    try {
+      checkEdit(order.items, input.keep, input.add.length);
+    } catch (error) {
+      if (error instanceof OrderEditError) throw new BadRequestException(apiError(error.code, error.message));
+      throw error;
+    }
+
+    const restaurant = await this.restaurant(order.restaurantId);
+    const added = input.add.length ? (await this.priceItems(restaurant, input.add)).items : [];
+    const edited = applyEdit(order.items, input.keep, added);
+    checkItemCount(restaurant, edited.items);
+    if (order.channel === "delivery" && order.delivery) {
+      // The fee stays as charged; the minimum is checked only while the zone still exists.
+      const zone = await this.deliveryZones.findOne(restaurant.id, order.delivery.zoneId);
+      if (zone) checkMinimumOrder(zone, edited.subtotal, restaurant.currency);
+    }
+    const total = edited.subtotal + order.deliveryFee;
+    // The bill the customer said they would pay with no longer covers the total: it is dropped, so the board
+    // asks again how they pay instead of rejecting the edit.
+    const cash = order.expectedPayment?.cashAmount ?? null;
+
+    const user = await this.users.findById(userId);
+    const expected = { status: order.status, revision: order.revision };
+    const change = {
+      items: edited.items,
+      subtotal: edited.subtotal,
+      total,
+      clearCashAmount: cash !== null && cash < total,
+      edit: {
+        at: new Date(),
+        byUserId: userId,
+        byName: user?.name ?? null,
+        reason: input.reason?.trim() || null,
+        changes: edited.changes,
+      },
+    };
+    const updated = order.tableSessionId
+      ? await this.inTableAccount(tenant.restaurantId, order.tableSessionId, EDIT_WITH_PAYMENTS, (tx) =>
+          this.orders.editItems(tenant.restaurantId, order.id, expected, change, tx),
+        )
+      : await this.orders.editItems(tenant.restaurantId, order.id, expected, change);
+    // Started, paid or edited by someone else between our read and our write.
+    if (!updated) throw orderChanged();
+
+    if (hasReceipt(updated)) {
+      await this.discardReceipt(order);
+      await this.requestReceipt(updated, { email: false });
+    }
+    // Printers that already have the old kitchen ticket get the "MODIFICADO" one.
+    await this.printing.orderEdited(tenant.restaurantId, toOrderView(updated));
+    await this.broadcast(updated);
+    return toOrderView(updated);
+  }
+
+  /**
+   * Deletes the receipt of the revision just edited (best effort, logged): it no longer shows what was
+   * ordered, and the new revision has its own key, so meanwhile the customer gets "pending". Kept when the
+   * customer left an email: it may still be the attachment of the confirmation email waiting to be sent.
+   */
+  private async discardReceipt(previous: OrderRecord): Promise<void> {
+    if (previous.customerEmail) return;
+    try {
+      await this.storage.deletePrivate([receiptKey(previous)]);
+    } catch (error) {
+      this.logger.warn({ err: error, orderId: previous.id, revision: previous.revision }, "could not delete old receipt");
+    }
   }
 
   /** Staff download of an order's receipt. */
@@ -541,7 +790,7 @@ export class OrdersService {
     }
     const pdf = await this.storage.getPrivate(receiptKey(order));
     if (!pdf) {
-      if (await this.pdfQueue.receiptFailed(order.id)) {
+      if (await this.pdfQueue.receiptFailed(order.id, order.revision)) {
         throw new UnprocessableEntityException(
           apiError("RECEIPT_FAILED", "No pudimos generar el comprobante; pídelo en el local"),
         );
@@ -553,16 +802,18 @@ export class OrdersService {
   }
 
   /**
-   * Asks the workers for the PDF receipt and, when the customer left an email, the confirmation email.
-   * The job carries the data to print (an immutable snapshot) and the tracking link, whose token is
-   * re-derived from `clientOrderId`: only its hash is stored.
+   * Asks the workers for the PDF receipt of the order's current revision and, when the customer left an
+   * email, the confirmation email. The job carries the data to print (an immutable snapshot) and the
+   * tracking link, whose token is re-derived from `clientOrderId`: only its hash is stored.
+   * @param options.email false for a receipt regenerated after an edit: the confirmation is sent only once.
    */
-  private async requestReceipt(order: OrderRecord): Promise<void> {
+  private async requestReceipt(order: OrderRecord, options: { email: boolean }): Promise<void> {
     const restaurant = await this.restaurant(order.restaurantId);
     const accessToken = deriveAccessToken(this.tokenSecret, restaurant.id, order.clientOrderId);
     await this.pdfQueue.enqueueReceipt({
       restaurantId: restaurant.id,
       orderId: order.id,
+      revision: order.revision,
       outputKey: receiptKey(order),
       receipt: {
         restaurant: { name: restaurant.name, phone: restaurant.phone },
@@ -583,7 +834,7 @@ export class OrdersService {
         delivery: order.delivery ? { ...order.delivery } : null,
         expectedPayment: toExpectedPaymentView(order),
       },
-      email: order.customerEmail
+      email: options.email && order.customerEmail
         ? { to: order.customerEmail, trackingUrl: `${this.appUrl}/pedido#t=${accessToken}` }
         : null,
     });
@@ -592,19 +843,66 @@ export class OrdersService {
 
   /**
    * Cash, card terminal or transfer. Independent of the order status. The cashier and the owner register any
-   * payment; a rider only the ones of deliveries assigned to them (cash on delivery).
-   * @throws NotFoundException ORDER_NOT_FOUND; ForbiddenException NOT_YOUR_DELIVERY.
+   * payment; a rider only the ones of deliveries assigned to them (cash on delivery). A table order whose
+   * account already has (split) payments is charged from the account instead.
+   * @throws NotFoundException ORDER_NOT_FOUND; ForbiddenException NOT_YOUR_DELIVERY; ConflictException
+   *   TABLE_HAS_PAYMENTS.
    */
   async markPaid(tenant: TenantContext, userId: string, orderId: string, method: PaymentMethod): Promise<OrderView> {
+    const order = await this.orders.findOne(tenant.restaurantId, orderId);
+    if (!order) throw orderNotFound();
     if (!tenant.roles.some((role) => role === "owner" || role === "cashier")) {
-      const order = await this.orders.findOne(tenant.restaurantId, orderId);
-      if (!order) throw orderNotFound();
-      if (order.channel !== "delivery" || order.riderId !== userId) throw notYourDelivery();
+      const waiterAtTable = order.channel === "dine_in" && tenant.roles.includes("waiter");
+      const riderOfIt = order.channel === "delivery" && order.riderId === userId;
+      if (!waiterAtTable && !riderOfIt) {
+        // Waiters charge table orders only; anyone else here is a rider, limited to their deliveries.
+        throw tenant.roles.includes("waiter")
+          ? new ForbiddenException(apiError("FORBIDDEN_ROLE", "Solo puedes registrar pagos de pedidos en la mesa"))
+          : notYourDelivery();
+      }
     }
-    const updated = await this.orders.markPaid(tenant.restaurantId, orderId, method);
+    // Paying a table order on its own once its account has payments would charge it twice: the payments
+    // already cover part of the account, this order included.
+    const updated = order.tableSessionId
+      ? await this.inTableAccount(tenant.restaurantId, order.tableSessionId, PAY_WITH_PAYMENTS, (tx) =>
+          this.orders.markPaid(tenant.restaurantId, orderId, method, tx),
+        )
+      : await this.orders.markPaid(tenant.restaurantId, orderId, method);
     if (!updated) throw orderNotFound();
+    const payer = await this.users.findById(userId);
+    await this.printing.orderPaid(tenant.restaurantId, toOrderView(updated), method, payer?.name ?? null);
     this.realtime.toStaffOf(tenant.restaurantId, [updated.riderId]).emit("order.updated", toOrderView(updated));
+    if (updated.tableSessionId) await this.tableSessions.notifyChange(tenant.restaurantId, updated.tableSessionId);
     return toOrderView(updated);
+  }
+
+  /**
+   * Runs a write on a table order inside a transaction that first checks (and bumps the revision of) its
+   * account: while the account has no payments the write goes ahead, and a payment computed meanwhile misses
+   * (TABLE_SESSION_CHANGED); once it has payments, the write is refused.
+   * @throws ConflictException TABLE_HAS_PAYMENTS with `message`.
+   */
+  private async inTableAccount<T>(
+    restaurantId: string,
+    tableSessionId: string,
+    message: string,
+    write: (tx: ClientSession) => Promise<T>,
+  ): Promise<T> {
+    return this.connection.transaction(async (tx) => {
+      if (!(await this.tableAccounts.lockWithoutPayments(restaurantId, tableSessionId, tx))) throw tableHasPayments(message);
+      return write(tx);
+    });
+  }
+
+  /**
+   * "Imprimir" on the board, through the print agents: the kitchen ticket on every printer that prints
+   * kitchen tickets, again on purpose (a lost or stained ticket).
+   * @throws NotFoundException ORDER_NOT_FOUND.
+   */
+  async printKitchen(tenant: TenantContext, orderId: string): Promise<{ queued: number }> {
+    const order = await this.orders.findOne(tenant.restaurantId, orderId);
+    if (!order) throw orderNotFound();
+    return { queued: await this.printing.printOrder(tenant.restaurantId, toOrderView(order)) };
   }
 
   /** Members with the rider role, for the assignment picker. */
@@ -720,6 +1018,7 @@ export class OrdersService {
       .emit("order.updated", toOrderView(order));
     const restaurant = await this.restaurant(order.restaurantId);
     this.realtime.toOrder(order.id).emit("order.status", this.publicView(order, restaurant));
+    if (order.tableSessionId) await this.tableSessions.notifyChange(order.restaurantId, order.tableSessionId);
   }
 
   private publicView(order: OrderRecord, restaurant: RestaurantRecord): PublicOrderView {
@@ -730,6 +1029,28 @@ export class OrdersService {
     const restaurant = await this.restaurants.findById(id);
     if (!restaurant) throw orderNotFound();
     return restaurant;
+  }
+
+  /**
+   * Prices cart lines against the current menu, in the restaurant's timezone (discounts by day and date).
+   * @throws ConflictException PRODUCT_NOT_AVAILABLE, PRODUCT_SOLD_OUT, OPTION_SOLD_OUT, INVALID_MODIFIERS with
+   *   `meta.productId`.
+   */
+  private async priceItems(
+    restaurant: RestaurantRecord,
+    items: OrderItemInput[],
+  ): Promise<{ items: PricedItem[]; subtotal: number }> {
+    try {
+      return priceOrder(items, await this.loadPricingMenu(restaurant.id), {
+        at: new Date(),
+        timeZone: restaurant.timezone,
+      });
+    } catch (error) {
+      if (error instanceof OrderValidationError) {
+        throw new ConflictException(apiError(error.code, error.message, { productId: error.productId }));
+      }
+      throw error;
+    }
   }
 
   /** Whole menu of the restaurant (small) in the shape the pricing needs. */
@@ -751,6 +1072,7 @@ export class OrdersService {
             available: p.available,
             orderable: p.visible && activeCategories.has(p.categoryId),
             modifierGroupIds: p.modifierGroupIds,
+            promo: p.promo,
           },
         ]),
       ),

@@ -1,5 +1,5 @@
-import type { ProductView } from "@app/types";
-import { isNameTaken } from "@app/utils";
+import type { ProductPromo, ProductView } from "@app/types";
+import { isNameTaken, promoProblem } from "@app/utils";
 import { Injectable } from "@nestjs/common";
 import { MediaService } from "../../infra/storage/media.service";
 import { CategoriesRepository } from "./categories.repository";
@@ -8,7 +8,9 @@ import {
   invalidCategory,
   invalidModifierGroups,
   invalidOrder,
+  invalidPromo,
   isPermutation,
+  promoPriceNotLower,
   productNameTaken,
   productNotFound,
 } from "./menu.errors";
@@ -23,6 +25,9 @@ export interface CreateProductInput {
   visible?: boolean;
   modifierGroupIds?: string[];
 }
+
+/** A discount as the owner sends it: only kind and value are required. */
+export type PromoInput = Pick<ProductPromo, "kind" | "value"> & Partial<ProductPromo>;
 
 @Injectable()
 export class ProductsService {
@@ -68,11 +73,44 @@ export class ProductsService {
       changes.modifierGroupIds ?? [],
     );
 
+    if (changes.price !== undefined && current.promo?.kind === "price" && current.promo.value >= changes.price) {
+      throw promoPriceNotLower();
+    }
+
     if (changes.name !== undefined || movedCategory) {
       await this.assertNameFree(restaurantId, changes.categoryId ?? current.categoryId, changes.name ?? current.name, productId);
     }
 
     const updated = await this.products.update(restaurantId, productId, changes, movedCategory);
+    if (!updated) throw productNotFound();
+    return this.toView(updated);
+  }
+
+  /**
+   * Sets the product's discount (owner only), checked against its current price.
+   * @throws NotFoundException PRODUCT_NOT_FOUND; BadRequestException INVALID_PROMO.
+   */
+  async setPromo(restaurantId: string, productId: string, input: PromoInput): Promise<ProductView> {
+    const product = await this.products.findOne(restaurantId, productId);
+    if (!product) throw productNotFound();
+    const promo: ProductPromo = {
+      kind: input.kind,
+      value: input.value,
+      days: [...(input.days ?? [])].sort((a, b) => a - b),
+      startsOn: input.startsOn ?? null,
+      endsOn: input.endsOn ?? null,
+      label: input.label?.trim() ?? "",
+    };
+    const problem = promoProblem(promo, product.price);
+    if (problem) throw invalidPromo(problem);
+    const updated = await this.products.setPromo(restaurantId, productId, promo);
+    if (!updated) throw productNotFound();
+    return this.toView(updated);
+  }
+
+  /** @throws NotFoundException PRODUCT_NOT_FOUND. */
+  async removePromo(restaurantId: string, productId: string): Promise<ProductView> {
+    const updated = await this.products.setPromo(restaurantId, productId, null);
     if (!updated) throw productNotFound();
     return this.toView(updated);
   }
@@ -132,6 +170,7 @@ export class ProductsService {
       visible: product.visible,
       image: this.media.productImage(product.imageKey),
       modifierGroupIds: product.modifierGroupIds,
+      promo: product.promo,
     };
   }
 

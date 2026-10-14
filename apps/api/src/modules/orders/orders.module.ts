@@ -2,6 +2,8 @@ import { Module } from "@nestjs/common";
 import { MongooseModule } from "@nestjs/mongoose";
 import { AuthModule } from "../auth/auth.module";
 import { MapsModule } from "../maps/maps.module";
+import { MessagingModule } from "../messaging/messaging.module";
+import { PrintingModule } from "../printing/printing.module";
 import { PushModule } from "../push/push.module";
 import { MenuModule } from "../menu/menu.module";
 import { RestaurantsModule } from "../restaurants/restaurants.module";
@@ -26,6 +28,10 @@ import { Counter, CounterSchema } from "./schemas/counter.schema";
 import { DeliveryZone, DeliveryZoneSchema } from "./schemas/delivery-zone.schema";
 import { Order, OrderSchema } from "./schemas/order.schema";
 import { Table, TableSchema } from "./schemas/table.schema";
+import { TableSession, TableSessionSchema } from "./schemas/table-session.schema";
+import { PublicTableSessionsController, TableSessionsController } from "./table-sessions.controller";
+import { TableSessionsRepository } from "./table-sessions.repository";
+import { TableSessionsService } from "./table-sessions.service";
 import { TablesController } from "./tables.controller";
 import { TablesRepository } from "./tables.repository";
 import { TablesService } from "./tables.service";
@@ -39,7 +45,10 @@ import { TablesService } from "./tables.service";
     MenuModule,
     MapsModule,
     PushModule,
+    MessagingModule,
+    PrintingModule,
     MongooseModule.forFeature([
+      { name: TableSession.name, schema: TableSessionSchema },
       { name: Table.name, schema: TableSchema },
       { name: Order.name, schema: OrderSchema },
       { name: Counter.name, schema: CounterSchema },
@@ -56,6 +65,8 @@ import { TablesService } from "./tables.service";
     PublicOrdersController,
     DeliveryZonesController,
     PublicDeliveryZonesController,
+    TableSessionsController,
+    PublicTableSessionsController,
   ],
   providers: [
     OrdersService,
@@ -67,6 +78,10 @@ import { TablesService } from "./tables.service";
     CountersRepository,
     DeliveryZonesRepository,
     RiderTrackingService,
+    TableSessionsService,
+    TableSessionsRepository,
   ],
+  // The live floor module (phase 9) reads tables, orders and table accounts through the same repositories.
+  exports: [TablesRepository, OrdersRepository, TableSessionsRepository],
 })
 export class OrdersModule {}

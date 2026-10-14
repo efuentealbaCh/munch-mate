@@ -152,6 +152,30 @@ if [ "$code" = "200" ]; then pass "push configuration served"; else fail "push c
 code=$(status "$BASE/api/me/orders")
 if [ "$code" = "401" ]; then pass "customer order history requires a session (401)"; else fail "anonymous order history returned $code"; fi
 
+# Phase 8, safe everywhere: unknown table accounts, the floor and sales exports need a valid QR or a session.
+code=$(status "$BASE/api/public/tables/smoke-no-existe/bill")
+if [ "$code" = "404" ]; then pass "table account of an unknown QR → 404"; else fail "unknown table account returned $code"; fi
+code=$(status "$BASE/api/restaurants/000000000000000000000000/table-sessions")
+if [ "$code" = "401" ]; then pass "the floor requires a session (401)"; else fail "anonymous floor returned $code"; fi
+code=$(status "$BASE/api/restaurants/000000000000000000000000/reports/sales.csv?from=2026-01-01&to=2026-01-01&kind=orders")
+if [ "$code" = "401" ]; then pass "sales export requires a session (401)"; else fail "anonymous sales export returned $code"; fi
+
+# Print agents (phase 8), safe everywhere: an unknown pairing code is refused (it creates nothing) and the
+# owner's printer settings need a session.
+body=$($CURL -X POST -H 'Content-Type: application/json'   -d '{"code":"ZZZZ-ZZZZ","name":"smoke","appVersion":"smoke"}' "$BASE/api/print-agents/pair" || true)
+case "$body" in
+  *'"INVALID_PAIRING_CODE"'*) pass "print agent pairing with an unknown code → 400" ;;
+  *) fail "print agent pairing with an unknown code: $body" ;;
+esac
+code=$(status "$BASE/api/restaurants/000000000000000000000000/print-agents")
+if [ "$code" = "401" ]; then pass "print agents require a session (401)"; else fail "anonymous print agents returned $code"; fi
+
+# Live floor (phase 9), safe everywhere: the floor plan and the live indicators need a session.
+code=$(status "$BASE/api/restaurants/000000000000000000000000/floor-plan")
+if [ "$code" = "401" ]; then pass "floor plan requires a session (401)"; else fail "anonymous floor plan returned $code"; fi
+code=$(status "$BASE/api/restaurants/000000000000000000000000/live")
+if [ "$code" = "401" ]; then pass "live indicators require a session (401)"; else fail "anonymous live indicators returned $code"; fi
+
 # Platform admin, safe everywhere: requires a session.
 code=$(status "$BASE/api/platform/restaurants")
 if [ "$code" = "401" ]; then pass "platform admin requires a session (401)"; else fail "anonymous platform admin returned $code"; fi
@@ -353,6 +377,26 @@ if [ "$LOCAL" = true ]; then
   done
   if [ "$delivered" = true ]; then pass "confirmation email with the receipt delivered (Mailpit)"; else fail "confirmation email not delivered within 15s"; fi
 
+  # Order edits: before the kitchen starts it, the staff add one unit; the server reprices the order, bumps
+  # its revision and the workers generate the receipt again (without a second email).
+  body=$($CURL -b "$jar" -H "Origin: $BASE" $json -X PUT \
+    -d "{\"revision\":0,\"keep\":[{\"line\":0,\"quantity\":2}],\"add\":[{\"productId\":\"$product_id\",\"quantity\":1,\"modifiers\":[]}]}" \
+    "$orders_url/items" || true)
+  case "$body" in
+    *'"total":11970'*'"revision":1'*) pass "accepted pickup order edited: one more unit, total repriced, revision 1" ;;
+    *) fail "edit pickup order: $body" ;;
+  esac
+  receipt_ready=false
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    content_type=$($CURL -b "$jar" -o /dev/null -w '%{http_code} %{content_type}' "$orders_url/receipt" || true)
+    if [ "$content_type" = "200 application/pdf" ]; then
+      receipt_ready=true
+      break
+    fi
+    sleep 1
+  done
+  if [ "$receipt_ready" = true ]; then pass "receipt regenerated after the edit"; else fail "edited receipt not ready: $content_type"; fi
+
   for next in preparing ready picked_up; do
     code=$(status -b "$jar" -H "Origin: $BASE" $json -d "{\"status\":\"$next\"}" "$orders_url/status")
     [ "$code" = "200" ] || break
@@ -388,6 +432,98 @@ if [ "$LOCAL" = true ]; then
   [ "$code" = "200" ] && code=$(status -b "$jar" -H "Origin: $BASE" $json -d '{"method":"cash"}' "$orders_url/payment")
   [ "$code" = "200" ] && code=$(status -b "$jar" -H "Origin: $BASE" $json -d '{"status":"delivered"}' "$orders_url/status")
   if [ "$code" = "200" ]; then pass "delivery dispatched, paid on delivery and delivered"; else fail "delivery flow returned $code"; fi
+
+  # Phase 8: a product discount, the table account (call, bill with tip, split charge), the sales export and a
+  # WhatsApp notice delivered to Mailpit (the local stack runs with MESSAGING_PROVIDER=mailpit).
+  promo_url="$BASE/api/restaurants/$restaurant_id/menu/products/$product_id/promo"
+  code=$(status -b "$jar" -H "Origin: $BASE" $json -X PUT -d '{"kind":"percent","value":50}' "$promo_url")
+  if [ "$code" = "200" ]; then pass "50 % discount set on the product"; else fail "set discount returned $code"; fi
+  client_order_id=$(node -e 'console.log(crypto.randomUUID())' 2>/dev/null || cat /proc/sys/kernel/random/uuid)
+  body=$($CURL -H "Origin: $BASE" $json \
+    -d "{\"clientOrderId\":\"$client_order_id\",\"items\":[{\"productId\":\"$product_id\",\"quantity\":2,\"modifiers\":[]}]}" \
+    "$BASE/api/public/tables/$table_token/orders" || true)
+  case "$body" in
+    *'"regularUnitPrice":3990'*'"total":3990'*) pass "table order charged with the discount (priced by the server)" ;;
+    *) fail "discounted table order: $body" ;;
+  esac
+  code=$(status -b "$jar" -H "Origin: $BASE" -X DELETE "$promo_url")
+  if [ "$code" = "200" ]; then pass "discount removed"; else fail "remove discount returned $code"; fi
+
+  if $CURL "$BASE/api/public/tables/$table_token/bill" | grep -q '"open":true'; then pass "the table account adds up its orders"; else fail "table account"; fi
+  code=$(status -H "Origin: $BASE" -X POST "$BASE/api/public/tables/$table_token/call-waiter")
+  if [ "$code" = "200" ]; then pass "customer calls the waiter from the QR"; else fail "call waiter returned $code"; fi
+  sessions=$($CURL -b "$jar" "$BASE/api/restaurants/$restaurant_id/table-sessions")
+  case "$sessions" in
+    *'"waiterCalledAt":"20'*) pass "the floor sees the call" ;;
+    *) fail "floor: $sessions" ;;
+  esac
+  session_id=$(printf '%s' "$sessions" | sed -n 's/^\[{"id":"\([0-9a-f]\{24\}\)".*/\1/p')
+  if $CURL -H "Origin: $BASE" $json -d '{"tip":{"kind":"suggested"}}' "$BASE/api/public/tables/$table_token/request-bill" |
+    grep -q '"requestedTip":[1-9]'; then
+    pass "customer asks for the bill with the suggested tip"
+  else
+    fail "request bill"
+  fi
+  close_url="$BASE/api/restaurants/$restaurant_id/table-sessions/$session_id/close"
+  code=$(status -b "$jar" -H "Origin: $BASE" $json -d '{"method":"card_pos","tip":800}' "$close_url")
+  if [ "$code" = "409" ]; then pass "a table with orders in the kitchen cannot be charged yet (409)"; else fail "early charge returned $code"; fi
+  for table_order in $(printf '%s' "$sessions" | grep -o '"orderIds":\[[^]]*\]' | grep -o '[0-9a-f]\{24\}'); do
+    for next in accepted preparing ready served; do
+      status -b "$jar" -H "Origin: $BASE" $json -d "{\"status\":\"$next\"}" "$BASE/api/restaurants/$restaurant_id/orders/$table_order/status" > /dev/null
+    done
+  done
+  # Split bill: two equal parts, the first in cash and the last by card (its payment closes the account).
+  session_url="$BASE/api/restaurants/$restaurant_id/table-sessions/$session_id"
+  code=$(status -b "$jar" -H "Origin: $BASE" $json -X PUT -d '{"mode":"equal","parts":2}' "$session_url/split")
+  if [ "$code" = "200" ]; then pass "table account split in two equal parts"; else fail "split table returned $code"; fi
+  body=$($CURL -b "$jar" -H "Origin: $BASE" $json -d '{"kind":"equal","part":1,"method":"cash","tip":300}' "$session_url/payments" || true)
+  case "$body" in
+    *'"status":"open"'*'"pendingParts":[2]'*) pass "first part paid in cash, the account stays open" ;;
+    *) fail "first part: $body" ;;
+  esac
+  body=$($CURL -b "$jar" -H "Origin: $BASE" $json -d '{"kind":"equal","part":2,"method":"card_pos","tip":500}' "$session_url/payments" || true)
+  case "$body" in
+    *'"status":"closed"'*'"paymentMethods":["cash","card_pos"]'*) pass "last part paid by card closes the account (tips 300 + 500)" ;;
+    *) fail "last part: $body" ;;
+  esac
+  if $CURL -b "$jar" "$BASE/api/restaurants/$restaurant_id/reports/daily" | grep -q '"tips":800'; then
+    pass "the day's tips are reported apart from sales"
+  else
+    fail "tips in the daily summary"
+  fi
+  today=$(node -e 'console.log(new Intl.DateTimeFormat("en-CA",{timeZone:"America/Santiago"}).format(new Date()))')
+  if $CURL -b "$jar" "$BASE/api/restaurants/$restaurant_id/reports/sales.csv?from=$today&to=$today&kind=orders" | grep -q 'Fecha;Hora;N'; then
+    pass "sales exported as CSV for Excel"
+  else
+    fail "sales export"
+  fi
+
+  code=$(status -b "$jar" -H "Origin: $BASE" $json -X PATCH \
+    -d '{"messaging":{"enabled":true,"channel":"whatsapp","senderPhone":"+56 9 7777 8888"}}' "$BASE/api/restaurants/$restaurant_id")
+  if [ "$code" = "200" ]; then pass "WhatsApp notices turned on with the sender number"; else fail "messaging settings returned $code"; fi
+  smoke_phone="9$(date +%s | cut -c3-10)"
+  client_order_id=$(node -e 'console.log(crypto.randomUUID())' 2>/dev/null || cat /proc/sys/kernel/random/uuid)
+  body=$($CURL -H "Origin: $BASE" $json \
+    -d "{\"clientOrderId\":\"$client_order_id\",\"customerName\":\"Smoke WA\",\"customerPhone\":\"$smoke_phone\",\"notifyByMessage\":true,\"items\":[{\"productId\":\"$product_id\",\"quantity\":1,\"modifiers\":[]}]}" \
+    "$BASE/api/public/restaurants/$slug/orders" || true)
+  case "$body" in
+    *'"notifyBy":"whatsapp"'*) pass "pickup customer asked for WhatsApp notices" ;;
+    *) fail "pickup with notices: $body" ;;
+  esac
+  order_id=$($CURL -b "$jar" "$BASE/api/restaurants/$restaurant_id/orders" |
+    grep -o '"id":"[0-9a-f]\{24\}","number":[0-9]*,"ticketNumber":[0-9]*,"businessDate":"[0-9-]*","channel":"pickup"' |
+    sed -n 's/"id":"\([0-9a-f]\{24\}\)".*/\1/p' | head -1)
+  status -b "$jar" -H "Origin: $BASE" $json -d '{"status":"accepted","readyInMinutes":15}' \
+    "$BASE/api/restaurants/$restaurant_id/orders/$order_id/status" > /dev/null
+  notified=false
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    if curl -sS --max-time 5 "http://127.0.0.1:8025/api/v1/search?query=to:56$smoke_phone@whatsapp.mensajes.local" | grep -q '"total":[1-9]'; then
+      notified=true
+      break
+    fi
+    sleep 1
+  done
+  if [ "$notified" = true ]; then pass "WhatsApp notice delivered when accepted (Mailpit)"; else fail "WhatsApp notice not delivered within 15s"; fi
 
   # Daily summary of the orders above; a regular owner is not a platform admin.
   if $CURL -b "$jar" "$BASE/api/restaurants/$restaurant_id/reports/daily" | grep -q '"sales":{"total":[1-9]'; then

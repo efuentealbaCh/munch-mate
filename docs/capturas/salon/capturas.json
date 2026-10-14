@@ -1,0 +1,82 @@
+[
+  {
+    "file": "01-menu-con-descuento.png",
+    "actor": "Cliente",
+    "caption": "En la mesa el menú muestra el precio con descuento, el normal tachado y el texto de la promoción."
+  },
+  {
+    "file": "02-mesa-botones.png",
+    "actor": "Cliente",
+    "caption": "Con un pedido hecho aparecen «Llamar al garzón» y «Mi cuenta» con el consumo de toda la mesa."
+  },
+  {
+    "file": "03-garzon-avisado.png",
+    "actor": "Cliente",
+    "caption": "«Llamar al garzón» avisa al salón al instante; el botón queda en «Garzón avisado» hasta que lo atiendan."
+  },
+  {
+    "file": "04-salon-llamado.png",
+    "actor": "Garzón",
+    "caption": "En «Salón» la mesa sube arriba con el llamado (y suena si el sonido está activo). «Atendido» lo quita."
+  },
+  {
+    "file": "05-cuenta-propina.png",
+    "actor": "Cliente",
+    "caption": "«Mi cuenta» suma los pedidos de la mesa y ofrece la propina sugerida (10 %), otro monto o ninguna. Es voluntaria."
+  },
+  {
+    "file": "06-cuenta-pedida.png",
+    "actor": "Cliente",
+    "caption": "Pedida la cuenta: el total con propina queda a la vista y el garzón viene a cobrar."
+  },
+  {
+    "file": "07-salon-cuenta-pedida.png",
+    "actor": "Garzón",
+    "caption": "El salón ve «Pidió la cuenta» con la propina elegida. «Precuenta» la imprime; «Cobrar» la cierra."
+  },
+  {
+    "file": "08-cobrar.png",
+    "actor": "Garzón",
+    "caption": "Al cobrar se confirma la propina (editable) y el medio de pago; se pagan todos los pedidos de la mesa."
+  },
+  {
+    "file": "09-cuenta-pagada.png",
+    "actor": "Cliente",
+    "caption": "En el teléfono de la mesa la cuenta queda pagada. El próximo pedido abre una cuenta nueva."
+  },
+  {
+    "file": "10-editor-descuento.png",
+    "actor": "Dueño",
+    "caption": "Menú → editar producto → «Descuento»: porcentaje o precio especial, días y fechas, con la vista previa del precio."
+  },
+  {
+    "file": "11-impresora.png",
+    "actor": "Cocina",
+    "caption": "«Impresora» en Pedidos: papel de 58 u 80 mm e impresión automática de comandas, por dispositivo."
+  },
+  {
+    "file": "12-ventas-dia.png",
+    "actor": "Dueño / caja",
+    "caption": "Ventas del día con las propinas aparte, los descuentos y la exportación a Excel por pedido, producto o día."
+  },
+  {
+    "file": "13-ventas-rango.png",
+    "actor": "Dueño / caja",
+    "caption": "«Rango y exportar»: cualquier periodo con una fila por día, para descargar o imprimir."
+  },
+  {
+    "file": "14-avisos-config.png",
+    "actor": "Dueño",
+    "caption": "Resumen → «Avisos por WhatsApp o SMS»: canal y número de envío del local."
+  },
+  {
+    "file": "15-checkout-whatsapp.png",
+    "actor": "Cliente",
+    "caption": "Al pedir para retiro o delivery, «Avísame por WhatsApp a este número» (solo celulares)."
+  },
+  {
+    "file": "16-seguimiento-whatsapp.png",
+    "actor": "Cliente",
+    "caption": "El seguimiento confirma los avisos por WhatsApp."
+  }
+]

@@ -1,6 +1,6 @@
 "use client";
 
-import { ORDER_CHANNEL_LABELS, ORDER_STATUS_LABELS, type PublicOrderView } from "@app/types";
+import { MESSAGE_CHANNEL_LABELS, ORDER_CHANNEL_LABELS, ORDER_STATUS_LABELS, type PublicOrderView } from "@app/types";
 import { formatPhone } from "@app/utils";
 import {
   BellPlusIcon,
@@ -12,7 +12,9 @@ import {
   CloudOffIcon,
   DownloadIcon,
   MapPinIcon,
+  MessageCircleIcon,
   PartyPopperIcon,
+  PencilIcon,
   PhoneIcon,
   ReceiptTextIcon,
   SearchXIcon,
@@ -276,6 +278,13 @@ function TrackedOrder({ token }: { token: string }) {
 
       <FollowOrderButton token={token} order={order} />
 
+      {order.notifyBy && !finished ? (
+        <p className="flex items-center justify-center gap-2 text-sm text-muted-foreground" data-testid="message-notices">
+          <MessageCircleIcon className="size-4" aria-hidden />
+          Te avisamos por {MESSAGE_CHANNEL_LABELS[order.notifyBy]} cuando cambie tu pedido.
+        </p>
+      ) : null}
+
       {order.delivery && !finished ? <DeliveryDetails order={order} /> : null}
 
       {remote && order.restaurant.phone && !finished && !handedOver ? (
@@ -293,6 +302,13 @@ function TrackedOrder({ token }: { token: string }) {
         <h2 id="detalle" className="font-semibold">
           Detalle
         </h2>
+        {/* The staff changed the items (phase 8): the detail and the total below are already the new ones. */}
+        {order.editedAt ? (
+          <p className="flex items-center gap-1.5 rounded-lg bg-muted px-3 py-2 text-sm" role="status" data-testid="order-edited-notice">
+            <PencilIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+            El local modificó tu pedido a las {formatClockTime(order.editedAt)}.
+          </p>
+        ) : null}
         <ul className="flex flex-col divide-y rounded-xl bg-card px-4 ring-1 ring-foreground/10">
           {order.items.map((item, index) => (
             <li key={`${item.productId}-${index}`} className="flex items-start justify-between gap-3 py-3 text-sm">

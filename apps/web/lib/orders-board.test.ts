@@ -48,6 +48,7 @@ function order(id: string, status: OrderStatus, overrides: Partial<OrderView> = 
     statusHistory: steps.map((s) => ({ status: s, at: "2026-10-07T12:00:00.000Z", byName: null })),
     paymentStatus: "unpaid",
     paymentMethod: null,
+    paymentBreakdown: [],
     items: [],
     subtotal: 1000,
     total: 1000,
@@ -57,6 +58,10 @@ function order(id: string, status: OrderStatus, overrides: Partial<OrderView> = 
     customerEmail: "",
     note: "",
     tableLabel: "Mesa 1",
+    tableSessionId: null,
+    notifyBy: null,
+    revision: 0,
+    edits: [],
     estimatedReadyAt: null,
     receiptAvailable: false,
     deliveryFee: 0,
@@ -115,6 +120,19 @@ describe("merging events and REST data", () => {
     const paid = { ...accepted, paymentStatus: "paid" as const };
     expect(newerOrder(paid, accepted)).toBe(paid);
     expect(newerOrder(undefined, pending)).toBe(pending);
+  });
+
+  it("counts an edit of the items as newer, also against a paid copy of the previous revision", () => {
+    const accepted = order("o1", "accepted");
+    const edited = { ...accepted, revision: 1 };
+    expect(newerOrder(edited, accepted)).toBe(edited);
+    expect(newerOrder(accepted, edited)).toBe(edited);
+    const editedTwice = { ...accepted, revision: 2 };
+    const paidAfterOneEdit = { ...edited, paymentStatus: "paid" as const };
+    expect(newerOrder(paidAfterOneEdit, editedTwice)).toBe(editedTwice);
+    // Same revision: the status history still decides.
+    const preparing = order("o1", "preparing", { revision: 1 });
+    expect(newerOrder(preparing, edited)).toBe(preparing);
   });
 
   it("upserts and drops orders that reached a final status from the active board", () => {

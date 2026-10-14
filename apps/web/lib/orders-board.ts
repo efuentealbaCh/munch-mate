@@ -10,8 +10,15 @@ import { checkTransition } from "@app/utils";
 
 /** Staff order board: columns, merging live events with REST data, and the day summary. */
 
-/** Roles that work the floor: see the board, open/close the restaurant (same list as the api). */
-export const FLOOR_ROLES: readonly RestaurantRole[] = ["owner", "cashier", "kitchen"];
+/** Roles that work the floor: see the board (same list as the api). Waiters (phase 8) work table orders. */
+export const FLOOR_ROLES: readonly RestaurantRole[] = ["owner", "cashier", "kitchen", "waiter"];
+
+/** Roles that open and close the restaurant for orders (the api's accepting-orders route). */
+export const OPEN_CLOSE_ROLES: readonly RestaurantRole[] = ["owner", "cashier", "kitchen"];
+
+export function canOpenClose(roles: readonly RestaurantRole[]): boolean {
+  return roles.some((role) => OPEN_CLOSE_ROLES.includes(role));
+}
 
 /** Roles that register payments (the api allows owner and cashier only). */
 export const PAYMENT_ROLES: readonly RestaurantRole[] = ["owner", "cashier"];
@@ -22,6 +29,18 @@ export function canWorkOrders(roles: readonly RestaurantRole[]): boolean {
 
 export function canRegisterPayment(roles: readonly RestaurantRole[]): boolean {
   return roles.some((role) => PAYMENT_ROLES.includes(role));
+}
+
+/** Payments of one order: owner and cashier any; waiters only table orders (the api checks the same). */
+export function canRegisterPaymentOf(roles: readonly RestaurantRole[], order: Pick<OrderView, "channel">): boolean {
+  return canRegisterPayment(roles) || (order.channel === "dine_in" && roles.includes("waiter"));
+}
+
+/** The floor ("Salón"): table accounts, calls to the waiter, charging tables. */
+export const FLOOR_SERVICE_ROLES: readonly RestaurantRole[] = ["owner", "cashier", "waiter"];
+
+export function canServeTables(roles: readonly RestaurantRole[]): boolean {
+  return roles.some((role) => FLOOR_SERVICE_ROLES.includes(role));
 }
 
 /** Roles that assign deliveries to riders (same as payments: owner and cashier). */
@@ -41,10 +60,13 @@ export function isRiderOnly(roles: readonly RestaurantRole[]): boolean {
   return isRider(roles) && !canWorkOrders(roles);
 }
 
-/** Where a member lands when opening a restaurant: riders only → their deliveries; everyone else → summary. */
+/** Where a member lands when opening a restaurant: riders only → their deliveries; waiters → the floor. */
 export function restaurantHomeHref(restaurant: { id: string; myRoles: readonly RestaurantRole[] }): string {
   const base = `/admin/${restaurant.id}`;
-  return isRiderOnly(restaurant.myRoles) ? `${base}/repartos` : base;
+  if (isRiderOnly(restaurant.myRoles)) return `${base}/repartos`;
+  const roles = restaurant.myRoles;
+  const waiterOnly = roles.includes("waiter") && !roles.some((role) => role === "owner" || role === "cashier" || role === "kitchen");
+  return waiterOnly ? `${base}/salon` : base;
 }
 
 export const BOARD_COLUMNS = [
@@ -226,10 +248,11 @@ export function groupByColumn(orders: readonly OrderView[]): Record<BoardStatus,
 /**
  * Rough version of an order, to tell which of two copies is newer: events and REST responses can arrive
  * in any order (a list fetched before a change may land after its event). Every status change appends to
- * the history; payment only goes unpaid → paid.
+ * the history, every edit of the items bumps `revision`, and payment only goes unpaid → paid; all three only
+ * grow, so their sum does too.
  */
 function revision(order: OrderView): number {
-  return order.statusHistory.length * 2 + (order.paymentStatus === "paid" ? 1 : 0);
+  return (order.statusHistory.length + order.revision) * 2 + (order.paymentStatus === "paid" ? 1 : 0);
 }
 
 /**

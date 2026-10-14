@@ -2,7 +2,9 @@ import type {
   CustomerOrdersPage,
   CreatedOrder,
   DailySummary,
+  SalesReport,
   OrderView,
+  PrintOrderResult,
   PublicOrderView,
   RiderPosition,
   RiderView,
@@ -40,10 +42,13 @@ import {
   CreateDineInOrderDto,
   CreatePickupOrderDto,
   CustomerOrdersQueryDto,
+  EditOrderItemsDto,
   FollowOrderDto,
   DailySummaryQueryDto,
   OrdersQueryDto,
   PaymentDto,
+  SalesExportQueryDto,
+  SalesRangeQueryDto,
 } from "./dto/orders.dto";
 import { OrdersService, type ReceiptResult } from "./orders.service";
 import { TablesService } from "./tables.service";
@@ -51,7 +56,7 @@ import { TablesService } from "./tables.service";
 /** Staff side: the kitchen board and the cashier. Which status changes each role may make is in @app/utils. */
 @Controller("restaurants/:restaurantId/orders")
 @UseGuards(RestaurantAccessGuard)
-@RestaurantRoles("owner", "cashier", "kitchen")
+@RestaurantRoles("owner", "cashier", "kitchen", "waiter")
 export class OrdersController {
   constructor(private readonly orders: OrdersService) {}
 
@@ -76,6 +81,30 @@ export class OrdersController {
     return this.orders.changeStatus(tenant, user.id, orderId, dto.status, dto.reason, dto.readyInMinutes);
   }
 
+  /**
+   * Edits the items before the kitchen starts the order (pending or accepted, unpaid). The service checks
+   * the roles of the order's channel, like the state machine (waiters only table orders).
+   */
+  @Put(":orderId/items")
+  editItems(
+    @CurrentTenant() tenant: TenantContext,
+    @CurrentUser() user: AuthUser,
+    @Param("orderId") orderId: string,
+    @Body() dto: EditOrderItemsDto,
+  ): Promise<OrderView> {
+    return this.orders.editItems(tenant, user.id, orderId, dto);
+  }
+
+  /**
+   * Prints the kitchen ticket on the print agents' kitchen printers (again, on purpose). `queued: 0` means
+   * no kitchen printer is active: the web then prints from the browser.
+   */
+  @Post(":orderId/print")
+  @HttpCode(HttpStatus.OK)
+  print(@CurrentTenant() tenant: TenantContext, @Param("orderId") orderId: string): Promise<PrintOrderResult> {
+    return this.orders.printKitchen(tenant, orderId);
+  }
+
   /** Last position of the rider (null when not on its way or no report yet). */
   @Get(":orderId/rider-location")
   async riderLocation(
@@ -95,8 +124,9 @@ export class OrdersController {
     return sendReceipt(await this.orders.getReceipt(tenant, orderId), res);
   }
 
+  /** Waiters only register payments of table orders (the service checks the channel). */
   @Post(":orderId/payment")
-  @RestaurantRoles("owner", "cashier")
+  @RestaurantRoles("owner", "cashier", "waiter")
   @HttpCode(HttpStatus.OK)
   markPaid(
     @CurrentTenant() tenant: TenantContext,
@@ -129,6 +159,28 @@ export class ReportsController {
   @Get("daily")
   daily(@CurrentTenant() tenant: TenantContext, @Query() query: DailySummaryQueryDto): Promise<DailySummary> {
     return this.orders.dailySummary(tenant, query.date);
+  }
+
+  /** Sales between two business days, one row per day (printable report). */
+  @Get("sales")
+  sales(@CurrentTenant() tenant: TenantContext, @Query() query: SalesRangeQueryDto): Promise<SalesReport> {
+    return this.orders.salesReport(tenant, query.from, query.to);
+  }
+
+  /** CSV for Excel: `kind` = orders | products | days. */
+  @Get("sales.csv")
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  async salesCsv(
+    @CurrentTenant() tenant: TenantContext,
+    @Query() query: SalesExportQueryDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const { filename, csv } = await this.orders.salesExport(tenant, query.from, query.to, query.kind);
+    res.setHeader("Cache-Control", "no-store");
+    return new StreamableFile(Buffer.from(csv, "utf8"), {
+      type: "text/csv; charset=utf-8",
+      disposition: `attachment; filename="${filename}"`,
+    });
   }
 }
 

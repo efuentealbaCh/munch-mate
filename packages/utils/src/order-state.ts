@@ -15,8 +15,20 @@ interface Transition {
 }
 
 const FLOOR: readonly RestaurantRole[] = ["owner", "cashier", "kitchen"];
+/** Table orders: the waiters (phase 8) work them too; pickup and delivery stay with the floor roles. */
+const TABLE: readonly RestaurantRole[] = [...FLOOR, "waiter"];
 /** Taking the order out and handing it over. A rider may only act on deliveries assigned to them (api check). */
 const DISPATCH: readonly RestaurantRole[] = [...FLOOR, "rider"];
+
+/** Staff roles that work the orders of each channel through the kitchen (riders only take deliveries out). */
+export const ORDER_WORK_ROLES: Record<OrderChannel, readonly RestaurantRole[]> = {
+  dine_in: TABLE,
+  pickup: FLOOR,
+  delivery: FLOOR,
+};
+
+/** Statuses in which the staff may still change an order's items: before the kitchen starts preparing it. */
+export const EDITABLE_ORDER_STATUSES: readonly OrderStatus[] = ["pending", "accepted"];
 
 /**
  * Allowed transitions per channel. Shared by the api (enforcement) and the web (which buttons to show).
@@ -31,16 +43,16 @@ const DISPATCH: readonly RestaurantRole[] = [...FLOOR, "rider"];
 const TRANSITIONS: Record<OrderChannel, Partial<Record<OrderStatus, Transition[]>>> = {
   dine_in: {
     pending: [
-      { to: "accepted", roles: FLOOR },
-      { to: "rejected", roles: FLOOR, requiresReason: true },
-      { to: "cancelled", roles: FLOOR, customer: true, requiresReason: true },
+      { to: "accepted", roles: TABLE },
+      { to: "rejected", roles: TABLE, requiresReason: true },
+      { to: "cancelled", roles: TABLE, customer: true, requiresReason: true },
     ],
     accepted: [
-      { to: "preparing", roles: FLOOR },
-      { to: "cancelled", roles: FLOOR, requiresReason: true },
+      { to: "preparing", roles: TABLE },
+      { to: "cancelled", roles: TABLE, requiresReason: true },
     ],
-    preparing: [{ to: "ready", roles: FLOOR }],
-    ready: [{ to: "served", roles: FLOOR }],
+    preparing: [{ to: "ready", roles: TABLE }],
+    ready: [{ to: "served", roles: TABLE }],
   },
   pickup: {
     pending: [
@@ -108,4 +120,17 @@ export function nextStatuses(channel: OrderChannel, from: OrderStatus, actor: Or
   return (TRANSITIONS[channel][from] ?? [])
     .filter((t) => checkTransition(channel, from, t.to, actor).ok)
     .map((t) => t.to);
+}
+
+/** Whether an order's items may still be edited (nothing has been prepared yet). */
+export function isOrderEditable(status: OrderStatus): boolean {
+  return EDITABLE_ORDER_STATUSES.includes(status);
+}
+
+/**
+ * Whether a staff member may edit the items of an order of this channel: the same roles that move it through
+ * the kitchen (waiters only table orders; riders never).
+ */
+export function canEditOrder(channel: OrderChannel, roles: readonly RestaurantRole[]): boolean {
+  return ORDER_WORK_ROLES[channel].some((role) => roles.includes(role));
 }

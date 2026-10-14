@@ -1,23 +1,25 @@
 "use client";
 
-import { ORDER_LIMITS, type SavedAddressView } from "@app/types";
+import { MESSAGE_CHANNEL_LABELS, type MessageChannel, ORDER_LIMITS, type SavedAddressView } from "@app/types";
 import { zodResolver } from "@hookform/resolvers/zod";
 import Link from "next/link";
-import type { ReactNode } from "react";
-import { type UseFormRegisterReturn, useForm } from "react-hook-form";
+import { type ReactNode, useEffect, useMemo, useRef } from "react";
+import { type Resolver, type UseFormRegisterReturn, useForm } from "react-hook-form";
 import { AccountHint, type AccountHintProps } from "@/components/account-hint";
 import { CartLines, type LineProblem } from "@/components/cart-sheet";
 import { FormError } from "@/components/form-error";
 import { FormField } from "@/components/form-field";
 import { PhoneInput } from "@/components/phone-input";
 import { SubmitButton } from "@/components/submit-button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { SheetFooter } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import { type CartLine, cartCount, cartTotal } from "@/lib/cart";
 import { hasCode } from "@/lib/errors";
 import { formatPrice } from "@/lib/money";
-import { type PickupCheckoutValues, pickupCheckoutSchema } from "@/lib/validation";
+import { type PickupCheckoutValues, pickupCheckoutSchemaFor } from "@/lib/validation";
 
 /** The visitor's account at checkout (phase 6): guests get a login link, customers their saved data. */
 export interface CheckoutAccount extends AccountHintProps {
@@ -45,6 +47,15 @@ export interface CheckoutFormProps {
   onQuantity(key: string, quantity: number): void;
   onRemove(key: string): void;
   onRemoveProduct(productId: string): void;
+  /** WhatsApp/SMS notices the restaurant offers (phase 8), and whether the customer asked for them. */
+  notify: NotifyOption | null;
+}
+
+/** "Avísame por WhatsApp": offered when the restaurant sends notices; the phone field is the destination. */
+export interface NotifyOption {
+  channel: MessageChannel;
+  checked: boolean;
+  onChange(checked: boolean): void;
 }
 
 /** Pickup form: lines, name, phone, optional email and comment, "Pedir para retirar". */
@@ -64,12 +75,24 @@ export function PickupCheckout({
   onRemove,
   onRemoveProduct,
   onSubmit,
+  notify,
 }: CheckoutFormProps & {
   checkout: PickupCheckoutValues;
   onCheckoutChange(values: PickupCheckoutValues): void;
   onSubmit(values: PickupCheckoutValues): void;
 }) {
-  const form = useForm<PickupCheckoutValues>({ resolver: zodResolver(pickupCheckoutSchema), defaultValues: checkout });
+  // The mobile-phone rule depends on the notices checkbox; react-hook-form keeps the resolver it got first,
+  // so it reads the current schema through a ref (same as the delivery form).
+  const schema = useMemo(() => pickupCheckoutSchemaFor(notify?.checked ?? false), [notify?.checked]);
+  const schemaRef = useRef(schema);
+  useEffect(() => {
+    schemaRef.current = schema;
+  }, [schema]);
+  const resolver = useMemo<Resolver<PickupCheckoutValues>>(
+    () => (values, context, options) => zodResolver(schemaRef.current)(values, context, options),
+    [],
+  );
+  const form = useForm<PickupCheckoutValues>({ resolver, defaultValues: checkout });
   const { errors } = form.formState;
   const total = cartTotal(lines);
 
@@ -111,6 +134,7 @@ export function PickupCheckout({
             customerPhone: errors.customerPhone?.message,
             customerEmail: errors.customerEmail?.message,
           }}
+          notify={notify}
         />
         <NoteField id="pickup-note" register={form.register("note")} error={errors.note?.message} />
       </div>
@@ -130,11 +154,13 @@ export function ContactFields({
   nameDescription,
   register,
   errors,
+  notify,
 }: {
   idPrefix: string;
   nameDescription: string;
   register: { [K in ContactField]: UseFormRegisterReturn<K> };
   errors: { [K in ContactField]?: string };
+  notify?: NotifyOption | null;
 }) {
   return (
     <>
@@ -153,6 +179,22 @@ export function ContactFields({
           <PhoneInput {...control} maxLength={30} aria-required {...register.customerPhone} />
         )}
       </FormField>
+      {notify ? (
+        <div className="flex items-start gap-3 rounded-lg bg-muted/60 p-3" data-testid="notify-option">
+          <Checkbox
+            id={`${idPrefix}-notify`}
+            checked={notify.checked}
+            onCheckedChange={(checked) => notify.onChange(checked === true)}
+            aria-describedby={`${idPrefix}-notify-help`}
+          />
+          <div className="flex flex-col gap-0.5">
+            <Label htmlFor={`${idPrefix}-notify`}>Avísame por {MESSAGE_CHANNEL_LABELS[notify.channel]} a este número</Label>
+            <p id={`${idPrefix}-notify-help`} className="text-sm text-muted-foreground">
+              Te escribimos cuando el local acepte tu pedido y cuando esté listo o salga a reparto. Solo celulares.
+            </p>
+          </div>
+        </div>
+      ) : null}
       <FormField
         id={`${idPrefix}-email`}
         label="Correo (opcional)"

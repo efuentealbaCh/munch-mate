@@ -1,6 +1,7 @@
 "use client";
 
 import type { MenuCategoryView, ProductView } from "@app/types";
+import { promoSchedule } from "@app/utils";
 import { EyeOffIcon, PencilIcon, PlusIcon, Trash2Icon } from "lucide-react";
 import { useId } from "react";
 import { ProductThumbnail } from "@/components/product-thumbnail";
@@ -138,6 +139,11 @@ function ProductRow({
             <span className="tabular-nums">{formatPrice(product.price, currency)}</span>
             {product.available ? null : <Badge variant="destructive">Agotado</Badge>}
             {product.visible ? null : <Badge variant="outline">Oculto</Badge>}
+            {product.promo ? (
+              <Badge className="bg-brand-soft text-primary" title={promoSchedule(product.promo)} data-testid="admin-promo-badge">
+                {product.promo.kind === "percent" ? `-${product.promo.value} %` : `Especial ${formatPrice(product.promo.value, currency)}`}
+              </Badge>
+            ) : null}
           </div>
         </div>
         <Button type="button" variant="outline" size="sm" onClick={onEdit} aria-label={`Editar ${product.name}`}>

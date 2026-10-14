@@ -1,11 +1,11 @@
-import { type NotifJob, QUEUES } from "@app/types";
+import { type MessageJob, type NotifJob, QUEUES } from "@app/types";
 import { InjectQueue } from "@nestjs/bullmq";
 import { Injectable } from "@nestjs/common";
 import type { Queue } from "bullmq";
 
 @Injectable()
 export class NotifQueue {
-  constructor(@InjectQueue(QUEUES.NOTIF) private readonly queue: Queue<NotifJob>) {}
+  constructor(@InjectQueue(QUEUES.NOTIF) private readonly queue: Queue<NotifJob | MessageJob>) {}
 
   /**
    * Enqueues a web-push notification for the workers.
@@ -19,6 +19,20 @@ export class NotifQueue {
       backoff: { type: "exponential", delay: 5_000 },
       // A notification is only worth something right away; keep failures for inspection anyway.
       removeOnComplete: { age: 3600 },
+      removeOnFail: false,
+    });
+  }
+
+  /**
+   * Enqueues a WhatsApp/SMS notice. Job id `msg-<orderId>-<event>`: the same notice is never queued twice.
+   * The payload carries the customer's phone and text: never log it.
+   */
+  async message(job: MessageJob): Promise<void> {
+    await this.queue.add("message", job, {
+      jobId: `msg-${job.orderId}-${job.event}`,
+      attempts: 4,
+      backoff: { type: "exponential", delay: 10_000 },
+      removeOnComplete: { age: 24 * 3600 },
       removeOnFail: false,
     });
   }

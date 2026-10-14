@@ -1,3 +1,4 @@
+import type { ProductPromo } from "@app/types";
 import { Injectable } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { type Model, Types } from "mongoose";
@@ -14,6 +15,7 @@ export interface ProductRecord {
   imageKey: string | null;
   modifierGroupIds: string[];
   position: number;
+  promo: ProductPromo | null;
 }
 
 export interface ProductInput {
@@ -130,6 +132,19 @@ export class ProductsRepository {
     return previous ? (previous.imageKey ?? null) : undefined;
   }
 
+  /** Sets or removes (null) the discount. @returns The updated product, or null when it does not exist. */
+  async setPromo(restaurantId: string, productId: string, promo: ProductPromo | null): Promise<ProductRecord | null> {
+    if (!Types.ObjectId.isValid(productId)) return null;
+    const doc = await this.products
+      .findOneAndUpdate(
+        { _id: oid(productId), restaurantId: oid(restaurantId) },
+        { $set: { promo } },
+        { returnDocument: "after" },
+      )
+      .lean();
+    return doc ? toRecord(doc) : null;
+  }
+
   /** Detaches a deleted modifier group from every product of the restaurant. */
   async removeModifierGroup(restaurantId: string, groupId: string): Promise<void> {
     await this.products.updateMany(
@@ -173,5 +188,15 @@ function toRecord(doc: Product & { _id: Types.ObjectId }): ProductRecord {
     imageKey: doc.imageKey ?? null,
     modifierGroupIds: (doc.modifierGroupIds ?? []).map((id) => id.toString()),
     position: doc.position,
+    promo: doc.promo
+      ? {
+          kind: doc.promo.kind,
+          value: doc.promo.value,
+          days: [...(doc.promo.days ?? [])],
+          startsOn: doc.promo.startsOn ?? null,
+          endsOn: doc.promo.endsOn ?? null,
+          label: doc.promo.label ?? "",
+        }
+      : null,
   };
 }

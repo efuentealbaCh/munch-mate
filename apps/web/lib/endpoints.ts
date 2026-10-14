@@ -1,26 +1,42 @@
 import type {
   AdminMenuView,
+  AgentPrinterSettings,
+  FloorPlanView,
+  LiveSummary,
+  SaveFloorPlanInput,
   ChangeOrderStatusInput,
   CreatedOrder,
   CreateDeliveryOrderInput,
+  CreateTablePaymentInput,
   CreateDineInOrderInput,
   CreatePickupOrderInput,
   CustomerOrdersPage,
   DailySummary,
   DeliveryZoneInput,
   DeliveryZoneView,
+  EditOrderItemsInput,
   GeoPoint,
   InvitationPreview,
   InvitationView,
   MapConfig,
+  MessagingSettings,
   MemberView,
   MenuCategoryView,
   ModifierGroupView,
   OrderStatus,
   OrderView,
+  PairingCodeView,
   PaymentMethod,
   PlatformRestaurantPage,
+  PrintAgentsList,
+  PrintAgentsSummary,
+  PrintAgentView,
+  PrintJobStatus,
+  PrintJobView,
+  PrintOrderResult,
+  ProductPromo,
   ProductView,
+  PublicTableBill,
   ProfileInput,
   PublicDeliveryZone,
   PublicMenu,
@@ -32,11 +48,16 @@ import type {
   RestaurantView,
   RiderPosition,
   RiderView,
+  SalesExportKind,
+  SalesReport,
   SavedAddressInput,
   SavedAddressView,
+  SetTableSplitInput,
   SlugAvailability,
   TableContext,
+  TableSessionView,
   TableView,
+  TipChoice,
   UserProfile,
   WeeklyHours,
 } from "@app/types";
@@ -90,6 +111,12 @@ export const restaurantsApi = {
       maxItemsPerOrder?: number;
       /** The restaurant on the map (centers the maps); null removes it. */
       location?: GeoPoint | null;
+      /** Suggested tip on table bills, percent (0 = none). */
+      tipPercent?: number;
+      /** Kitchen time goal of the live view, minutes (KITCHEN_TARGET_LIMITS). */
+      kitchenTargetMinutes?: number;
+      /** WhatsApp/SMS notices. @throws ApiError SENDER_PHONE_REQUIRED, INVALID_SENDER_PHONE (400). */
+      messaging?: MessagingSettings;
     },
   ) =>
     api.request<RestaurantView>(restaurantPath(id), { method: "PATCH", body }),
@@ -210,6 +237,11 @@ export const menuApi = {
     }),
   deleteModifierGroup: (restaurantId: string, groupId: string) =>
     api.request<void>(`${menuPath(restaurantId)}/modifier-groups/${segment(groupId)}`, { method: "DELETE" }),
+  /** Discount of a product (owner). @throws ApiError INVALID_PROMO (400, `meta.problem`). */
+  setProductPromo: (restaurantId: string, productId: string, promo: ProductPromo) =>
+    api.request<ProductView>(`${menuPath(restaurantId)}/products/${segment(productId)}/promo`, { method: "PUT", body: promo }),
+  removeProductPromo: (restaurantId: string, productId: string) =>
+    api.request<ProductView>(`${menuPath(restaurantId)}/products/${segment(productId)}/promo`, { method: "DELETE" }),
   setOptionAvailability: (restaurantId: string, groupId: string, optionId: string, available: boolean) =>
     api.request<void>(
       `${menuPath(restaurantId)}/modifier-groups/${segment(groupId)}/options/${segment(optionId)}/availability`,
@@ -258,8 +290,17 @@ export const ordersApi = {
       method: "PUT",
       body: { riderId },
     }),
+  /**
+   * Changes the items of an order before the kitchen starts it (lines not in `keep` are removed; `add` is
+   * priced against the current menu). Staff with the roles of the order's channel.
+   * @throws ApiError ORDER_NOT_EDITABLE / ORDER_ALREADY_PAID / ORDER_CHANGED / TOO_MANY_ITEMS (`meta.max`) /
+   *   BELOW_MINIMUM_ORDER / sold-out codes (`meta.productId`) (409), INVALID_EDIT / ORDER_EMPTY / NOTHING_CHANGED
+   *   (400), FORBIDDEN_ROLE (403), ORDER_NOT_FOUND (404).
+   */
+  editItems: (restaurantId: string, orderId: string, body: EditOrderItemsInput) =>
+    api.request<OrderView>(`${restaurantPath(restaurantId)}/orders/${segment(orderId)}/items`, { method: "PUT", body }),
   /** Members with the rider role (owner, cashier). */
-  riders: (restaurantId: string) => api.request<RiderView[]>(`${restaurantPath(restaurantId)}/riders`),
+  riders:(restaurantId: string) => api.request<RiderView[]>(`${restaurantPath(restaurantId)}/riders`),
   /**
    * Receipt PDF of a pickup or delivery order.
    * @returns The file, or null while the workers are still generating it (202).
@@ -272,6 +313,12 @@ export const ordersApi = {
     api.request<{ position: RiderPosition | null }>(`${restaurantPath(restaurantId)}/orders/${segment(orderId)}/rider-location`, {
       signal,
     }),
+  /**
+   * Prints the kitchen ticket on the print agents' kitchen printers (phase 8, board roles).
+   * @returns `queued: 0` when no kitchen printer took it: print from the browser instead.
+   */
+  printKitchen: (restaurantId: string, orderId: string) =>
+    api.request<PrintOrderResult>(`${restaurantPath(restaurantId)}/orders/${segment(orderId)}/print`, { method: "POST" }),
 };
 
 async function readReceipt(pending: Promise<Response>): Promise<DownloadedFile | null> {
@@ -291,6 +338,141 @@ export const reportsApi = {
       `${restaurantPath(restaurantId)}/reports/daily${date ? `?date=${encodeURIComponent(date)}` : ""}`,
       { signal },
     ),
+  /**
+   * Sales between two business days (inclusive), one row per day.
+   * @throws ApiError INVALID_RANGE, RANGE_TOO_LONG, INVALID_DATE, FUTURE_DATE (400).
+   */
+  sales: (restaurantId: string, from: string, to: string, signal?: AbortSignal) =>
+    api.request<SalesReport>(
+      `${restaurantPath(restaurantId)}/reports/sales?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+      { signal },
+    ),
+  /** CSV for Excel (`;`, UTF-8 with BOM): one row per order, product or day. */
+  async salesCsv(restaurantId: string, from: string, to: string, kind: SalesExportKind): Promise<DownloadedFile> {
+    const query = new URLSearchParams({ from, to, kind });
+    const response = await api.requestResponse(`${restaurantPath(restaurantId)}/reports/sales.csv?${query}`);
+    return {
+      blob: await response.blob(),
+      filename: filenameFromDisposition(response.headers.get("Content-Disposition"), `ventas-${from}.csv`),
+    };
+  },
+};
+
+/** The restaurant's floor plan: grid, kitchen, pickup counter, delivery door and where each table stands. */
+export const floorApi = {
+  /** Owner, cashier, kitchen and waiter. Tables without a place come with `layout: null`. */
+  get: (restaurantId: string, signal?: AbortSignal) =>
+    api.request<FloorPlanView>(`${restaurantPath(restaurantId)}/floor-plan`, { signal }),
+  /**
+   * Owner: replaces the whole plan and every table's place (tables left out lose theirs; `plan: null` clears it all).
+   * @throws ApiError INVALID_FLOOR_PLAN (400, meta.problem), UNKNOWN_TABLE (400, meta.tableId).
+   */
+  save: (restaurantId: string, body: SaveFloorPlanInput) =>
+    api.request<FloorPlanView>(`${restaurantPath(restaurantId)}/floor-plan`, { method: "PUT", body }),
+};
+
+/** Indicators of the live floor view (owner, cashier). */
+export const liveApi = {
+  summary: (restaurantId: string, signal?: AbortSignal) =>
+    api.request<LiveSummary>(`${restaurantPath(restaurantId)}/live`, { signal }),
+};
+
+/** The floor (phase 8): open table accounts, calls, charging a table. Owner, cashier and waiters. */
+export const tableSessionsApi = {
+  list: (restaurantId: string) => api.request<TableSessionView[]>(`${restaurantPath(restaurantId)}/table-sessions`),
+  /** The call (or the bill request) was attended: the alert leaves every screen. */
+  attend: (restaurantId: string, sessionId: string, kind: "waiter" | "bill") =>
+    api.request<TableSessionView>(`${restaurantPath(restaurantId)}/table-sessions/${segment(sessionId)}/attend`, {
+      method: "POST",
+      body: { kind },
+    }),
+  /** One account (open or just closed): what the charge dialog reads again after a conflict. */
+  get: (restaurantId: string, sessionId: string) =>
+    api.request<TableSessionView>(`${restaurantPath(restaurantId)}/table-sessions/${segment(sessionId)}`),
+  /**
+   * Charges what is left of the account as one payment with `method` and the tip, and closes it ("Todo junto").
+   * @throws ApiError TABLE_ORDERS_IN_PROGRESS (409), TABLE_OVERPAID (409: delete a payment first),
+   *   TABLE_SESSION_NOT_FOUND (404: already charged).
+   */
+  close: (restaurantId: string, sessionId: string, body: { method: PaymentMethod; tip: number }) =>
+    api.request<TableSessionView>(`${restaurantPath(restaurantId)}/table-sessions/${segment(sessionId)}/close`, {
+      method: "POST",
+      body,
+    }),
+  /**
+   * Sets how the account is split (`{ mode: null }` removes the plan); the table's phones see it.
+   * @throws ApiError INVALID_SPLIT_PARTS (400), SPLIT_PARTS_PAID (409), TABLE_SESSION_CHANGED (409).
+   */
+  setSplit: (restaurantId: string, sessionId: string, body: SetTableSplitInput) =>
+    api.request<TableSessionView>(`${restaurantPath(restaurantId)}/table-sessions/${segment(sessionId)}/split`, {
+      method: "PUT",
+      body,
+    }),
+  /**
+   * Registers a partial payment (the api computes equal parts and products). The one that completes the bill
+   * closes the account: the answer then has `status: "closed"`.
+   * @throws ApiError TABLE_ORDERS_IN_PROGRESS, PAYMENT_EXCEEDS_BALANCE, SPLIT_PART_PAID, TABLE_SESSION_CHANGED (409),
+   *   INVALID_SPLIT_ITEMS, INVALID_AMOUNT, INVALID_TIP (400), TABLE_SESSION_NOT_FOUND (404).
+   */
+  addPayment: (restaurantId: string, sessionId: string, body: CreateTablePaymentInput) =>
+    api.request<TableSessionView>(`${restaurantPath(restaurantId)}/table-sessions/${segment(sessionId)}/payments`, {
+      method: "POST",
+      body,
+    }),
+  /** Cancels a payment of an open account. @throws ApiError TABLE_SESSION_CLOSED (409), TABLE_PAYMENT_NOT_FOUND (404). */
+  deletePayment: (restaurantId: string, sessionId: string, paymentId: string) =>
+    api.request<TableSessionView>(
+      `${restaurantPath(restaurantId)}/table-sessions/${segment(sessionId)}/payments/${segment(paymentId)}`,
+      { method: "DELETE" },
+    ),
+};
+
+const printAgentsPath = (restaurantId: string) => `${restaurantPath(restaurantId)}/print-agents`;
+/** Printer keys contain spaces, colons and slashes ("usb:EPSON TM-T20", "net:192.168.1.50:9100"). */
+const printerPath = (restaurantId: string, agentId: string, printerKey: string) =>
+  `${printAgentsPath(restaurantId)}/${segment(agentId)}/printers/${segment(printerKey)}`;
+
+/**
+ * Print agents (phase 8): computers of the restaurant that print ESC/POS by themselves. Owner only, except
+ * `summary` (board roles) and the failed jobs (owner, cashier).
+ */
+export const printAgentsApi = {
+  list: (restaurantId: string) => api.request<PrintAgentsList>(printAgentsPath(restaurantId)),
+  /** One-time code for the agent (10 min). */
+  pairingCode: (restaurantId: string) =>
+    api.request<PairingCodeView>(`${printAgentsPath(restaurantId)}/pairing-code`, { method: "POST" }),
+  /** @throws ApiError PRINT_AGENT_NOT_FOUND (404). */
+  rename: (restaurantId: string, agentId: string, name: string) =>
+    api.request<PrintAgentView>(`${printAgentsPath(restaurantId)}/${segment(agentId)}`, { method: "PATCH", body: { name } }),
+  /** Unpairs it: its token stops working and its pending jobs expire. */
+  revoke: (restaurantId: string, agentId: string) =>
+    api.request<void>(`${printAgentsPath(restaurantId)}/${segment(agentId)}`, { method: "DELETE" }),
+  /**
+   * Only the fields sent change.
+   * @throws ApiError INVALID_CATEGORY (400), PRINTER_NOT_FOUND / PRINT_AGENT_NOT_FOUND (404).
+   */
+  updatePrinter: (restaurantId: string, agentId: string, printerKey: string, body: Partial<AgentPrinterSettings>) =>
+    api.request<PrintAgentView>(printerPath(restaurantId, agentId, printerKey), { method: "PATCH", body }),
+  /** Forgets a printer the agent no longer reports (it comes back disabled if reported again). */
+  removePrinter: (restaurantId: string, agentId: string, printerKey: string) =>
+    api.request<PrintAgentView>(printerPath(restaurantId, agentId, printerKey), { method: "DELETE" }),
+  /** A test page (enabled or not). */
+  testPrinter: (restaurantId: string, agentId: string, printerKey: string) =>
+    api.request<PrintJobView>(`${printerPath(restaurantId, agentId, printerKey)}/test`, { method: "POST" }),
+  /** Whether tickets come out of an agent (board roles), so the browser does not print them twice. */
+  summary: (restaurantId: string, signal?: AbortSignal) =>
+    api.request<PrintAgentsSummary>(`${printAgentsPath(restaurantId)}/summary`, { signal }),
+  /** Newest first (owner, cashier). */
+  jobs: (restaurantId: string, status?: PrintJobStatus, limit?: number) => {
+    const query = new URLSearchParams();
+    if (status) query.set("status", status);
+    if (limit) query.set("limit", String(limit));
+    const search = query.toString();
+    return api.request<PrintJobView[]>(`${printAgentsPath(restaurantId)}/jobs${search ? `?${search}` : ""}`);
+  },
+  /** Queues a failed or expired job again. @throws ApiError PRINT_JOB_NOT_RETRYABLE / PRINT_AGENT_REVOKED (409). */
+  retryJob: (restaurantId: string, jobId: string) =>
+    api.request<PrintJobView>(`${printAgentsPath(restaurantId)}/jobs/${segment(jobId)}/retry`, { method: "POST" }),
 };
 
 /** Platform administration (platformRole "admin"; anyone else gets 404 NOT_FOUND). */
@@ -417,6 +599,14 @@ export const publicOrdersApi = {
   /** Fresh menu after a sold-out error (the page itself is server-rendered). */
   menu: (slug: string) => api.request<PublicMenu>(`/public/restaurants/${segment(slug)}/menu`),
   table: (tableToken: string) => api.request<TableContext>(`/public/tables/${segment(tableToken)}`),
+  /** The table's account (open, or just paid), from its QR. */
+  tableBill: (tableToken: string, signal?: AbortSignal) =>
+    api.request<PublicTableBill>(`/public/tables/${segment(tableToken)}/bill`, { signal }),
+  callWaiter: (tableToken: string) =>
+    api.request<PublicTableBill>(`/public/tables/${segment(tableToken)}/call-waiter`, { method: "POST" }),
+  /** @throws ApiError NOTHING_TO_PAY (409), INVALID_TIP (400). */
+  requestBill: (tableToken: string, tip: TipChoice) =>
+    api.request<PublicTableBill>(`/public/tables/${segment(tableToken)}/request-bill`, { method: "POST", body: { tip } }),
   /** Receipt PDF (POST: the token stays out of the URL). @returns null while it is being generated (202). */
   receipt: (accessToken: string) =>
     readReceipt(api.requestResponse("/public/orders/receipt", { method: "POST", body: { accessToken } })),

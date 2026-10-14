@@ -4,7 +4,7 @@ import type { OpenState, PublicMenu, PublicProduct, TableContext } from "@app/ty
 import { ClockIcon, ReceiptTextIcon, StoreIcon } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { CartBar, type LineProblem } from "@/components/cart-sheet";
 import { OrderProductSheet } from "@/components/order-product-sheet";
@@ -36,6 +36,8 @@ import { loadMyOrders, rememberOrder, trackingHref } from "@/lib/order-tracking"
 import { safeNextPath, withQuery } from "@/lib/safe-next";
 import type { CheckoutValues } from "@/lib/validation";
 import { TableCartSheet } from "./cart-sheet";
+import { withPromos } from "@/lib/promo";
+import { TableAccount } from "./table-account";
 
 interface TableOrderingProps {
   tableToken: string;
@@ -173,7 +175,9 @@ export function TableOrdering({ tableToken, table, initialMenu }: TableOrderingP
   const count = cartCount(lines);
   // A refused line the customer already removed (or changed) no longer blocks the submission.
   const activeProblem = problem && lines.some((line) => line.productId === problem.productId) ? problem : null;
-  const { restaurant, categories } = menu;
+  const { restaurant } = menu;
+  // Discounts by weekday and date, evaluated like the api does (phase 8).
+  const categories = useMemo(() => withPromos(menu.categories, restaurant.timezone), [menu.categories, restaurant.timezone]);
 
   return (
     <div className="flex min-h-dvh flex-col bg-background">
@@ -198,6 +202,7 @@ export function TableOrdering({ tableToken, table, initialMenu }: TableOrderingP
             </div>
           </div>
         </div>
+        {tableGone ? null : <TableAccount tableToken={tableToken} currency={currency} ordersPlaced={myOrdersCount} />}
         {!canOrder ? (
           <div role="status" className="border-t bg-warning text-warning-foreground" data-testid="closed-banner">
             <p className="mx-auto flex max-w-3xl items-center gap-2 px-4 py-3 text-sm font-medium">

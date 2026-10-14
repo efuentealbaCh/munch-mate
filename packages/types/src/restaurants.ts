@@ -2,7 +2,7 @@ import type { GeoPoint } from "./geo";
 import type { LogoImage } from "./menu";
 
 /** Roles a user can hold inside one restaurant (stored in memberships). */
-export const RESTAURANT_ROLES = ["owner", "cashier", "kitchen", "rider"] as const;
+export const RESTAURANT_ROLES = ["owner", "cashier", "kitchen", "waiter", "rider"] as const;
 export type RestaurantRole = (typeof RESTAURANT_ROLES)[number];
 
 /** Spanish labels for UI and emails. */
@@ -10,6 +10,7 @@ export const RESTAURANT_ROLE_LABELS: Record<RestaurantRole, string> = {
   owner: "Dueño",
   cashier: "Caja",
   kitchen: "Cocina",
+  waiter: "Garzón",
   rider: "Repartidor",
 };
 
@@ -40,6 +41,25 @@ export interface OpenState {
   nextOpeningAt: string | null;
 }
 
+/** Channels for order notices sent as text messages (phase 8). */
+export const MESSAGE_CHANNELS = ["whatsapp", "sms"] as const;
+export type MessageChannel = (typeof MESSAGE_CHANNELS)[number];
+export const MESSAGE_CHANNEL_LABELS: Record<MessageChannel, string> = { whatsapp: "WhatsApp", sms: "SMS" };
+
+/**
+ * Owner setting: order notices by WhatsApp or SMS to customers who ask for them at checkout.
+ * The sender is the restaurant's own number, registered with the platform's messaging provider.
+ */
+export interface MessagingSettings {
+  enabled: boolean;
+  channel: MessageChannel;
+  /** Normalized E.164 (`+56912345678`); "" until set. */
+  senderPhone: string;
+}
+
+/** Suggested tip on table bills (phase 8). Chile: voluntary, usually 10 %. */
+export const TIP_LIMITS = { percentDefault: 10, percentMax: 30 } as const;
+
 /** A restaurant as seen by one of its members. */
 export interface RestaurantView {
   id: string;
@@ -62,6 +82,13 @@ export interface RestaurantView {
   pickupEnabled: boolean;
   /** Customers may order for delivery to the restaurant's zones. Owner setting, off by default. */
   deliveryEnabled: boolean;
+  /** Suggested tip on table bills, in percent (0 = no suggestion). Owner setting. */
+  tipPercent: number;
+  /** Minutes the owner expects from accepted to ready (`KITCHEN_TARGET_LIMITS`); the live view's kitchen goal. */
+  kitchenTargetMinutes: number;
+  messaging: MessagingSettings;
+  /** Whether the platform has a messaging provider configured (otherwise the setting has no effect). */
+  messagingAvailable: boolean;
   currency: string;
   timezone: string;
   status: RestaurantStatus;

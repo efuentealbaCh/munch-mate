@@ -1,5 +1,6 @@
 import type { PushNotification } from "./customers";
 import type { ExpectedPaymentView, OrderChannel, OrderDeliveryView, OrderItemView } from "./orders";
+import type { MessageChannel } from "./restaurants";
 
 /**
  * BullMQ queue names shared by the api (producer) and the workers (consumers).
@@ -33,6 +34,8 @@ export interface QrSheetJob {
 export interface ReceiptJob {
   restaurantId: string;
   orderId: string;
+  /** Order revision printed: an edited order gets a new receipt (job id and key per revision). */
+  revision: number;
   /** Private-bucket key where the worker stores the PDF. */
   outputKey: string;
   receipt: {
@@ -66,6 +69,26 @@ export interface ReceiptJob {
 export interface NotifJob {
   subscriptions: { endpoint: string; keys: { p256dh: string; auth: string } }[];
   notification: PushNotification;
+}
+
+/** Moments of an order that send a text message to customers who asked for them. */
+export const ORDER_MESSAGE_EVENTS = ["accepted", "ready", "on_the_way", "rejected", "cancelled"] as const;
+export type OrderMessageEvent = (typeof ORDER_MESSAGE_EVENTS)[number];
+
+/**
+ * `notif:message` — one WhatsApp or SMS notice to a customer. Like email jobs it carries the rendered text
+ * (and the phone): never log its payload. Job id `msg-<orderId>-<event>`, so the same notice is never
+ * queued twice.
+ */
+export interface MessageJob {
+  restaurantId: string;
+  orderId: string;
+  event: OrderMessageEvent;
+  channel: MessageChannel;
+  /** E.164 numbers: the restaurant's sender and the customer. */
+  from: string;
+  to: string;
+  text: string;
 }
 
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];

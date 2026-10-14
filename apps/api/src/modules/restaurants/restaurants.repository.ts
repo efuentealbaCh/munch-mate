@@ -1,4 +1,14 @@
-import { type GeoPoint, ORDER_LIMITS, type RestaurantStatus, type WeeklyHours } from "@app/types";
+import {
+  type FloorPlan,
+  type FloorRect,
+  type GeoPoint,
+  KITCHEN_TARGET_LIMITS,
+  type MessagingSettings,
+  ORDER_LIMITS,
+  type RestaurantStatus,
+  TIP_LIMITS,
+  type WeeklyHours,
+} from "@app/types";
 import { Injectable } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { type ClientSession, type Model, Types } from "mongoose";
@@ -17,6 +27,11 @@ export interface RestaurantRecord {
   openingHours: WeeklyHours | null;
   maxItemsPerOrder: number;
   location: GeoPoint | null;
+  tipPercent: number;
+  kitchenTargetMinutes: number;
+  /** null = not drawn yet (phase 9). */
+  floorPlan: FloorPlan | null;
+  messaging: MessagingSettings;
   currency: string;
   timezone: string;
   status: RestaurantStatus;
@@ -33,6 +48,9 @@ export interface RestaurantChanges {
   openingHours?: WeeklyHours | null;
   maxItemsPerOrder?: number;
   location?: GeoPoint | null;
+  tipPercent?: number;
+  kitchenTargetMinutes?: number;
+  messaging?: MessagingSettings;
 }
 
 /** Thrown when the unique index on `slug` rejects a write. */
@@ -165,6 +183,28 @@ export class RestaurantsRepository {
     return doc ? toRecord(doc) : null;
   }
 
+  /**
+   * Replaces (or with null deletes) the floor plan. Takes the session of the transaction that also writes the
+   * tables' layouts, so the plan and its tables never disagree.
+   * @returns false when the restaurant does not exist.
+   */
+  async setFloorPlan(id: string, floorPlan: FloorPlan | null, session?: ClientSession): Promise<boolean> {
+    if (!Types.ObjectId.isValid(id)) return false;
+    const plan = floorPlan && {
+      cols: floorPlan.cols,
+      rows: floorPlan.rows,
+      kitchen: rect(floorPlan.kitchen),
+      pickup: floorPlan.pickup && rect(floorPlan.pickup),
+      door: floorPlan.door && { x: floorPlan.door.x, y: floorPlan.door.y },
+    };
+    const result = await this.restaurants.updateOne(
+      { _id: new Types.ObjectId(id) },
+      { $set: { floorPlan: plan } },
+      { session, runValidators: true },
+    );
+    return result.matchedCount === 1;
+  }
+
   /** Forces a write conflict between concurrent owner-membership transactions (see Restaurant.membershipVersion). */
   async bumpMembershipVersion(id: string, session: ClientSession): Promise<void> {
     await this.restaurants.updateOne({ _id: id }, { $inc: { membershipVersion: 1 } }, { session });
@@ -175,6 +215,9 @@ function mapDuplicateSlug(error: unknown, slug: string): unknown {
   const duplicate = error as { code?: number; keyPattern?: Record<string, unknown> };
   return duplicate.code === DUPLICATE_KEY && duplicate.keyPattern?.slug ? new SlugTakenError(slug) : error;
 }
+
+/** Copies only the known fields (no stray keys reach the document). */
+const rect = (r: FloorRect): FloorRect => ({ x: r.x, y: r.y, w: r.w, h: r.h });
 
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -201,6 +244,22 @@ function toRecord(doc: Restaurant & { _id: Types.ObjectId }): RestaurantRecord {
       typeof doc.location?.lat === "number" && typeof doc.location.lng === "number"
         ? { lat: doc.location.lat, lng: doc.location.lng }
         : null,
+    tipPercent: doc.tipPercent ?? TIP_LIMITS.percentDefault,
+    kitchenTargetMinutes: doc.kitchenTargetMinutes ?? KITCHEN_TARGET_LIMITS.minutesDefault,
+    floorPlan: doc.floorPlan
+      ? {
+          cols: doc.floorPlan.cols,
+          rows: doc.floorPlan.rows,
+          kitchen: rect(doc.floorPlan.kitchen),
+          pickup: doc.floorPlan.pickup ? rect(doc.floorPlan.pickup) : null,
+          door: doc.floorPlan.door ? { x: doc.floorPlan.door.x, y: doc.floorPlan.door.y } : null,
+        }
+      : null,
+    messaging: {
+      enabled: doc.messaging?.enabled ?? false,
+      channel: doc.messaging?.channel ?? "whatsapp",
+      senderPhone: doc.messaging?.senderPhone ?? "",
+    },
     currency: doc.currency,
     timezone: doc.timezone,
     status: doc.status,

@@ -1,10 +1,17 @@
-import { OPENING_HOURS_LIMITS, type RestaurantView, type SlugAvailability, type WeeklyHours } from "@app/types";
+import {
+  type MessagingSettings,
+  OPENING_HOURS_LIMITS,
+  type RestaurantView,
+  type SlugAvailability,
+  type WeeklyHours,
+} from "@app/types";
 import { normalizePhone, openingHoursProblem, roundCoord, slugify, slugProblem, withSuffix } from "@app/utils";
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { InjectConnection } from "@nestjs/mongoose";
 import type { Connection } from "mongoose";
 import { apiError } from "../../common/errors/api-error";
 import { MediaService } from "../../infra/storage/media.service";
+import { MessagingService } from "../messaging/messaging.service";
 import { RealtimeService } from "../realtime/realtime.service";
 import { MembershipsRepository } from "./memberships.repository";
 import type { TenantContext } from "./restaurant-access.guard";
@@ -27,6 +34,7 @@ const slugTaken = (suggestion?: string) =>
 @Injectable()
 export class RestaurantsService {
   constructor(
+    private readonly messaging: MessagingService,
     private readonly restaurants: RestaurantsRepository,
     private readonly memberships: MembershipsRepository,
     @InjectConnection() private readonly connection: Connection,
@@ -69,12 +77,12 @@ export class RestaurantsService {
     const byId = new Map(restaurants.map((r) => [r.id, r]));
     return memberships.flatMap((m) => {
       const restaurant = byId.get(m.restaurantId);
-      return restaurant ? [toRestaurantView(restaurant, m.roles, this.media)] : [];
+      return restaurant ? [toRestaurantView(restaurant, m.roles, this.media, this.messaging.available)] : [];
     });
   }
 
   async get(tenant: TenantContext): Promise<RestaurantView> {
-    return toRestaurantView(await this.load(tenant.restaurantId), tenant.roles, this.media);
+    return toRestaurantView(await this.load(tenant.restaurantId), tenant.roles, this.media, this.messaging.available);
   }
 
   /**
@@ -89,6 +97,9 @@ export class RestaurantsService {
     if (changes.pickupEnabled !== undefined) update.pickupEnabled = changes.pickupEnabled;
     if (changes.deliveryEnabled !== undefined) update.deliveryEnabled = changes.deliveryEnabled;
     if (changes.maxItemsPerOrder !== undefined) update.maxItemsPerOrder = changes.maxItemsPerOrder;
+    if (changes.tipPercent !== undefined) update.tipPercent = changes.tipPercent;
+    if (changes.kitchenTargetMinutes !== undefined) update.kitchenTargetMinutes = changes.kitchenTargetMinutes;
+    if (changes.messaging !== undefined) update.messaging = this.messagingSettings(changes.messaging);
     if (changes.location !== undefined) {
       update.location = changes.location && { lat: roundCoord(changes.location.lat), lng: roundCoord(changes.location.lng) };
     }
@@ -97,11 +108,30 @@ export class RestaurantsService {
     try {
       const updated = await this.restaurants.update(tenant.restaurantId, update);
       if (!updated) throw notFound();
-      return toRestaurantView(updated, tenant.roles, this.media);
+      return toRestaurantView(updated, tenant.roles, this.media, this.messaging.available);
     } catch (error) {
       if (error instanceof SlugTakenError) throw slugTaken(await this.nextFreeSlug(error.slug));
       throw error;
     }
+  }
+
+  /**
+   * The sender number is stored normalized; turning notices on needs one (a WhatsApp business number, or a
+   * mobile able to send SMS, registered with the platform's provider).
+   * @throws BadRequestException INVALID_SENDER_PHONE, SENDER_PHONE_REQUIRED.
+   */
+  private messagingSettings(settings: MessagingSettings): MessagingSettings {
+    const raw = settings.senderPhone.trim();
+    const senderPhone = raw === "" ? "" : normalizePhone(raw);
+    if (senderPhone === null) {
+      throw new BadRequestException(apiError("INVALID_SENDER_PHONE", "Revisa el número de envío, ej. +569 12345678"));
+    }
+    if (settings.enabled && senderPhone === "") {
+      throw new BadRequestException(
+        apiError("SENDER_PHONE_REQUIRED", "Indica el número desde el que salen los mensajes para activarlos"),
+      );
+    }
+    return { enabled: settings.enabled, channel: settings.channel, senderPhone };
   }
 
   /**
@@ -128,7 +158,7 @@ export class RestaurantsService {
       openingHours: openingHours?.map((day) => day.map(({ open, close }) => ({ open, close }))) ?? null,
     });
     if (!updated) throw notFound();
-    return toRestaurantView(updated, tenant.roles, this.media);
+    return toRestaurantView(updated, tenant.roles, this.media, this.messaging.available);
   }
 
   /**
@@ -159,7 +189,7 @@ export class RestaurantsService {
     this.realtime
       .toRestaurant(tenant.restaurantId)
       .emit("restaurant.accepting", { restaurantId: tenant.restaurantId, acceptingOrders });
-    return toRestaurantView(updated, tenant.roles, this.media);
+    return toRestaurantView(updated, tenant.roles, this.media, this.messaging.available);
   }
 
   /** Live check for the slug field of the create/edit forms. */
@@ -175,7 +205,7 @@ export class RestaurantsService {
     return this.connection.transaction(async (session) => {
       const restaurant = await this.restaurants.create({ name, slug, createdBy: ownerId }, session);
       await this.memberships.create(restaurant.id, ownerId, ["owner"], session);
-      return toRestaurantView(restaurant, ["owner"], this.media);
+      return toRestaurantView(restaurant, ["owner"], this.media, this.messaging.available);
     });
   }
 

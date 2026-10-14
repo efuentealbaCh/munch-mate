@@ -6,6 +6,10 @@ import type { Queue } from "bullmq";
 
 export type PdfJobState = "pending" | "completed" | "failed";
 
+/** `receipt-<orderId>` for the original order (the id used before item edits existed), then `-r<revision>`. */
+const receiptJobId = (orderId: string, revision: number) =>
+  revision > 0 ? `receipt-${orderId}-r${revision}` : `receipt-${orderId}`;
+
 @Injectable()
 export class PdfQueue {
   constructor(@InjectQueue(QUEUES.PDF) private readonly queue: Queue<QrSheetJob | ReceiptJob>) {}
@@ -26,12 +30,12 @@ export class PdfQueue {
   }
 
   /**
-   * Receipt of an accepted order. The job id is per order, so accepting twice (or a retried request) never
-   * generates — or emails — a second receipt.
+   * Receipt of an accepted order. The job id is per order and revision, so accepting twice (or a retried
+   * request) never generates — or emails — a second receipt, while an edited order gets a new one.
    */
   async enqueueReceipt(job: ReceiptJob): Promise<void> {
     await this.queue.add("receipt", job, {
-      jobId: `receipt-${job.orderId}`,
+      jobId: receiptJobId(job.orderId, job.revision),
       attempts: 5,
       backoff: { type: "exponential", delay: 2_000 },
       removeOnComplete: { age: 7 * 24 * 3600 },
@@ -39,9 +43,12 @@ export class PdfQueue {
     });
   }
 
-  /** True when the receipt job of an order exhausted its retries (the PDF will never appear by itself). */
-  async receiptFailed(orderId: string): Promise<boolean> {
-    const job = await this.queue.getJob(`receipt-${orderId}`);
+  /**
+   * True when the receipt job of an order's revision exhausted its retries (the PDF will never appear by
+   * itself).
+   */
+  async receiptFailed(orderId: string, revision: number): Promise<boolean> {
+    const job = await this.queue.getJob(receiptJobId(orderId, revision));
     return job ? (await job.getState()) === "failed" : false;
   }
 

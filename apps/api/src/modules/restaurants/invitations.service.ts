@@ -14,6 +14,7 @@ import { apiError } from "../../common/errors/api-error";
 import type { ApiEnv } from "../../config/env.validation";
 import { EmailQueue } from "../../infra/queue/email.queue";
 import { MediaService } from "../../infra/storage/media.service";
+import { MessagingService } from "../messaging/messaging.service";
 import { ONE_TIME_TOKEN_TTL_MS } from "../auth/auth.constants";
 import { UsersRepository } from "../users/users.repository";
 import { InvitationsRepository } from "./invitations.repository";
@@ -36,6 +37,7 @@ export class InvitationsService {
     private readonly emails: EmailQueue,
     @InjectConnection() private readonly connection: Connection,
     private readonly media: MediaService,
+    private readonly messaging: MessagingService,
     config: ConfigService<ApiEnv, true>,
   ) {
     this.appUrl = config.get("APP_URL", { infer: true });
@@ -150,7 +152,7 @@ export class InvitationsService {
       this.memberships.findOne(invitation.restaurantId, userId),
     ]);
     if (!restaurant || !membership) throw invalidInvitation();
-    return toRestaurantView(restaurant, membership.roles, this.media);
+    return toRestaurantView(restaurant, membership.roles, this.media, this.messaging.available);
   }
 }
 

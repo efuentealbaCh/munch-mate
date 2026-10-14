@@ -2,12 +2,13 @@
 
 import { ORDER_STATUS_LABELS, type OrderStatus, type OrderView, type PaymentMethod } from "@app/types";
 import { nextStatuses } from "@app/utils";
-import { BellOffIcon, BellRingIcon, InboxIcon, WifiOffIcon } from "lucide-react";
+import { BellOffIcon, BellRingIcon, InboxIcon, PrinterIcon, TriangleAlertIcon, WifiOffIcon } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useId, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AccessDenied } from "@/components/access-denied";
 import { FormError } from "@/components/form-error";
 import { PushDeviceButton } from "@/components/push-device-button";
+import { useTicketPrinter } from "@/components/ticket-printer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -16,10 +17,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useChime } from "@/hooks/use-chime";
 import { useMapConfig } from "@/hooks/use-map-config";
 import { useNow } from "@/hooks/use-now";
+import { usePrintSummary } from "@/hooks/use-print-summary";
 import { useSocketEvent } from "@/hooks/use-realtime";
 import { useReceiptDownload } from "@/hooks/use-receipt-download";
+import { ApiError, NETWORK_ERROR } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
-import { ordersApi, restaurantsApi } from "@/lib/endpoints";
+import { localStore } from "@/lib/browser-storage";
+import { ordersApi, printAgentsApi, restaurantsApi } from "@/lib/endpoints";
 import { errorMessage, hasCode } from "@/lib/errors";
 import { formatPrice } from "@/lib/money";
 import { liveOpenState, nextOpeningLabel } from "@/lib/opening-hours";
@@ -30,7 +34,8 @@ import {
   boardColumns,
   boardTitle,
   canAssignRider,
-  canRegisterPayment,
+  canOpenClose,
+  canRegisterPaymentOf,
   type ChannelFilter,
   canWorkOrders,
   dayTotals,
@@ -46,12 +51,24 @@ import {
   sortNewestFirst,
   upsertOrder,
 } from "@/lib/orders-board";
+import { canModifyOrder } from "@/lib/order-edit";
+import {
+  kitchenTicket,
+  loadPrintSettings,
+  type PrintSettings,
+  savePrintSettings,
+  shouldAutoPrint,
+  shouldReprintEdited,
+} from "@/lib/print";
+import { canSeePrintJobs, jobFailedMessage, kitchenPrintTarget, type PrintBanners, printBanners, queuedMessage } from "@/lib/printers";
 import { cn } from "@/lib/utils";
 import { useRestaurant } from "../restaurant-context";
 import { useRestaurantRealtime } from "../restaurant-realtime";
 import { OrderCard, PaymentBadge } from "./order-card";
 import { RiderMapDialog } from "./rider-map-dialog";
 import { HandOverDialog, PaymentDialog, ReadyTimeDialog, ReasonDialog, RiderDialog } from "./order-dialogs";
+import { OrderEditDialog } from "./order-edit-dialog";
+import { PrintSettingsDialog } from "./print-settings-dialog";
 
 /** How long a new order stays highlighted. */
 const FRESH_MS = 10_000;
@@ -123,7 +140,8 @@ function OrdersBoard() {
   const { restaurant, setRestaurant, reload: reloadRestaurant } = useRestaurant();
   const { socket, status: live, syncCount } = useRestaurantRealtime();
   const roles = restaurant.myRoles;
-  const canPay = canRegisterPayment(roles);
+  // Owner and cashier charge any order; waiters only table orders (phase 8).
+  const canPay = (order: OrderView) => canRegisterPaymentOf(roles, order);
   const canAssign = canAssignRider(roles);
   const [tab, setTab] = useState<"board" | "today">("board");
   const active = useOrderList(restaurant.id, "active", true, syncCount);
@@ -138,6 +156,8 @@ function OrdersBoard() {
   const [paying, setPaying] = useState<OrderView | null>(null);
   const [payMethod, setPayMethod] = useState<PaymentMethod | null>(null);
   const [acceptingWithTime, setAcceptingWithTime] = useState<OrderView | null>(null);
+  // "Modificar": the copy the dialog was opened on (the live one comes from the board's list).
+  const [editing, setEditing] = useState<OrderView | null>(null);
   // Phase 7: follow the rider of a delivery on its way (only with the base map).
   const map = useMapConfig();
   const [trackingRider, setTrackingRider] = useState<OrderView | null>(null);
@@ -149,6 +169,85 @@ function OrdersBoard() {
   const [savingAccepting, setSavingAccepting] = useState(false);
   const switchId = useId();
   const receipts = useReceiptDownload(socket);
+  // Receipt printer of this device (phase 8): paper and automatic printing, kept on the device.
+  const [printSettings, setPrintSettings] = useState<PrintSettings>(() => loadPrintSettings(localStore(), restaurant.id));
+  const printer = useTicketPrinter(printSettings.paper);
+  // Order id → revision of the last ticket this device printed for it (an edit later prints the new one).
+  const printed = useRef(new Map<string, number>());
+  const printOrder = (order: OrderView) => {
+    printed.current.set(order.id, order.revision);
+    printer.print(kitchenTicket(order, restaurant.name, restaurant.timezone));
+  };
+  const autoPrint = (event: "created" | "updated", order: OrderView, previous?: OrderView | null) => {
+    const printedRevision = printed.current.get(order.id);
+    if (printedRevision !== undefined) {
+      // The kitchen has an older ticket: an edit prints the new one, marked "MODIFICADO" (kitchenTicket).
+      // Compared with what was printed, not with the board's copy, so the socket echo of an edit made here
+      // (it may arrive before or after the api's answer) never prints twice.
+      if (shouldReprintEdited(printSettings.auto, true, printedRevision, order)) printOrder(order);
+      return;
+    }
+    if (shouldAutoPrint(printSettings.auto, event, order, previous)) printOrder(order);
+  };
+  function changePrintSettings(next: PrintSettings) {
+    setPrintSettings(next);
+    savePrintSettings(localStore(), restaurant.id, next);
+  }
+  // Print agent (phase 8): whether a computer of the restaurant prints the tickets by itself.
+  const printAgents = usePrintSummary(restaurant.id, socket, syncCount);
+  const banners = printBanners(printAgents.summary, printSettings.auto);
+  const toAgent = kitchenPrintTarget(printAgents.summary) === "agent";
+  const [sendingPrint, setSendingPrint] = useState<ReadonlySet<string>>(new Set());
+  function setSending(orderId: string, sending: boolean) {
+    setSendingPrint((current) => {
+      const next = new Set(current);
+      if (sending) next.add(orderId);
+      else next.delete(orderId);
+      return next;
+    });
+  }
+
+  /**
+   * «Comanda»: on the print agent's kitchen printers when there are any, else (none took it, or the api could
+   * not be reached) through this browser, so a ticket is never lost.
+   */
+  async function printKitchen(order: OrderView) {
+    if (kitchenPrintTarget(printAgents.summary) === "browser") return printOrder(order);
+    setSending(order.id, true);
+    try {
+      const { queued } = await ordersApi.printKitchen(restaurant.id, order.id);
+      if (queued > 0) toast.success(queuedMessage(queued));
+      else {
+        printOrder(order);
+        printAgents.reload();
+      }
+    } catch (failure) {
+      if (!(failure instanceof ApiError) || failure.code === NETWORK_ERROR || failure.status >= 500) {
+        toast.info("No pudimos enviarla a la impresora de cocina: se imprime en este dispositivo.");
+        printOrder(order);
+      } else handleFailure(failure);
+    } finally {
+      setSending(order.id, false);
+    }
+  }
+
+  async function retryPrintJob(jobId: string) {
+    try {
+      await printAgentsApi.retryJob(restaurant.id, jobId);
+      toast.success("Enviado otra vez a la impresora");
+    } catch (failure) {
+      toast.error(errorMessage(failure));
+    }
+  }
+
+  useSocketEvent(socket, "print.job-failed", (job) => {
+    // The kitchen cannot retry (403): the owner and the cashier get the notice with the action.
+    if (!canSeePrintJobs(roles)) return;
+    toast.error(jobFailedMessage(job), {
+      duration: 15_000,
+      action: { label: "Reintentar", onClick: () => void retryPrintJob(job.id) },
+    });
+  });
 
   const applyEverywhere = useCallback(
     (order: OrderView) => {
@@ -160,6 +259,7 @@ function OrdersBoard() {
 
   useSocketEvent(socket, "order.created", (order) => {
     applyEverywhere(order);
+    autoPrint("created", order);
     chime.play();
     toast(`Nuevo pedido #${order.ticketNumber} · ${destinationLabel(order)}`);
     setFresh((current) => new Set(current).add(order.id));
@@ -173,7 +273,10 @@ function OrdersBoard() {
       FRESH_MS,
     );
   });
-  useSocketEvent(socket, "order.updated", applyEverywhere);
+  useSocketEvent(socket, "order.updated", (order) => {
+    autoPrint("updated", order, active.orders?.find((o) => o.id === order.id) ?? null);
+    applyEverywhere(order);
+  });
 
   // "(2) Pedidos" in the browser tab while orders wait to be accepted.
   const pending = active.orders ? pendingCount(active.orders) : 0;
@@ -218,7 +321,10 @@ function OrdersBoard() {
   ): Promise<boolean> {
     setBusyFor(order.id, to);
     try {
-      applyEverywhere(await ordersApi.changeStatus(restaurant.id, order.id, to, extra));
+      const updated = await ordersApi.changeStatus(restaurant.id, order.id, to, extra);
+      // Accepted on this device: it prints now if set to (the socket echo is then skipped as already printed).
+      autoPrint("updated", updated, order);
+      applyEverywhere(updated);
       return true;
     } catch (failure) {
       handleFailure(failure);
@@ -355,7 +461,7 @@ function OrdersBoard() {
               id={switchId}
               size="lg"
               checked={restaurant.acceptingOrders}
-              disabled={savingAccepting || restaurant.status === "suspended"}
+              disabled={savingAccepting || restaurant.status === "suspended" || !canOpenClose(roles)}
               onCheckedChange={(checked) => void setAccepting(checked)}
             />
             <span className="flex flex-col">
@@ -384,9 +490,25 @@ function OrdersBoard() {
             {chime.enabled ? "Sonido activado" : "Activar sonido"}
           </Button>
           {user ? <PushDeviceButton userId={user.id} label="Activar avisos en este dispositivo" /> : null}
+          <PrintSettingsDialog
+            settings={printSettings}
+            agentPrints={banners.agentPrints}
+            onChange={changePrintSettings}
+            onTest={() =>
+              printer.print({
+                headline: "Prueba",
+                title: restaurant.name,
+                meta: [new Date().toLocaleString("es-CL", { hourCycle: "h23" })],
+                lines: [{ quantity: 1, name: "Comanda de prueba", details: ["Si lees esto, la impresora está lista."] }],
+                totals: [],
+                footer: [`Papel ${printSettings.paper} mm`],
+              })
+            }
+          />
           <LiveBadge status={live} />
         </div>
       </section>
+      <PrintAgentBanners banners={banners} onBrowserOff={() => changePrintSettings({ ...printSettings, auto: "off" })} />
       {chime.enabled && chime.blocked ? (
         <p className="-mt-3 text-sm text-muted-foreground" role="status">
           Toca la pantalla una vez para que el navegador permita el sonido.
@@ -418,8 +540,12 @@ function OrdersBoard() {
                 key={order.id}
                 order={order}
                 actions={actionsFor(order)}
-                canPay={canPay}
+                canPay={canPay(order)}
                 now={now}
+                onPrint={() => void printKitchen(order)}
+                onPrintHere={toAgent ? () => printOrder(order) : undefined}
+                printBusy={sendingPrint.has(order.id)}
+                onEdit={canModifyOrder(order, roles) ? () => setEditing(order) : undefined}
                 fresh={fresh.has(order.id)}
                 busy={busy[order.id] ?? null}
                 onAction={(to) => onAction(order, to)}
@@ -460,6 +586,26 @@ function OrdersBoard() {
           });
         }}
       />
+      <OrderEditDialog
+        restaurantId={restaurant.id}
+        restaurantSlug={restaurant.slug}
+        maxItems={restaurant.maxItemsPerOrder}
+        order={editing}
+        live={editing ? active.orders?.find((o) => o.id === editing.id) : undefined}
+        onOpenChange={(open) => !open && setEditing(null)}
+        onSaved={(updated, previous) => {
+          // Edited on this device: it reprints now if set to (the socket echo is then skipped as already printed).
+          autoPrint("updated", updated, previous);
+          applyEverywhere(updated);
+          setEditing(null);
+        }}
+        onReload={setEditing}
+        onRefresh={refetchAll}
+        onForbidden={() => {
+          setEditing(null);
+          reloadRestaurant();
+        }}
+      />
       <ReadyTimeDialog
         order={acceptingWithTime}
         pending={acceptingBusy}
@@ -491,9 +637,11 @@ function OrdersBoard() {
         onOpenChange={(open) => !open && setAssigningRider(null)}
         onAssign={(riderId) => assigningRider && void assignRider(assigningRider, riderId)}
       />
+      {/* Tickets for the receipt printer (printed through the browser, phase 8). */}
+      {printer.element}
       <HandOverDialog
         order={handingOver}
-        canPay={canPay}
+        canPay={handingOver ? canPay(handingOver) : false}
         pending={handOverPending}
         onOpenChange={(open) => !open && setHandingOver(null)}
         onPayAndHandOver={(method) => handingOver && void payAndHandOver(handingOver, method)}
@@ -505,6 +653,46 @@ function OrdersBoard() {
         onOpenChange={(open) => !open && setPaying(null)}
         onPay={(method) => paying && void pay(paying, method)}
       />
+    </div>
+  );
+}
+
+/**
+ * Notices about the print agent (phase 8): its computer is offline (tickets wait in the queue), or it prints
+ * the tickets while this device prints them too.
+ */
+function PrintAgentBanners({ banners, onBrowserOff }: { banners: PrintBanners; onBrowserOff(): void }) {
+  if (!banners.agentPrints) return null;
+  return (
+    <div className="-mt-2 flex flex-col gap-2">
+      {banners.offline ? (
+        <p
+          className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"
+          role="alert"
+          data-testid="print-agent-offline"
+        >
+          <TriangleAlertIcon className="mt-0.5 size-4 shrink-0" aria-hidden />
+          La impresora de cocina está desconectada: las comandas esperan hasta que vuelva.
+        </p>
+      ) : null}
+      <div
+        className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-muted-foreground"
+        role="status"
+        data-testid="print-agent-banner"
+      >
+        <span className="flex items-center gap-2">
+          <PrinterIcon className="size-4 shrink-0" aria-hidden />
+          Las comandas salen por la impresora de cocina.
+        </span>
+        {banners.duplicateBrowser ? (
+          <span className="flex flex-wrap items-center gap-2 text-warning-foreground">
+            Este dispositivo también las imprime solo: desactívala aquí para no imprimir dos veces.
+            <Button size="sm" variant="outline" onClick={onBrowserOff}>
+              Desactivar aquí
+            </Button>
+          </span>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -647,7 +835,7 @@ function TodayList({
   columns: number;
   orders: OrderView[] | null;
   error: unknown;
-  canPay: boolean;
+  canPay(order: OrderView): boolean;
   busy: Record<string, Busy>;
   onRetry(): void;
   onPay(order: OrderView): void;
@@ -692,7 +880,7 @@ function TodayList({
               <span className="w-20 text-right font-semibold tabular-nums">{formatPrice(order.total, order.currency)}</span>
               <span className="flex w-full items-center justify-end gap-2 sm:w-auto">
                 <PaymentBadge order={order} />
-                {canPay && order.paymentStatus === "unpaid" && !isDroppedStatus(order.status) ? (
+                {canPay(order) && order.paymentStatus === "unpaid" && !isDroppedStatus(order.status) ? (
                   <Button size="sm" variant="outline" disabled={busy[order.id] !== undefined} onClick={() => onPay(order)}>
                     Registrar pago
                   </Button>

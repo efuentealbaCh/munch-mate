@@ -13,6 +13,7 @@ function order(overrides: Partial<OrderRecord>): OrderRecord {
     statusHistory: [],
     paymentStatus: "unpaid",
     paymentMethod: null,
+    paymentBreakdown: [],
     items: [],
     subtotal: 0,
     deliveryFee: 0,
@@ -31,6 +32,10 @@ function order(overrides: Partial<OrderRecord>): OrderRecord {
     riderName: null,
     customerId: null,
     clientOrderId: "c",
+    revision: 0,
+    edits: [],
+    tableSessionId: null,
+    notifyBy: null,
     createdAt: new Date(),
     updatedAt: new Date(),
     ...overrides,
@@ -41,6 +46,8 @@ const line = (productId: string, name: string, quantity: number, lineTotal: numb
   productId,
   name,
   unitPrice: lineTotal / quantity,
+  regularUnitPrice: lineTotal / quantity,
+  promoLabel: "",
   quantity,
   modifiers: [],
   note: "",
@@ -68,7 +75,7 @@ describe("summarizeDay", () => {
     );
 
     expect(summary.orders).toEqual({ total: 5, completed: 2, inProgress: 1, cancelled: 1, rejected: 1 });
-    expect(summary.sales).toEqual({ total: 19_500, deliveryFees: 1500, paid: 10_000, unpaid: 9500, averageTicket: 6500 });
+    expect(summary.sales).toEqual({ total: 19_500, deliveryFees: 1500, paid: 10_000, unpaid: 9500, averageTicket: 6500, discounts: 0 });
     expect(summary.byChannel).toEqual({
       dine_in: { orders: 1, total: 7000 },
       pickup: { orders: 1, total: 3000 },
@@ -80,6 +87,28 @@ describe("summarizeDay", () => {
       { name: "Completo italiano", quantity: 4, total: 15_000 },
       { name: "Papas", quantity: 1, total: 3000 },
     ]);
+  });
+
+  it("adds each portion of a split table order to its method", () => {
+    const summary = summarizeDay(
+      [
+        order({
+          total: 12_000,
+          paymentStatus: "paid",
+          paymentMethod: "cash",
+          paymentBreakdown: [
+            { method: "cash", amount: 7000 },
+            { method: "card_pos", amount: 5000 },
+          ],
+        }),
+        order({ total: 3000, paymentStatus: "paid", paymentMethod: "transfer" }),
+      ],
+      "2026-10-08",
+      "CLP",
+    );
+
+    expect(summary.byPaymentMethod).toEqual({ cash: 7000, card_pos: 5000, transfer: 3000 });
+    expect(summary.sales.paid).toBe(15_000);
   });
 
   it("returns zeros for a day without orders", () => {

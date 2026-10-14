@@ -38,9 +38,7 @@ export async function renderQrSheet(job: Pick<QrSheetJob, "restaurantName" | "ta
     doc.font("Helvetica-Bold").fontSize(12).fillColor("#1c1917");
     doc.text(job.restaurantName, x + 12, y + 12, { width: cardWidth - 24, align: "center", ellipsis: true, height: 16 });
 
-    // High error correction: the QR still scans if a corner gets stained or covered by a glass.
-    const qr = await QRCode.toBuffer(table.url, { errorCorrectionLevel: "H", margin: 1, width: 600 });
-    doc.image(qr, x + (cardWidth - qrSize) / 2, y + 34, { width: qrSize, height: qrSize });
+    drawQr(doc, table.url, x + (cardWidth - qrSize) / 2, y + 34, qrSize);
 
     doc.font("Helvetica-Bold").fontSize(20).fillColor("#c2410c");
     doc.text(table.label, x + 12, y + 40 + qrSize, { width: cardWidth - 24, align: "center", height: 24 });
@@ -51,4 +49,33 @@ export async function renderQrSheet(job: Pick<QrSheetJob, "restaurantName" | "ta
 
   doc.end();
   return done;
+}
+
+/**
+ * Draws the QR as vector squares (one rectangle per run of dark modules in a row), with a one-module quiet
+ * zone inside `size`. Vectors print sharp at any size and avoid rasterizing a PNG for every table.
+ */
+function drawQr(doc: PDFKit.PDFDocument, url: string, x: number, y: number, size: number): void {
+  // High error correction: the QR still scans if a corner gets stained or covered by a glass.
+  const { modules } = QRCode.create(url, { errorCorrectionLevel: "H" });
+  const quietZone = 1;
+  const cell = size / (modules.size + 2 * quietZone);
+  const originX = x + quietZone * cell;
+  const originY = y + quietZone * cell;
+
+  doc.save();
+  for (let row = 0; row < modules.size; row++) {
+    let col = 0;
+    while (col < modules.size) {
+      if (!modules.get(row, col)) {
+        col++;
+        continue;
+      }
+      const start = col;
+      while (col < modules.size && modules.get(row, col)) col++;
+      doc.rect(originX + start * cell, originY + row * cell, (col - start) * cell, cell);
+    }
+  }
+  doc.fillColor("#000000").fill();
+  doc.restore();
 }

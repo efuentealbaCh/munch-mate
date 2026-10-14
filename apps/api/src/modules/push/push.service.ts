@@ -12,7 +12,7 @@ import { type PushTarget, PushSubscriptionsRepository } from "./push-subscriptio
 /** How long a guest keeps following an order after subscribing. */
 const ORDER_FOLLOW_HOURS = 12;
 /** Who hears about new orders: the people who work the board (not riders). */
-const BOARD_ROLES = new Set(["owner", "cashier", "kitchen"]);
+const BOARD_ROLES = new Set(["owner", "cashier", "kitchen", "waiter"]);
 
 /** The minimum an order needs to be announced (kept independent from the orders module). */
 export interface NotifiableOrder {

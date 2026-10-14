@@ -1,13 +1,15 @@
 import {
   CUSTOMER_LIMITS,
   DELIVERY_ZONE_LIMITS,
+  KITCHEN_TARGET_LIMITS,
   MENU_LIMITS,
   ORDER_LIMITS,
   PAYMENT_METHODS,
+  PRINT_LIMITS,
   type PublicDeliveryZone,
   RESTAURANT_ROLES,
 } from "@app/types";
-import { normalizePhone, PHONE_EXAMPLE, slugProblem } from "@app/utils";
+import { MESSAGING_PHONE_MESSAGES, messagingPhoneProblem, normalizePhone, PHONE_EXAMPLE, slugProblem } from "@app/utils";
 import { z } from "zod";
 import { cleanLine, cleanText } from "./clean-text";
 import { modifierRulesProblem } from "./menu";
@@ -105,6 +107,15 @@ export const itemsLimitSchema = z.object({
     .int("Usa un número entero")
     .min(ORDER_LIMITS.itemsPerOrderMin, `El mínimo es ${ORDER_LIMITS.itemsPerOrderMin} producto por pedido`)
     .max(ORDER_LIMITS.itemsPerOrderMax, `El máximo es ${ORDER_LIMITS.itemsPerOrderMax} productos por pedido`),
+});
+
+/** Owner setting `kitchenTargetMinutes` (UpdateRestaurantDto): the kitchen goal of the live view, in minutes. */
+export const kitchenTargetSchema = z.object({
+  kitchenTargetMinutes: z
+    .number({ error: "Ingresa un número" })
+    .int("Usa un número entero de minutos")
+    .min(KITCHEN_TARGET_LIMITS.minutesMin, `El mínimo es ${KITCHEN_TARGET_LIMITS.minutesMin} minutos`)
+    .max(KITCHEN_TARGET_LIMITS.minutesMax, `El máximo es ${KITCHEN_TARGET_LIMITS.minutesMax} minutos`),
 });
 
 const menuName = z
@@ -209,6 +220,25 @@ export const pickupCheckoutSchema = z.object({
   note: z.string().overwrite(cleanText).max(ORDER_LIMITS.noteMax, `El comentario puede tener hasta ${ORDER_LIMITS.noteMax} caracteres`),
 });
 
+/**
+ * When the customer asks for WhatsApp/SMS notices (phase 8) the phone must be able to receive them: a mobile
+ * (same rule as the api's PHONE_NOT_MOBILE). @returns The message for the phone field, or null.
+ */
+export function messagingPhoneIssue(phone: string): string | null {
+  const problem = messagingPhoneProblem(phone);
+  return problem ? MESSAGING_PHONE_MESSAGES[problem] : null;
+}
+
+/** The pickup checkout, asking for a mobile phone when the customer wants notices. */
+export function pickupCheckoutSchemaFor(requireMobile: boolean) {
+  return requireMobile
+    ? pickupCheckoutSchema.superRefine((values, ctx) => {
+        const issue = messagingPhoneIssue(values.customerPhone);
+        if (issue) ctx.addIssue({ code: "custom", path: ["customerPhone"], message: issue });
+      })
+    : pickupCheckoutSchema;
+}
+
 /** Same bound as ExpectedPaymentDto.cashAmount. */
 export const CASH_AMOUNT_MAX = 100_000_000;
 
@@ -217,6 +247,8 @@ export interface DeliveryCheckoutContext {
   subtotal: number;
   zones: readonly PublicDeliveryZone[];
   currency: string;
+  /** The customer asked for WhatsApp/SMS notices: the phone must be a mobile. */
+  requireMobile?: boolean;
 }
 
 /**
@@ -225,7 +257,7 @@ export interface DeliveryCheckoutContext {
  * without the fee) and the cash amount, which must cover subtotal + fee. The api checks both again
  * (BELOW_MINIMUM_ORDER, CASH_AMOUNT_TOO_LOW).
  */
-export function deliveryCheckoutSchema({ subtotal, zones, currency }: DeliveryCheckoutContext) {
+export function deliveryCheckoutSchema({ subtotal, zones, currency, requireMobile = false }: DeliveryCheckoutContext) {
   return pickupCheckoutSchema
     .extend({
       zoneId: z.string().min(1, "Elige tu comuna o zona"),
@@ -245,6 +277,8 @@ export function deliveryCheckoutSchema({ subtotal, zones, currency }: DeliveryCh
       cashAmount: z.string(),
     })
     .superRefine((values, ctx) => {
+      const phoneIssue = requireMobile ? messagingPhoneIssue(values.customerPhone) : null;
+      if (phoneIssue) ctx.addIssue({ code: "custom", path: ["customerPhone"], message: phoneIssue });
       const zone = zones.find((z) => z.id === values.zoneId);
       if (values.zoneId && !zone) {
         ctx.addIssue({ code: "custom", path: ["zoneId"], message: "Esta zona ya no está disponible. Elige otra." });
@@ -299,6 +333,15 @@ const tableLabel = z
 
 /** TableDto / UpdateTableDto. */
 export const tableSchema = z.object({ label: tableLabel });
+
+/** RenamePrintAgentDto: the name of a paired computer ("Cocina"). */
+export const printAgentNameSchema = z.object({
+  name: z
+    .string()
+    .overwrite(cleanLine)
+    .min(1, "Ingresa un nombre, ej. Cocina")
+    .max(PRINT_LIMITS.agentNameMax, `El nombre puede tener hasta ${PRINT_LIMITS.agentNameMax} caracteres`),
+});
 
 const tableNumber = z
   .number({ error: "Ingresa un número" })
@@ -358,6 +401,7 @@ export type RestaurantValues = z.infer<typeof restaurantSchema>;
 export type InviteValues = z.infer<typeof inviteSchema>;
 export type RestaurantProfileValues = z.infer<typeof restaurantProfileSchema>;
 export type ItemsLimitValues = z.infer<typeof itemsLimitSchema>;
+export type KitchenTargetValues = z.infer<typeof kitchenTargetSchema>;
 export type CategoryValues = z.infer<typeof categorySchema>;
 export type ProductValues = z.infer<typeof productSchema>;
 export type ModifierGroupValues = z.infer<typeof modifierGroupSchema>;
@@ -367,6 +411,7 @@ export type DeliveryCheckoutValues = z.infer<ReturnType<typeof deliveryCheckoutS
 export type DeliveryZoneValues = z.infer<typeof deliveryZoneSchema>;
 export type StatusReasonValues = z.infer<typeof statusReasonSchema>;
 export type TableValues = z.infer<typeof tableSchema>;
+export type PrintAgentNameValues = z.infer<typeof printAgentNameSchema>;
 export type BulkTablesValues = z.infer<typeof bulkTablesSchema>;
 export type CustomerProfileValues = z.infer<typeof customerProfileSchema>;
 export type SavedAddressValues = z.infer<typeof savedAddressSchema>;

@@ -8,6 +8,12 @@ import {
   PAYMENT_METHODS,
   type PaymentMethod,
   PICKUP_READY_MINUTES,
+  SALES_EXPORT_KINDS,
+  type SalesExportKind,
+  SPLIT_LIMITS,
+  TABLE_LIMITS,
+  TABLE_PAYMENT_KINDS,
+  type TablePaymentKind,
 } from "@app/types";
 import { applyDecorators } from "@nestjs/common";
 import { Transform, Type } from "class-transformer";
@@ -149,6 +155,11 @@ export class CreatePickupOrderDto {
   @IsString()
   @MaxLength(ORDER_LIMITS.noteMax)
   note?: string;
+
+  /** Notices by WhatsApp/SMS at customerPhone (must then be a mobile); ignored if the restaurant offers none. */
+  @IsOptional()
+  @IsBoolean()
+  notifyByMessage?: boolean;
 }
 
 export class DeliveryAddressDto {
@@ -316,6 +327,44 @@ export class ChangeStatusDto {
   readyInMinutes?: number;
 }
 
+/** A current line the staff keep when editing an order (index in `items`; the service checks the range). */
+export class KeptLineDto {
+  @IsInt()
+  @Min(0)
+  @Max(999)
+  line!: number;
+
+  @IsInt()
+  @Min(1)
+  @Max(ORDER_LIMITS.quantityMax, { message: `quantity no puede superar ${ORDER_LIMITS.quantityMax}` })
+  quantity!: number;
+}
+
+/** Body of `PUT /restaurants/:id/orders/:orderId/items`: lines not kept are removed; `add` is priced anew. */
+export class EditOrderItemsDto {
+  @IsInt()
+  @Min(0)
+  revision!: number;
+
+  @IsArray()
+  @ArrayMaxSize(ORDER_LIMITS.itemsMax)
+  @ValidateNested({ each: true })
+  @Type(() => KeptLineDto)
+  keep!: KeptLineDto[];
+
+  @IsArray()
+  @ArrayMaxSize(ORDER_LIMITS.itemsMax)
+  @ValidateNested({ each: true })
+  @Type(() => OrderItemDto)
+  add!: OrderItemDto[];
+
+  @IsOptional()
+  @Transform(cleanText)
+  @IsString()
+  @MaxLength(ORDER_LIMITS.editReasonMax)
+  reason?: string;
+}
+
 export class PaymentDto {
   @IsIn(PAYMENT_METHODS, { message: `method debe ser uno de: ${PAYMENT_METHODS.join(", ")}` })
   method!: PaymentMethod;
@@ -333,4 +382,119 @@ export class FollowOrderDto extends AccessTokenDto {
   @ValidateNested()
   @Type(() => PushSubscriptionDto)
   subscription!: PushSubscriptionDto;
+}
+
+const DAY = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+
+/** The tip the customer chooses when asking for the bill. */
+export class TipChoiceDto {
+  @IsIn(["suggested", "none", "amount"])
+  kind!: "suggested" | "none" | "amount";
+
+  @ValidateIf((tip: TipChoiceDto) => tip.kind === "amount")
+  @IsInt({ message: "La propina debe ser un monto entero" })
+  @Min(0, { message: "La propina no puede ser negativa" })
+  @Max(TABLE_LIMITS.tipMax)
+  amount?: number;
+}
+
+export class RequestBillDto {
+  @ValidateNested()
+  @Type(() => TipChoiceDto)
+  tip!: TipChoiceDto;
+}
+
+/** Charging a table account: the payment method of every unpaid order and the final tip. */
+export class CloseTableDto {
+  @IsIn(PAYMENT_METHODS, { message: `method debe ser uno de: ${PAYMENT_METHODS.join(", ")}` })
+  method!: PaymentMethod;
+
+  @IsInt({ message: "La propina debe ser un monto entero" })
+  @Min(0, { message: "La propina no puede ser negativa" })
+  @Max(TABLE_LIMITS.tipMax)
+  tip!: number;
+}
+
+export class AttendTableDto {
+  @IsIn(["waiter", "bill"])
+  kind!: "waiter" | "bill";
+}
+
+/** Sales between two business days (inclusive); the service checks real days, order and length. */
+export class SalesRangeQueryDto {
+  @Matches(DAY, { message: "from debe tener el formato AAAA-MM-DD" })
+  from!: string;
+
+  @Matches(DAY, { message: "to debe tener el formato AAAA-MM-DD" })
+  to!: string;
+}
+
+export class SalesExportQueryDto extends SalesRangeQueryDto {
+  @IsIn(SALES_EXPORT_KINDS, { message: `kind debe ser uno de: ${SALES_EXPORT_KINDS.join(", ")}` })
+  kind!: SalesExportKind;
+}
+
+/** A line paid by products: `line` is the index in the order's items (the service checks it against the account). */
+export class TablePaymentItemDto {
+  @IsMongoId()
+  orderId!: string;
+
+  @IsInt()
+  @Min(0)
+  @Max(999)
+  line!: number;
+
+  @IsInt()
+  @Min(1)
+  @Max(ORDER_LIMITS.quantityMax)
+  quantity!: number;
+}
+
+/**
+ * A partial payment of a table account. Only the fields of its `kind` are read: the service computes the
+ * amount of equal parts and of products itself.
+ */
+export class CreateTablePaymentDto {
+  @IsIn(TABLE_PAYMENT_KINDS, { message: `kind debe ser uno de: ${TABLE_PAYMENT_KINDS.join(", ")}` })
+  kind!: TablePaymentKind;
+
+  @ValidateIf((dto: CreateTablePaymentDto) => dto.kind === "equal")
+  @IsInt({ message: "Indica qué parte se paga" })
+  @Min(1)
+  @Max(SPLIT_LIMITS.partsMax)
+  part?: number;
+
+  @ValidateIf((dto: CreateTablePaymentDto) => dto.kind === "items")
+  @IsArray()
+  @ArrayMinSize(1, { message: "Elige al menos un producto" })
+  @ArrayMaxSize(SPLIT_LIMITS.itemsMax)
+  @ValidateNested({ each: true })
+  @Type(() => TablePaymentItemDto)
+  items?: TablePaymentItemDto[];
+
+  @ValidateIf((dto: CreateTablePaymentDto) => dto.kind === "amount")
+  @IsInt({ message: "El monto debe ser un número entero" })
+  @Min(1, { message: "El monto debe ser mayor que cero" })
+  @Max(100_000_000)
+  amount?: number;
+
+  @IsIn(PAYMENT_METHODS, { message: `method debe ser uno de: ${PAYMENT_METHODS.join(", ")}` })
+  method!: PaymentMethod;
+
+  @IsInt({ message: "La propina debe ser un monto entero" })
+  @Min(0, { message: "La propina no puede ser negativa" })
+  @Max(TABLE_LIMITS.tipMax)
+  tip!: number;
+}
+
+/** How the staff split a table account; `mode: null` removes the plan. */
+export class SetTableSplitDto {
+  @IsIn(["equal", "items", "amounts", null], { message: "mode debe ser equal, items, amounts o null" })
+  mode!: "equal" | "items" | "amounts" | null;
+
+  @ValidateIf((dto: SetTableSplitDto) => dto.mode === "equal")
+  @IsInt({ message: "Indica en cuántas partes se divide" })
+  @Min(SPLIT_LIMITS.partsMin, { message: `Divide en ${SPLIT_LIMITS.partsMin} partes o más` })
+  @Max(SPLIT_LIMITS.partsMax, { message: `Divide en ${SPLIT_LIMITS.partsMax} partes como máximo` })
+  parts?: number;
 }

@@ -16,10 +16,12 @@ import { ValkeyThrottlerStorage } from "./infra/redis/valkey-throttler.storage";
 import { AccessTokenGuard } from "./modules/auth/access-token.guard";
 import { AuthModule } from "./modules/auth/auth.module";
 import { CustomersModule } from "./modules/customers/customers.module";
+import { FloorModule } from "./modules/floor/floor.module";
 import { HealthModule } from "./modules/health/health.module";
 import { PushModule } from "./modules/push/push.module";
 import { MapsModule } from "./modules/maps/maps.module";
 import { PlatformModule } from "./modules/platform/platform.module";
+import { PrintingModule } from "./modules/printing/printing.module";
 import { MenuModule } from "./modules/menu/menu.module";
 import { OrdersModule } from "./modules/orders/orders.module";
 import { RealtimeModule } from "./modules/realtime/realtime.module";
@@ -87,6 +89,8 @@ import { RestaurantsModule } from "./modules/restaurants/restaurants.module";
     MapsModule,
     CustomersModule,
     PushModule,
+    PrintingModule,
+    FloorModule,
   ],
   providers: [
     // Global guards run in this order: rate limit → CSRF origin check → session.

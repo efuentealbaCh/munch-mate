@@ -26,6 +26,9 @@ next-env.d.ts
 # Photos downloaded by infra/scripts/seed-demo.mjs
 # .demo-cache/
 
+# Root certificate of the local stack's Caddy CA, exported by `pnpm cert:trust` (it changes per machine)
+.local-ca/
+
 # Self-hosted map data downloaded by `pnpm maps:init` (hundreds of MB; lives in Garage, not in git)
 .maps-cache/
 

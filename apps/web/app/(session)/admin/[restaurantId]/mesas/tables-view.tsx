@@ -8,12 +8,14 @@ import {
   EllipsisVerticalIcon,
   ExternalLinkIcon,
   ListPlusIcon,
+  MapIcon,
   PencilIcon,
   PlusIcon,
   QrCodeIcon,
   RefreshCwIcon,
   Trash2Icon,
 } from "lucide-react";
+import Link from "next/link";
 import QRCode from "qrcode";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
@@ -177,6 +179,8 @@ function Tables({ restaurantId }: { restaurantId: string }) {
         </Button>
       </div>
 
+      <FloorPlanCard restaurantId={restaurantId} />
+
       <AddTableForm restaurantId={restaurantId} tables={data} onCreated={append} onBulk={() => setBulkOpen(true)} />
 
       {data.length === 0 ? (
@@ -233,6 +237,27 @@ function Tables({ restaurantId }: { restaurantId: string }) {
         pending={pending}
         onConfirm={() => void confirmRegenerate()}
       />
+    </div>
+  );
+}
+
+/** Entry to «Plano del local» (phase 9): where the tables stand, used by the live view. */
+function FloorPlanCard({ restaurantId }: { restaurantId: string }) {
+  return (
+    <div className="flex flex-col gap-3 rounded-xl bg-card p-4 ring-1 ring-foreground/10 sm:flex-row sm:items-center">
+      <MapIcon className="hidden size-8 shrink-0 text-muted-foreground sm:block" aria-hidden />
+      <div className="flex flex-1 flex-col gap-0.5">
+        <h3 className="font-semibold">Plano del local</h3>
+        <p className="text-sm text-muted-foreground">
+          Ubica tus mesas, la cocina, el retiro y la puerta de delivery. Se usa en la vista En vivo.
+        </p>
+      </div>
+      <Button asChild variant="outline" className="self-start sm:self-center">
+        <Link href={`/admin/${restaurantId}/mesas/plano`} data-testid="floor-plan-link">
+          <MapIcon aria-hidden data-icon="inline-start" />
+          Plano del local
+        </Link>
+      </Button>
     </div>
   );
 }

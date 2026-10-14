@@ -189,7 +189,11 @@ export function MapFrame({
 }) {
   return (
     <div role="region" aria-label={label} className={cn("relative h-full w-full overflow-hidden rounded-lg bg-muted ring-1 ring-foreground/10", className)}>
-      <div ref={map.containerRef} className="absolute inset-0" />
+      {/* The positioning lives on a wrapper: MapLibre's CSS sets `.maplibregl-map { position: relative }` on the
+          container and loads after ours, so `absolute inset-0` there collapsed the map to 0 px of height. */}
+      <div className="absolute inset-0">
+        <div ref={map.containerRef} className="h-full w-full" />
+      </div>
       {map.failed ? (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-muted p-4 text-center text-sm text-muted-foreground" role="status">
           <MapIcon className="size-6" aria-hidden />

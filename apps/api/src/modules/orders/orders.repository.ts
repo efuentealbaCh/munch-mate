@@ -1,4 +1,12 @@
-import { FINAL_ORDER_STATUSES, type GeoPoint, type OrderChannel, type OrderStatus, type PaymentMethod } from "@app/types";
+import {
+  FINAL_ORDER_STATUSES,
+  type GeoPoint,
+  type MessageChannel,
+  type OrderChannel,
+  type OrderStatus,
+  type PaymentMethod,
+  type PaymentPortion,
+} from "@app/types";
 import { Injectable } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { type ClientSession, type Model, Types } from "mongoose";
@@ -27,6 +35,14 @@ export interface StatusChangeRecord {
   reason: string | null;
 }
 
+export interface OrderEditRecord {
+  at: Date;
+  byUserId: string;
+  byName: string | null;
+  reason: string | null;
+  changes: string[];
+}
+
 export interface OrderRecord {
   id: string;
   restaurantId: string;
@@ -38,17 +54,24 @@ export interface OrderRecord {
   statusHistory: StatusChangeRecord[];
   paymentStatus: "unpaid" | "paid";
   paymentMethod: PaymentMethod | null;
+  /** Table orders paid by a split account: each method's share (Σ = total); [] = all with paymentMethod. */
+  paymentBreakdown: PaymentPortion[];
   items: PricedItem[];
   subtotal: number;
   deliveryFee: number;
   total: number;
   currency: string;
+  /** 0 until the staff edit the items; each edit bumps it. */
+  revision: number;
+  edits: OrderEditRecord[];
   customerName: string;
   customerPhone: string;
   customerEmail: string;
   note: string;
   tableId: string | null;
   tableLabel: string | null;
+  tableSessionId: string | null;
+  notifyBy: MessageChannel | null;
   estimatedReadyAt: Date | null;
   delivery: DeliveryRecord | null;
   expectedPayment: ExpectedPaymentRecord | null;
@@ -77,6 +100,8 @@ export interface NewOrder {
   note: string;
   tableId: string | null;
   tableLabel: string | null;
+  tableSessionId: string | null;
+  notifyBy: MessageChannel | null;
   delivery: DeliveryRecord | null;
   expectedPayment: ExpectedPaymentRecord | null;
   customerId: string | null;
@@ -86,6 +111,14 @@ export interface NewOrder {
 
 const oid = (id: string) => new Types.ObjectId(id);
 export const DUPLICATE_KEY = 11000;
+
+/** Priced lines as stored (ids as ObjectIds). */
+const toItemDocs = (items: PricedItem[]) =>
+  items.map((item) => ({
+    ...item,
+    productId: oid(item.productId),
+    modifiers: item.modifiers.map((m) => ({ ...m, groupId: oid(m.groupId), optionId: oid(m.optionId) })),
+  }));
 
 /** Tenant-scoped, except the lookup by access token used by the customer's tracking page. */
 @Injectable()
@@ -100,6 +133,7 @@ export class OrdersRepository {
           ...input,
           restaurantId: oid(restaurantId),
           tableId: input.tableId ? oid(input.tableId) : null,
+          tableSessionId: input.tableSessionId ? oid(input.tableSessionId) : null,
           customerId: input.customerId ? oid(input.customerId) : null,
           delivery: input.delivery
             ? {
@@ -108,11 +142,7 @@ export class OrdersRepository {
                 location: input.delivery.location ?? undefined,
               }
             : null,
-          items: input.items.map((item) => ({
-            ...item,
-            productId: oid(item.productId),
-            modifiers: item.modifiers.map((m) => ({ ...m, groupId: oid(m.groupId), optionId: oid(m.optionId) })),
-          })),
+          items: toItemDocs(input.items),
           status: "pending",
           statusHistory: [{ status: "pending", at: new Date(), byUserId: null, byName: null, reason: null }],
         },
@@ -283,13 +313,127 @@ export class OrdersRepository {
     return doc ? toRecord(doc) : null;
   }
 
-  async markPaid(restaurantId: string, orderId: string, method: PaymentMethod): Promise<OrderRecord | null> {
+  /**
+   * Replaces the items of an order the staff edited, only if nothing happened to it since it was read: same
+   * status, same revision and still unpaid. Two staff members editing at once, or someone pressing "Empezar"
+   * or registering the payment meanwhile, make the second write miss instead of overwriting.
+   * @param clearCashAmount The new total exceeds the bill the customer said they would pay with.
+   * @returns The updated order, or null when it changed in between (or does not exist).
+   */
+  async editItems(
+    restaurantId: string,
+    orderId: string,
+    expected: { status: OrderStatus; revision: number },
+    change: {
+      items: PricedItem[];
+      subtotal: number;
+      total: number;
+      clearCashAmount: boolean;
+      edit: OrderEditRecord;
+    },
+    session?: ClientSession,
+  ): Promise<OrderRecord | null> {
+    if (!Types.ObjectId.isValid(orderId)) return null;
+    const doc = await this.orders
+      .findOneAndUpdate(
+        {
+          _id: oid(orderId),
+          restaurantId: oid(restaurantId),
+          status: expected.status,
+          // Orders older than item edits have no revision field: it reads as 0.
+          revision: expected.revision === 0 ? { $in: [0, null] } : expected.revision,
+          paymentStatus: "unpaid",
+        },
+        {
+          $set: {
+            items: toItemDocs(change.items),
+            subtotal: change.subtotal,
+            total: change.total,
+            ...(change.clearCashAmount ? { "expectedPayment.cashAmount": null } : {}),
+          },
+          $inc: { revision: 1 },
+          $push: { edits: { ...change.edit, byUserId: oid(change.edit.byUserId) } },
+        },
+        { returnDocument: "after", session },
+      )
+      .lean();
+    return doc ? toRecord(doc) : null;
+  }
+
+  /** The orders of a table account, oldest first. */
+  async listByTableSession(restaurantId: string, tableSessionId: string): Promise<OrderRecord[]> {
+    if (!Types.ObjectId.isValid(tableSessionId)) return [];
+    const docs = await this.orders
+      .find({ restaurantId: oid(restaurantId), tableSessionId: oid(tableSessionId) })
+      .sort({ createdAt: 1 })
+      .lean();
+    return docs.map(toRecord);
+  }
+
+  /** The orders of several table accounts (the floor view), grouped by account id. */
+  async listByTableSessions(restaurantId: string, tableSessionIds: string[]): Promise<Map<string, OrderRecord[]>> {
+    const byId = new Map<string, OrderRecord[]>(tableSessionIds.map((id) => [id, []]));
+    if (tableSessionIds.length === 0) return byId;
+    const docs = await this.orders
+      .find({ restaurantId: oid(restaurantId), tableSessionId: { $in: tableSessionIds.map(oid) } })
+      .sort({ createdAt: 1 })
+      .lean();
+    for (const record of docs.map(toRecord)) byId.get(record.tableSessionId!)?.push(record);
+    return byId;
+  }
+
+  /** Every order of the business days from..to (inclusive), oldest first (reports and exports). */
+  async listByBusinessDateRange(restaurantId: string, from: string, to: string): Promise<OrderRecord[]> {
+    const docs = await this.orders
+      .find({ restaurantId: oid(restaurantId), businessDate: { $gte: from, $lte: to } })
+      .sort({ createdAt: 1 })
+      .lean();
+    return docs.map(toRecord);
+  }
+
+  /**
+   * Charging a table account pays its unpaid orders, each with its share of the account's payments (one write
+   * per order, in the closing transaction). Orders already paid, rejected or cancelled are left as they are.
+   */
+  async payTableOrders(
+    restaurantId: string,
+    tableSessionId: string,
+    payments: { orderId: string; method: PaymentMethod; breakdown: PaymentPortion[] }[],
+    session?: ClientSession,
+  ): Promise<void> {
+    if (payments.length === 0) return;
+    await this.orders.bulkWrite(
+      payments.map((payment) => ({
+        updateOne: {
+          filter: {
+            _id: oid(payment.orderId),
+            restaurantId: oid(restaurantId),
+            tableSessionId: oid(tableSessionId),
+            paymentStatus: "unpaid" as const,
+            status: { $nin: ["rejected", "cancelled"] as OrderStatus[] },
+          },
+          update: {
+            $set: { paymentStatus: "paid" as const, paymentMethod: payment.method, paymentBreakdown: payment.breakdown },
+          },
+        },
+      })),
+      { session, ordered: true },
+    );
+  }
+
+  /** Pays the whole order with one method (a breakdown from an earlier split account no longer applies). */
+  async markPaid(
+    restaurantId: string,
+    orderId: string,
+    method: PaymentMethod,
+    session?: ClientSession,
+  ): Promise<OrderRecord | null> {
     if (!Types.ObjectId.isValid(orderId)) return null;
     const doc = await this.orders
       .findOneAndUpdate(
         { _id: oid(orderId), restaurantId: oid(restaurantId) },
-        { $set: { paymentStatus: "paid", paymentMethod: method } },
-        { returnDocument: "after" },
+        { $set: { paymentStatus: "paid", paymentMethod: method, paymentBreakdown: [] } },
+        { returnDocument: "after", session },
       )
       .lean();
     return doc ? toRecord(doc) : null;
@@ -316,10 +460,13 @@ function toRecord(doc: OrderDoc): OrderRecord {
     })),
     paymentStatus: doc.paymentStatus,
     paymentMethod: doc.paymentMethod ?? null,
+    paymentBreakdown: (doc.paymentBreakdown ?? []).map((portion) => ({ method: portion.method, amount: portion.amount })),
     items: doc.items.map((item) => ({
       productId: item.productId.toString(),
       name: item.name,
       unitPrice: item.unitPrice,
+      regularUnitPrice: item.regularUnitPrice ?? item.unitPrice,
+      promoLabel: item.promoLabel ?? "",
       quantity: item.quantity,
       note: item.note ?? "",
       lineTotal: item.lineTotal,
@@ -335,12 +482,22 @@ function toRecord(doc: OrderDoc): OrderRecord {
     deliveryFee: doc.deliveryFee ?? 0,
     total: doc.total,
     currency: doc.currency,
+    revision: doc.revision ?? 0,
+    edits: (doc.edits ?? []).map((edit) => ({
+      at: edit.at,
+      byUserId: edit.byUserId.toString(),
+      byName: edit.byName ?? null,
+      reason: edit.reason ?? null,
+      changes: [...(edit.changes ?? [])],
+    })),
     customerName: doc.customerName ?? "",
     customerPhone: doc.customerPhone ?? "",
     customerEmail: doc.customerEmail ?? "",
     note: doc.note ?? "",
     tableId: doc.tableId ? doc.tableId.toString() : null,
     tableLabel: doc.tableLabel ?? null,
+    tableSessionId: doc.tableSessionId ? doc.tableSessionId.toString() : null,
+    notifyBy: doc.notifyBy ?? null,
     estimatedReadyAt: doc.estimatedReadyAt ?? null,
     delivery: doc.delivery
       ? {

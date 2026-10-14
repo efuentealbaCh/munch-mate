@@ -8,6 +8,7 @@ import { telHref } from "@/lib/format";
 import { getPublicMenu } from "@/lib/public-menu";
 import { MenuBrowser } from "./menu-browser";
 import { OnlineOrdering } from "./online-ordering";
+import { withPromos } from "@/lib/promo";
 
 interface PageProps {
   params: Promise<{ slug: string }>;
@@ -41,7 +42,8 @@ export default async function PublicMenuPage({ params }: PageProps) {
   if (result.status === "not_found") notFound();
   if (result.status === "busy") return <Busy />;
 
-  const { restaurant, categories } = result.menu;
+  const { restaurant } = result.menu;
+  const categories = withPromos(result.menu.categories, restaurant.timezone);
   const ordersOnline = restaurant.pickupEnabled || restaurant.deliveryEnabled;
   return (
     <div className="flex min-h-dvh flex-col bg-background">

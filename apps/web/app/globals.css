@@ -112,3 +112,30 @@
     @apply font-sans;
   }
 }
+
+/*
+ * Thermal tickets (phase 8): while a ticket is being printed, only #print-root is printed, at the receipt
+ * printer's width (components/ticket-printer.tsx sets data-paper and the @page size).
+ */
+#print-root {
+  display: none;
+}
+@media print {
+  body:has(#print-root[data-printing]) > *:not(#print-root) {
+    display: none !important;
+  }
+  #print-root[data-printing] {
+    display: block;
+    color: #000;
+    background: #fff;
+    font-family: ui-monospace, "Cascadia Mono", "DejaVu Sans Mono", Menlo, monospace;
+  }
+  #print-root[data-paper="80"] {
+    width: 72mm;
+    font-size: 11pt;
+  }
+  #print-root[data-paper="58"] {
+    width: 48mm;
+    font-size: 9pt;
+  }
+}

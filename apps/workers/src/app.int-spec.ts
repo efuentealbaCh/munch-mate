@@ -159,6 +159,7 @@ describe("workers (integration)", () => {
       const data: ReceiptJob = {
         restaurantId,
         orderId,
+        revision: 0,
         outputKey,
         receipt: {
           restaurant: { name: "Sanguchería", phone: "+56 2 2345 6789" },
@@ -175,6 +176,8 @@ describe("workers (integration)", () => {
               productId: "p1",
               name: "Completo italiano",
               unitPrice: 3490,
+              regularUnitPrice: 3490,
+              promoLabel: "",
               quantity: 2,
               modifiers: [],
               note: "",
