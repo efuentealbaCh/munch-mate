@@ -272,6 +272,27 @@ async function seedRestaurant(spec, existing) {
     else if (zone.area && !existing.area) await api("PATCH", `${base}/delivery-zones/${existing.id}`, { area: zone.area });
   }
 
+  // Phase 9: the floor plan of the live view (tables matched by label). Only when the restaurant has none: a plan
+  // the owner already edited is never replaced.
+  if (spec.floorPlan) {
+    const current = await api("GET", `${base}/floor-plan`);
+    if (!current.plan) {
+      const { tables: places, ...plan } = spec.floorPlan;
+      await api("PUT", `${base}/floor-plan`, {
+        plan,
+        tables: current.tables.map((table) => {
+          const place = places.find((p) => p.label === table.label);
+          if (!place) return { tableId: table.id, layout: null };
+          const layout = { x: place.x, y: place.y, shape: place.shape, seats: place.seats };
+          // Optional: 90 = vertical (a long table one cell under the other); missing = horizontal.
+          if (place.rotation !== undefined) layout.rotation = place.rotation;
+          return { tableId: table.id, layout };
+        }),
+      });
+      console.log(`✓ ${spec.name}: plano del local con ${places.length} mesas`);
+    }
+  }
+
   if (spec.acceptingOrders !== undefined && restaurant.acceptingOrders !== spec.acceptingOrders) {
     await api("PUT", `${base}/accepting-orders`, { acceptingOrders: spec.acceptingOrders });
   }

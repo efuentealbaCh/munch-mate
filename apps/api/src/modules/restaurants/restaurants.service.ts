@@ -98,6 +98,7 @@ export class RestaurantsService {
     if (changes.deliveryEnabled !== undefined) update.deliveryEnabled = changes.deliveryEnabled;
     if (changes.maxItemsPerOrder !== undefined) update.maxItemsPerOrder = changes.maxItemsPerOrder;
     if (changes.tipPercent !== undefined) update.tipPercent = changes.tipPercent;
+    if (changes.kitchenTargetMinutes !== undefined) update.kitchenTargetMinutes = changes.kitchenTargetMinutes;
     if (changes.messaging !== undefined) update.messaging = this.messagingSettings(changes.messaging);
     if (changes.location !== undefined) {
       update.location = changes.location && { lat: roundCoord(changes.location.lat), lng: roundCoord(changes.location.lng) };

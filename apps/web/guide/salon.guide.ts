@@ -202,7 +202,7 @@ test("salón, propina, descuentos, impresora, ventas y WhatsApp, paso a paso", a
       await mailpit.waitForTimeout(500);
     }
     // The message is shown in a frame; the subject is in the page itself.
-    await expect(mailpit.getByText(/[WhatsApp] de/).first()).toBeVisible();
+    await expect(mailpit.getByText(/\[WhatsApp\] de/).first()).toBeVisible();
     await mailpit.waitForTimeout(1_000);
     await shot(mailpit, "Mailpit (local)", "mensaje-whatsapp", "En local el mensaje llega a Mailpit; en producción sale por WhatsApp desde el número del local.");
   } finally {

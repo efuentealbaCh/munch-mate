@@ -1,6 +1,6 @@
 # Munch Mate
 
-Plataforma SaaS multi-restaurante para pedidos por **QR en la mesa**, **retiro** y **delivery**, con tablero de cocina en vivo, seguimiento del pedido en tiempo real, cuentas de cliente con notificaciones push, **mapas propios** para las zonas de reparto y el seguimiento del repartidor, y el **salón**: garzones, cuenta de mesa con propina que se puede **dividir** (por partes, productos o montos), pedidos que el personal puede **modificar** antes de cocinarlos, descuentos, comandas y comprobantes que salen solos por la **impresora térmica** (agente para Windows), ventas exportables y avisos por WhatsApp o SMS.
+Plataforma SaaS multi-restaurante para pedidos por **QR en la mesa**, **retiro** y **delivery**, con tablero de cocina en vivo, una **vista en vivo del local** en isométrico (mesas, cocina, retiro y repartos sobre el plano que dibuja el dueño), seguimiento del pedido en tiempo real, cuentas de cliente con notificaciones push, **mapas propios** para las zonas de reparto y el seguimiento del repartidor, y el **salón**: garzones, cuenta de mesa con propina que se puede **dividir** (por partes, productos o montos), pedidos que el personal puede **modificar** antes de cocinarlos, descuentos, comandas y comprobantes que salen solos por la **impresora térmica** (agente para Windows), ventas exportables y avisos por WhatsApp o SMS.
 
 - Qué hace el producto: [README-PRODUCT.md](README-PRODUCT.md)
 - Alcance, modelo de datos y hoja de ruta: [docs/PRODUCT.md](docs/PRODUCT.md)
@@ -38,16 +38,16 @@ flowchart LR
     direction LR
     s16["16 pnpm seed:demo"] --> s17["17 platform:admin"] --> s18["18 Mesa"] --> s19["19 Tablero"] --> s20["20 Modificar un pedido"] --> s21["21 Retiro"] --> s22["22 Delivery y seguimiento"]
     s22 --> s23["23 Cuenta de cliente y push"] --> s24["24 Cuenta de mesa y garzón"] --> s25["25 Dividir la cuenta"] --> s26["26 Descuentos"] --> s27["27 Comandas desde el navegador"]
-    s27 --> s28["28 Impresora de cocina (agente)"] --> s29["29 WhatsApp o SMS"] --> s30["30 Ventas, horario y exportar"] --> s31["31 Plataforma"] --> s32["32 pnpm stack:down"]
+    s27 --> s28["28 Impresora de cocina (agente)"] --> s29["29 WhatsApp o SMS"] --> s30["30 Ventas, horario y exportar"] --> s31["31 Vista en vivo y plano"] --> s32["32 Plataforma"] --> s33["33 pnpm stack:down"]
   end
   A --> B --> C --> D --> E
 ```
 
 | Recorrido | Pasos |
 | --- | --- |
-| **Primera vez** | 1 → 32 |
-| **Después de un cambio** | 2 · 6 · 7 · 8 · 9 · 10 · 11 · 14 · 15 · 32 |
-| **Solo mostrar la demo** | 11 · 13 · 16 → 32, o todo de una vez: 🐚 `pnpm demo:reset` (borra y recarga) / `pnpm demo:load` (conserva los datos) |
+| **Primera vez** | 1 → 33 |
+| **Después de un cambio** | 2 · 6 · 7 · 8 · 9 · 10 · 11 · 14 · 15 · 33 |
+| **Solo mostrar la demo** | 11 · 13 · 16 → 33, o todo de una vez: 🐚 `pnpm demo:reset` (borra y recarga) / `pnpm demo:load` (conserva los datos) |
 | **Probar la impresora de cocina** | 11 · 16 · 28 y [configurar el computador de cocina](#computador-de-cocina-agente-de-impresión) |
 | **Cargar datos a mano** | [ver más abajo](#ingreso-manual-de-datos) |
 | **Desarrollo diario** | [ver más abajo](#desarrollo-diario) |
@@ -219,7 +219,7 @@ Playwright maneja un Chromium móvil contra `https://localhost`: cuentas, menú,
 pnpm seed:demo
 ```
 
-Crea 3 locales con menú, fotos (todos los productos y logos), mesas, retiro, ubicación en el mapa y zonas de delivery dibujadas, y la cuenta del repartidor (`repartidor@munchmate.local`, misma contraseña) invitada a los locales con delivery, usando la API como lo haría un usuario. Imprime un link `/m/…` para pedir desde una mesa de cada local. Se puede repetir: lo que ya existe no se duplica y solo sube las fotos que faltan. Las fotos se descargan una vez en `.demo-cache/`.
+Crea 3 locales con menú, fotos (todos los productos y logos), mesas, retiro, ubicación en el mapa y zonas de delivery dibujadas, la cuenta del repartidor (`repartidor@munchmate.local`, misma contraseña) invitada a los locales con delivery y el plano del local de la Pizzería para la vista En vivo (los otros dos quedan sin plano a propósito: así se ve la vista solo con cocina, retiro y delivery), usando la API como lo haría un usuario. Imprime un link `/m/…` para pedir desde una mesa de cada local. Se puede repetir: lo que ya existe no se duplica y solo sube las fotos que faltan. Las fotos se descargan una vez en `.demo-cache/`.
 
 **Todo de una vez** (Git Bash 🐚): `pnpm demo:reset` borra los datos del stack (pide escribir `BORRAR`) y deja la demo lista: levanta el stack, hace que Windows confíe en su certificado (`pnpm cert:trust`), inicializa Garage, sube el mapa, carga los locales con sus fotos y te da el rol de administrador de plataforma (pasos 11, 12, 13, 16 y 17). `pnpm demo:load` hace lo mismo sin borrar nada. Agrega `--no-map` para omitir el mapa (`pnpm demo:reset --no-map`) o `--yes` para no confirmar.
 
@@ -236,7 +236,7 @@ pnpm platform:admin --revoke demo@munchmate.local   # para quitarlo
 </details>
 
 <details>
-<summary><b>18–31. Probar cada rol</b></summary>
+<summary><b>18–32. Probar cada rol</b></summary>
 
 | # | Rol | Qué hacer | Deberías ver |
 | --- | --- | --- | --- |
@@ -253,11 +253,12 @@ pnpm platform:admin --revoke demo@munchmate.local   # para quitarlo
 | 28 | Dueño y cocina | **Impresora de cocina sin diálogo**: sigue [Computador de cocina](#computador-de-cocina-agente-de-impresión) (vincular el agente, activar la impresora, imprimir prueba) y haz un pedido | La comanda sale sola por la impresora (o como archivo `.bin` con la impresora de pruebas); el tablero dice «Las comandas salen por la impresora de cocina»; cada pago imprime su comprobante |
 | 29 | Cliente online | En la Pizzería pide para retiro marcando **Avísame por WhatsApp** con un celular. Acepta el pedido en el panel | El aviso llega a [Mailpit](http://localhost:8025) como un correo a `569…@whatsapp.mensajes.local` |
 | 30 | Dueño / caja | **Ventas** → **Día** (y **Excel · Pedidos/Productos/Por día**), **Rango y exportar** para cualquier periodo, **Imprimir**. En **Resumen** activa **Usar horario** con un tramo que deje el local cerrado | Totales, propinas y descuentos, medios de pago que cuadran con las cuentas divididas; se descarga un CSV que abre Excel; el menú dice «Cerrado ahora · Abre … a las HH:MM» |
-| 31 | Platform admin | Menú del usuario → **Plataforma**, suspende un local y luego reactívalo | Suspendido: su menú público desaparece y el panel queda en solo lectura |
+| 31 | Dueño / caja | **En vivo**: el local en isométrico. Toca una mesa, la cocina, el mesón de retiro, la puerta o un reparto para ver su detalle. Con pedidos activos (pasos 18–25) las mesas cambian de color y aparecen los pines de «llamó al garzón» y «pidió la cuenta». **Editar plano** (dueño) abre **Mesas → Plano del local**: arrastra mesas, cambia su forma y puestos, mueve o redimensiona la cocina y el retiro, mueve la puerta por el borde y **Guardar plano** (cuantas veces quieras); ahí también está la **Meta de cocina**. Abre la Sanguchería o el Café: sin plano no hay salón, y el Café (sin delivery) no tiene puerta | Las comandas flotan sobre la cocina por estado con su cronómetro (ámbar sobre la meta); los indicadores de ventas, pedidos, tiempo de cocina y mesas se actualizan solos; en el celular se ve como lista por zonas |
+| 32 | Platform admin | Menú del usuario → **Plataforma**, suspende un local y luego reactívalo | Suspendido: su menú público desaparece y el panel queda en solo lectura |
 </details>
 
 <details>
-<summary><b>32. Apagar</b> — <code>pnpm stack:down</code></summary>
+<summary><b>33. Apagar</b> — <code>pnpm stack:down</code></summary>
 
 ```bash
 pnpm stack:down
@@ -287,6 +288,7 @@ Para cargar un restaurante propio desde cero, sin `seed:demo`. Todo se hace desd
 | 11 | **Resumen** → Delivery | En cada zona, **Dibujar en el mapa**: toca los vértices del área y **Guardar área**. Las zonas sin dibujo se eligen por nombre | — |
 | 12 | **Resumen** → Horario de atención | **Usar horario**, hasta 2 tramos por día, **Copiar el lunes a todos los días**, **Guardar horario** (opcional) | 12:00–15:30 y 19:00–23:30 |
 | 13 | **Equipo** → Invitar a alguien | Correo y roles (Caja, Cocina, Garzón, Repartidor), **Enviar invitación**. La persona acepta desde el correo | `cocina@local.test` · Cocina |
+| 13b | **Mesas** → **Plano del local** | **Crear plano** (arma uno con tus mesas acomodadas), ajusta mesas, cocina, retiro y puerta, y **Guardar plano**. Fija la **Meta de cocina**. Sin plano, la vista **En vivo** muestra solo la cocina | 14 × 9 · meta 20 min |
 | 14 | **Resumen** → Salón y propina | **Propina sugerida** en % (0 = sin sugerencia). Se ofrece al pedir la cuenta desde la mesa | 10 % |
 | 15 | **Resumen** → Avisos por WhatsApp o SMS | **Avisar a los clientes por mensaje**, canal y **Número de envío** del local (registrado en la cuenta de mensajería) | WhatsApp · +569 55550101 |
 | 16 | **Pedidos** → **Impresora** | Impresión desde el navegador, por dispositivo: papel y **Imprimir comandas solas**; **Imprimir prueba**. Úsala solo si no instalas el agente (fila siguiente) | 80 mm · cada pedido nuevo |
@@ -374,6 +376,8 @@ Regenera [docs/capturas/delivery](docs/capturas/delivery/README.md): un recorrid
 | Mailpit (emails y avisos WhatsApp/SMS) | <http://localhost:8025> | <http://localhost:8025> |
 | Plataforma | <https://localhost/plataforma> | <http://localhost:3100/plataforma> |
 | Salón (mesas) | <https://localhost/admin> → **Salón** | <http://localhost:3100/admin> → **Salón** |
+| Vista en vivo del local | <https://localhost/admin> → **En vivo** | <http://localhost:3100/admin> → **En vivo** |
+| Plano del local | <https://localhost/admin> → **Mesas** → **Plano del local** | <http://localhost:3100/admin> → **Mesas** → **Plano del local** |
 | Impresoras (agente) | <https://localhost/admin> → **Impresoras** | <http://localhost:3100/admin> → **Impresoras** |
 | Tickets de la impresora de pruebas | `%TEMP%\munchmate-tickets` | `%TEMP%\munchmate-tickets` |
 | Estado del mapa | <https://localhost/api/public/map-config> | <http://localhost:3000/api/public/map-config> |

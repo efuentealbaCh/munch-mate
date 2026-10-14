@@ -1,3 +1,4 @@
+import type { FloorPlanView } from "./floor";
 import type { GeoArea, GeoPoint, RiderPosition } from "./geo";
 import type { PrintJobView } from "./printing";
 import type { MessageChannel, OpenState } from "./restaurants";
@@ -255,6 +256,10 @@ export interface OrderView {
   businessDate: string;
   channel: OrderChannel;
   status: OrderStatus;
+  /**
+   * Every status change, oldest first; it always starts with "pending" at creation. The last entry's `at` is
+   * when the order entered its current status (the live view's ticket timer).
+   */
   statusHistory: OrderStatusChange[];
   paymentStatus: PaymentStatus;
   /** With a split table account: the method of the largest portion (`paymentBreakdown` has them all). */
@@ -661,6 +666,8 @@ export interface ServerToClientEvents {
   "table.bill": (bill: PublicTableBill) => void;
   /** A job of a print agent failed or expired (staff): the web offers to retry it or print from the browser. */
   "print.job-failed": (job: PrintJobView) => void;
+  /** The owner saved the floor plan (staff room `restaurant:<id>`; riders-only members never get it). */
+  "floor-plan.updated": (view: FloorPlanView) => void;
 }
 
 /** Events the client emits. Acks return `{ ok: true }` or `{ ok: false, code }`. */

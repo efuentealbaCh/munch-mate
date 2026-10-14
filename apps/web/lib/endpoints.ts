@@ -1,6 +1,9 @@
 import type {
   AdminMenuView,
   AgentPrinterSettings,
+  FloorPlanView,
+  LiveSummary,
+  SaveFloorPlanInput,
   ChangeOrderStatusInput,
   CreatedOrder,
   CreateDeliveryOrderInput,
@@ -110,6 +113,8 @@ export const restaurantsApi = {
       location?: GeoPoint | null;
       /** Suggested tip on table bills, percent (0 = none). */
       tipPercent?: number;
+      /** Kitchen time goal of the live view, minutes (KITCHEN_TARGET_LIMITS). */
+      kitchenTargetMinutes?: number;
       /** WhatsApp/SMS notices. @throws ApiError SENDER_PHONE_REQUIRED, INVALID_SENDER_PHONE (400). */
       messaging?: MessagingSettings;
     },
@@ -351,6 +356,25 @@ export const reportsApi = {
       filename: filenameFromDisposition(response.headers.get("Content-Disposition"), `ventas-${from}.csv`),
     };
   },
+};
+
+/** The restaurant's floor plan: grid, kitchen, pickup counter, delivery door and where each table stands. */
+export const floorApi = {
+  /** Owner, cashier, kitchen and waiter. Tables without a place come with `layout: null`. */
+  get: (restaurantId: string, signal?: AbortSignal) =>
+    api.request<FloorPlanView>(`${restaurantPath(restaurantId)}/floor-plan`, { signal }),
+  /**
+   * Owner: replaces the whole plan and every table's place (tables left out lose theirs; `plan: null` clears it all).
+   * @throws ApiError INVALID_FLOOR_PLAN (400, meta.problem), UNKNOWN_TABLE (400, meta.tableId).
+   */
+  save: (restaurantId: string, body: SaveFloorPlanInput) =>
+    api.request<FloorPlanView>(`${restaurantPath(restaurantId)}/floor-plan`, { method: "PUT", body }),
+};
+
+/** Indicators of the live floor view (owner, cashier). */
+export const liveApi = {
+  summary: (restaurantId: string, signal?: AbortSignal) =>
+    api.request<LiveSummary>(`${restaurantPath(restaurantId)}/live`, { signal }),
 };
 
 /** The floor (phase 8): open table accounts, calls, charging a table. Owner, cashier and waiters. */

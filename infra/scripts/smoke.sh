@@ -170,6 +170,12 @@ esac
 code=$(status "$BASE/api/restaurants/000000000000000000000000/print-agents")
 if [ "$code" = "401" ]; then pass "print agents require a session (401)"; else fail "anonymous print agents returned $code"; fi
 
+# Live floor (phase 9), safe everywhere: the floor plan and the live indicators need a session.
+code=$(status "$BASE/api/restaurants/000000000000000000000000/floor-plan")
+if [ "$code" = "401" ]; then pass "floor plan requires a session (401)"; else fail "anonymous floor plan returned $code"; fi
+code=$(status "$BASE/api/restaurants/000000000000000000000000/live")
+if [ "$code" = "401" ]; then pass "live indicators require a session (401)"; else fail "anonymous live indicators returned $code"; fi
+
 # Platform admin, safe everywhere: requires a session.
 code=$(status "$BASE/api/platform/restaurants")
 if [ "$code" = "401" ]; then pass "platform admin requires a session (401)"; else fail "anonymous platform admin returned $code"; fi

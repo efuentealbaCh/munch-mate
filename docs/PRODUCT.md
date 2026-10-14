@@ -98,7 +98,7 @@ pending ──► accepted ──► preparing ──► ready ──┬──�
 
 | Colección | Tenant | Campos clave |
 | --- | --- | --- |
-| `restaurants` | — | `slug` (único), `name`, `description`, `phone`, `logoKey`, `currency`, `timezone`, `status`, `createdBy`, `membershipVersion`, `acceptingOrders`, `pickupEnabled`, `deliveryEnabled`, `openingHours` ✅, `tipPercent`, `messaging` (`enabled`, `channel`, `senderPhone`) ✅ |
+| `restaurants` | — | `slug` (único), `name`, `description`, `phone`, `logoKey`, `currency`, `timezone`, `status`, `createdBy`, `membershipVersion`, `acceptingOrders`, `pickupEnabled`, `deliveryEnabled`, `openingHours` ✅, `tipPercent`, `messaging` (`enabled`, `channel`, `senderPhone`) ✅, `kitchenTargetMinutes`, `floorPlan` (grilla, cocina, mesón de retiro, puerta de delivery; fase 9) |
 | `users` | — | `email` (único), `passwordHash`, `name`, `emailVerifiedAt`, `platformRole?` ✅ |
 | `sessions` | — | `userId`, `familyId`, `tokenHash`, `expiresAt`, `rotatedAt`, `revokedAt` ✅ |
 | `one_time_tokens` | — | `type` (`verify_email` / `password_reset`), `tokenHash`, `userId`, `expiresAt`, `usedAt` ✅ |
@@ -107,7 +107,7 @@ pending ──► accepted ──► preparing ──► ready ──┬──�
 | `menu_categories` | ✔ | `name`, `description`, `position`, `active` ✅ |
 | `products` | ✔ | `categoryId`, `name`, `description`, `price`, `imageKey`, `available` (agotado), `visible`, `modifierGroupIds[]`, `position` ✅, `promo` (porcentaje o precio especial, días, fechas, texto) ✅ |
 | `modifier_groups` | ✔ | `name`, `minSelect`, `maxSelect`, `options[]` (`name`, `priceDelta`, `available`) — biblioteca reutilizable entre productos ✅ |
-| `tables` | ✔ | `label`, `token` (único, va en el QR `/m/{token}`, regenerable), `active` ✅ |
+| `tables` | ✔ | `label`, `token` (único, va en el QR `/m/{token}`, regenerable), `active` ✅, `layout` (posición en el plano, forma y puestos; fase 9) |
 | `delivery_zones` | ✔ | `name`, `fee`, `minOrder`, `active`, `isHome` (zona del local, preseleccionada), `position` ✅ |
 | `orders` | ✔ | `number` (global), `ticketNumber` (diario), `businessDate`, `channel`, `status`, `statusHistory[]` (con quién y motivo), `paymentStatus`, `paymentMethod`, `items[]` (snapshot de precios y modificadores), `subtotal`, `total`, `currency`, `customerName`, `customerPhone` (normalizado), `customerEmail`, `estimatedReadyAt`, `note`, `tableId`, `tableLabel` (snapshot), `deliveryFee`, `delivery` (zona, dirección, depto, referencia), `expectedPayment` (medio y monto en efectivo), `riderId`, `riderName`, `accessTokenHash`, `clientOrderId` ✅, `customerId` ✅, `tableSessionId`, `notifyBy`, ítems con `regularUnitPrice` y `promoLabel` ✅, `revision` y `edits[]` (ediciones del personal) ✅, `paymentBreakdown[]` (medio y monto de cada porción cuando se pagó con la cuenta dividida) ✅ |
 | `table_sessions` | ✔ | `tableId`, `tableLabel`, `status` (`open`/`closed`, una abierta por mesa), `openedAt`, `waiterCalledAt`, `billRequestedAt`, `requestedTip`, `closedAt`, `closedBusinessDate`, `tip`, `paymentMethod`, `closedBy` ✅, `split` (partes iguales, por productos o montos libres), `payments[]` (monto, propina, medio, parte o productos, quién), `paymentMethods`, `revision` ✅ |
@@ -145,6 +145,7 @@ pending ──► accepted ──► preparing ──► ready ──┬──�
 | **6. Clientes y push** | Cuentas de cliente, historial, direcciones, web push | El cliente recibe push al quedar listo su pedido |
 | **7. Mapas** | Mapa propio, zonas dibujadas, pin del cliente, seguimiento del repartidor | El cliente ve al repartidor moverse hasta su puerta |
 | **8. Salón y ventas** | Rol garzón, cuenta de mesa con llamado al garzón y propina, descuentos por producto, comandas en impresora térmica, exportar ventas, avisos por WhatsApp o SMS | Una mesa pide, llama al garzón, pide la cuenta con propina y el garzón la cobra; el cliente de retiro recibe el aviso por WhatsApp |
+| **9. Vista en vivo del local** | Plano del local editado por el dueño (mesas, cocina, mesón de retiro, puerta de delivery; cada zona solo si el local la usa), indicadores en vivo (ventas vs la semana anterior, pedidos en curso, tiempo de cocina vs meta, mesas) para dueño y caja | El dueño dibuja su local y ve en tiempo real mesas, comandas, retiros y repartidores |
 
 Cada fase termina con sus tests, `smoke` actualizado y despliegue al VPS.
 

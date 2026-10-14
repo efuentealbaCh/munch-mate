@@ -812,6 +812,99 @@
         "Terraza 1",
         "Terraza 2"
       ],
+      "floorPlan": {
+        "cols": 14,
+        "rows": 9,
+        "kitchen": {
+          "x": 10,
+          "y": 0,
+          "w": 4,
+          "h": 3
+        },
+        "pickup": {
+          "x": 11,
+          "y": 7,
+          "w": 3,
+          "h": 2
+        },
+        "door": {
+          "x": 6,
+          "y": 8
+        },
+        "tables": [
+          {
+            "label": "Mesa 1",
+            "x": 1,
+            "y": 1,
+            "shape": "round",
+            "seats": 4
+          },
+          {
+            "label": "Mesa 2",
+            "x": 3,
+            "y": 1,
+            "shape": "square",
+            "seats": 4
+          },
+          {
+            "label": "Mesa 3",
+            "x": 5,
+            "y": 1,
+            "shape": "square",
+            "seats": 4
+          },
+          {
+            "label": "Mesa 4",
+            "x": 7,
+            "y": 1,
+            "shape": "round",
+            "seats": 4
+          },
+          {
+            "label": "Mesa 5",
+            "x": 1,
+            "y": 3,
+            "shape": "square",
+            "seats": 8,
+            "rotation": 90
+          },
+          {
+            "label": "Mesa 6",
+            "x": 4,
+            "y": 3,
+            "shape": "square",
+            "seats": 4
+          },
+          {
+            "label": "Mesa 7",
+            "x": 6,
+            "y": 3,
+            "shape": "round",
+            "seats": 4
+          },
+          {
+            "label": "Mesa 8",
+            "x": 8,
+            "y": 3,
+            "shape": "square",
+            "seats": 2
+          },
+          {
+            "label": "Terraza 1",
+            "x": 1,
+            "y": 6,
+            "shape": "round",
+            "seats": 2
+          },
+          {
+            "label": "Terraza 2",
+            "x": 3,
+            "y": 6,
+            "shape": "round",
+            "seats": 2
+          }
+        ]
+      },
       "acceptingOrders": true,
       "pickupEnabled": true,
       "deliveryEnabled": true,

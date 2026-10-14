@@ -18,5 +18,7 @@ export const AreaEditorMap = dynamic(() => import("./area-editor-map").then((m) 
   loading: MapLoading,
 });
 export const TrackingMap = dynamic(() => import("./tracking-map").then((m) => m.TrackingMap), { ssr: false, loading: MapLoading });
+export const RidersMap = dynamic(() => import("./riders-map").then((m) => m.RidersMap), { ssr: false, loading: MapLoading });
 
 export type { PinMapZone } from "./pin-map";
+export type { RidersMapRider } from "./riders-map";

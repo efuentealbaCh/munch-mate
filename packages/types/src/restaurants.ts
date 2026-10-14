@@ -84,6 +84,8 @@ export interface RestaurantView {
   deliveryEnabled: boolean;
   /** Suggested tip on table bills, in percent (0 = no suggestion). Owner setting. */
   tipPercent: number;
+  /** Minutes the owner expects from accepted to ready (`KITCHEN_TARGET_LIMITS`); the live view's kitchen goal. */
+  kitchenTargetMinutes: number;
   messaging: MessagingSettings;
   /** Whether the platform has a messaging provider configured (otherwise the setting has no effect). */
   messagingAvailable: boolean;
