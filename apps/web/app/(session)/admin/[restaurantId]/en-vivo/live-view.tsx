@@ -10,7 +10,7 @@ import { LiveScene, type SceneData, type SceneTooltip } from "@/components/live-
 import { DetailPanel, type DetailContext, GLASS, KpiCards, LiveStatus, TableLegend, TrackingStrip, WorkQueue } from "@/components/live-floor/panels";
 import { RidersCard } from "@/components/live-floor/riders-card";
 import { ZoneLists } from "@/components/live-floor/zone-lists";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useMapConfig } from "@/hooks/use-map-config";
@@ -411,6 +411,13 @@ function LiveFloor() {
       </div>
       <div className="flex flex-wrap items-center gap-3">
         {wide && model.layout.dining ? <TableLegend /> : null}
+        {/* The plan can be changed as often as needed: without a plan the notice below links to the editor. */}
+        {isOwner && model.layout.hasPlan ? (
+          <Link href={planHref} className={buttonVariants({ variant: "outline", size: "sm" })} data-testid="edit-floor-plan">
+            <PencilRulerIcon aria-hidden data-icon="inline-start" />
+            Editar plano
+          </Link>
+        ) : null}
         <LiveStatus status={status} now={now} />
       </div>
     </div>

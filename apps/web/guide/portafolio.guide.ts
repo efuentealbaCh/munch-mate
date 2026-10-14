@@ -138,6 +138,45 @@ async function clearScene(owner: BrowserContext) {
   }
 }
 
+/** The demo floor plan (as `pnpm seed:demo` creates it) when the restaurant has none yet. */
+async function ensureFloorPlan(owner: BrowserContext) {
+  const base = `/api/restaurants/${restaurantId}`;
+  const view = (await send(owner, "get", `${base}/floor-plan`)) as { plan: unknown; tables: { id: string; active: boolean }[] };
+  if (view.plan) return;
+  const slots = [1, 3, 5].flatMap((y) => [1, 3, 5, 7].map((x) => ({ x, y })));
+  await send(owner, "put", `${base}/floor-plan`, {
+    plan: { cols: 14, rows: 9, kitchen: { x: 10, y: 0, w: 4, h: 3 }, pickup: { x: 11, y: 7, w: 3, h: 2 }, door: { x: 4, y: 8 } },
+    tables: view.tables.map((table, i) => ({
+      tableId: table.id,
+      layout: table.active && slots[i] ? { ...slots[i], shape: i % 3 === 0 ? "round" : "square", seats: 4 } : null,
+    })),
+  });
+}
+
+/** A delivery to Ñuñoa (pin inside the zone), dispatched: it shows as a scooter at the door and in the map card. */
+async function deliveryOnTheWay(owner: BrowserContext, guest: BrowserContext) {
+  const zones = (await send(guest, "get", `/api/public/restaurants/${SLUG}/delivery-zones`)) as { id: string; name: string }[];
+  const zone = zones.find((z) => z.name === "Ñuñoa") ?? zones[0];
+  if (!zone) return;
+  await send(guest, "post", `/api/public/restaurants/${SLUG}/delivery-orders`, {
+    clientOrderId: crypto.randomUUID(),
+    items: [item("Margarita", 2)],
+    customerName: "Martina Soto",
+    customerPhone: "+56 9 8765 4310",
+    delivery: { zoneId: zone.id, address: "Av. Italia 1234", unit: "Depto 402", location: { lat: -33.4575, lng: -70.6105 } },
+    payment: { method: "card_pos" },
+  });
+  const orders = (await send(owner, "get", `/api/restaurants/${restaurantId}/orders`)) as { id: string; customerName: string }[];
+  const order = orders.find((o) => o.customerName === "Martina Soto");
+  if (!order) return;
+  for (const status of ["accepted", "preparing", "ready", "out_for_delivery"]) {
+    await send(owner, "post", `/api/restaurants/${restaurantId}/orders/${order.id}/status`, {
+      status,
+      ...(status === "accepted" ? { readyInMinutes: 30 } : {}),
+    });
+  }
+}
+
 async function ownerContext(browser: Browser): Promise<BrowserContext> {
   const owner = await browser.newContext(DESKTOP);
   await send(owner, "post", "/api/auth/login", DEMO);
@@ -275,6 +314,58 @@ test("portafolio: pantallas de escritorio y funciones nuevas", async ({ browser 
     await waitForHydration(menuPage);
     await menuPage.waitForLoadState("networkidle");
     await menuPage.screenshot({ path: join(OUT, "m03-menu-publico.png") });
+
+    // ── Live floor view (phase 9) ──────────────────────────────────────────
+    // More life on the floor: a table eating, one asking for the bill, one calling the waiter, a new order and a
+    // delivery on its way, next to Mesa 6 paying in parts and the pickups already in the scene.
+    await ensureFloorPlan(owner);
+    await tableOrder(guest, "Mesa 1", [item("Pepperoni"), item("Cerveza artesanal", 2)]);
+    await advance(owner, (o) => o.tableLabel === "Mesa 1", "served");
+    const billTable = tables.find((t) => t.label === "Mesa 2")!;
+    await tableOrder(guest, "Mesa 2", [item("Cuatro quesos"), item("Pan de ajo")]);
+    await advance(owner, (o) => o.tableLabel === "Mesa 2", "served");
+    await send(guest, "post", `/api/public/tables/${billTable.token}/request-bill`, { tip: { kind: "suggested" } });
+    const callTable = tables.find((t) => t.label === "Mesa 3")!;
+    await tableOrder(guest, "Mesa 3", [item("Margarita")]);
+    await send(guest, "post", `/api/public/tables/${callTable.token}/call-waiter`);
+    await tableOrder(guest, "Mesa 7", [item("Pollo BBQ"), item("Cerveza artesanal")]);
+    await deliveryOnTheWay(owner, guest);
+
+    const live = await owner.newPage();
+    await live.setViewportSize({ width: 1920, height: 960 });
+    await live.goto(`/admin/${restaurantId}/en-vivo`);
+    await waitForHydration(live);
+    await expect(live.getByTestId("live-table").first()).toBeVisible();
+    const stage = live.getByRole("region", { name: /Plano en vivo/ }).or(live.locator('[aria-label^="Plano en vivo"]')).first();
+    const top = async () => {
+      await stage.evaluate((element) => window.scrollTo(0, element.getBoundingClientRect().top + window.scrollY - 24));
+      await live.waitForTimeout(2_500); // map tiles and the scene's entrance
+    };
+    await top();
+    await live.screenshot({ path: join(OUT, "d12-en-vivo.png") });
+    await live.locator('[data-testid="live-table"][data-label="Mesa 6"]').click();
+    await top();
+    await live.screenshot({ path: join(OUT, "d13-en-vivo-mesa.png") });
+    // By keyboard: the kitchen's centre may sit under the counters in front of it.
+    await live.locator('[data-testid="live-kitchen"]').first().focus();
+    await live.keyboard.press("Enter");
+    await top();
+    await live.screenshot({ path: join(OUT, "d14-en-vivo-cocina.png") });
+
+    const editor = await owner.newPage();
+    await editor.setViewportSize({ width: 1440, height: 720 });
+    await editor.goto(`/admin/${restaurantId}/mesas/plano`);
+    await waitForHydration(editor);
+    await expect(editor.getByTestId("floor-grid")).toBeVisible();
+    await editor.getByTestId("floor-grid").evaluate((element) => window.scrollTo(0, element.getBoundingClientRect().top + window.scrollY - 150));
+    await shot(editor, "d15-plano");
+
+    const livePhone = await phone.newPage();
+    await livePhone.context().request.post("/api/auth/login", { data: DEMO, headers: ORIGIN_HEADER });
+    await livePhone.goto(`/admin/${restaurantId}/en-vivo`);
+    await waitForHydration(livePhone);
+    await livePhone.waitForTimeout(1_500);
+    await livePhone.screenshot({ path: join(OUT, "m04-en-vivo-celular.png") });
   } finally {
     await owner.close();
     await guest.close();
