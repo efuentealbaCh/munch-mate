@@ -2,7 +2,8 @@
 // Creates the demo restaurants of infra/demo/demo-restaurants.json through the public api, exactly as a
 // user would: register (or log in), verify the email via Mailpit, create restaurants, profile, logo,
 // modifier groups, categories and products with photos and discounts, tables, pickup, delivery zones drawn on the
-// map, the restaurant location, WhatsApp notices, and open the restaurant for orders.
+// map, the restaurant location, WhatsApp notices, and open the restaurant for orders. It also creates the demo
+// rider (repartidor@munchmate.local, same password), invited with the rider role to the restaurants that deliver.
 //
 // Usage (from the repo root, with the local stack or `pnpm dev` running):
 //   node infra/scripts/seed-demo.mjs
@@ -38,11 +39,12 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 /**
  * Calls the api with the session cookies and the app's Origin (required by the CSRF guard).
  * Waits and retries on 429 (Retry-After) so the seed respects the api's rate limits.
+ * @param jar Session cookies to send and update: the owner's by default, the rider's for their own calls.
  * @returns Parsed JSON body (or null for 204).
  */
-async function api(method, path, body) {
+async function api(method, path, body, jar = cookies) {
   for (let attempt = 0; attempt < 8; attempt++) {
-    const headers = { Origin: BASE_URL, Cookie: [...cookies].map(([k, v]) => `${k}=${v}`).join("; ") };
+    const headers = { Origin: BASE_URL, Cookie: [...jar].map(([k, v]) => `${k}=${v}`).join("; ") };
     let payload = body;
     if (body !== undefined && !(body instanceof FormData)) {
       headers["Content-Type"] = "application/json";
@@ -52,7 +54,7 @@ async function api(method, path, body) {
     for (const cookie of res.headers.getSetCookie()) {
       const [pair] = cookie.split(";");
       const [name, ...value] = pair.split("=");
-      cookies.set(name.trim(), value.join("="));
+      jar.set(name.trim(), value.join("="));
     }
     if (res.status === 429) {
       const wait = Number(res.headers.get("retry-after") ?? "10");
@@ -101,6 +103,48 @@ async function ensureOwner() {
     await sleep(1000);
   }
   throw new Error(`Could not find the verification email for ${EMAIL} in Mailpit (${MAILPIT_URL})`);
+}
+
+/**
+ * The demo rider (delivery walkthrough, step 22 of the guide): an account invited with the rider role to every
+ * restaurant that delivers, exactly as an owner would do it. Reused on later runs.
+ */
+const RIDER = { email: "repartidor@munchmate.local", name: "Rodrigo Reparto" };
+
+/** Newest link to `path` in the emails sent to `to` (read from Mailpit), waiting up to 20 s. */
+async function emailToken(to, path) {
+  const pattern = new RegExp(`${path}\\?token=([A-Za-z0-9_-]+)`);
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const search = await (await fetch(`${MAILPIT_URL}/api/v1/search?query=to:${encodeURIComponent(to)}`)).json();
+    for (const { ID } of search.messages ?? []) {
+      const message = await (await fetch(`${MAILPIT_URL}/api/v1/message/${ID}`)).json();
+      const token = message.Text?.match(pattern)?.[1];
+      if (token) return token;
+    }
+    await sleep(1000);
+  }
+  throw new Error(`Could not find an email to ${to} with a ${path} link in Mailpit (${MAILPIT_URL})`);
+}
+
+async function ensureRider(restaurants) {
+  const delivering = restaurants.filter((r) => r.deliveryEnabled);
+  if (delivering.length === 0) return;
+  const jar = new Map();
+  try {
+    await api("POST", "/auth/login", { email: RIDER.email, password: PASSWORD }, jar);
+  } catch (error) {
+    if (error.code !== "INVALID_CREDENTIALS") throw error;
+    await api("POST", "/auth/register", { email: RIDER.email, password: PASSWORD, name: RIDER.name }, jar);
+    console.log(`✓ registered ${RIDER.email}`);
+  }
+  for (const restaurant of delivering) {
+    const riders = await api("GET", `/restaurants/${restaurant.id}/riders`);
+    if (riders.some((rider) => rider.name === RIDER.name)) continue;
+    await api("POST", `/restaurants/${restaurant.id}/invitations`, { email: RIDER.email, roles: ["rider"] });
+    const token = await emailToken(RIDER.email, "/invitacion");
+    await api("POST", "/invitations/accept", { token }, jar);
+    console.log(`✓ ${RIDER.name} es repartidor de ${restaurant.name}`);
+  }
 }
 
 /**
@@ -242,9 +286,11 @@ try {
   const existing = await api("GET", "/restaurants");
   const restaurants = [];
   for (const spec of data.restaurants) restaurants.push(await seedRestaurant(spec, existing));
+  await ensureRider(restaurants);
 
   console.log("\nDemo lista:");
   console.log(`  Cuenta:      ${EMAIL} / ${PASSWORD}`);
+  console.log(`  Repartidor:  ${RIDER.email} / ${PASSWORD}`);
   console.log(`  Panel:       ${BASE_URL}/admin`);
   for (const r of restaurants) {
     console.log(`  ${r.name}`);

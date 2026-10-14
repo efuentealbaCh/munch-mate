@@ -49,6 +49,16 @@
       "source": "https://commons.wikimedia.org/wiki/File:Drinks-supermarket-cans-beverage_(24299872576).jpg",
       "license": "CC0"
     },
+    "bebida-botella": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/2/2a/Soft_drink_shelf.JPG",
+      "source": "https://commons.wikimedia.org/wiki/File:Soft_drink_shelf.JPG",
+      "license": "Public domain"
+    },
+    "cerveza-artesanal": {
+      "url": "https://upload.wikimedia.org/wikipedia/commons/9/99/Dargett_Craft_Beer_-Bi%C3%A8res.JPG",
+      "source": "https://commons.wikimedia.org/wiki/File:Dargett_Craft_Beer_-Bi%C3%A8res.JPG",
+      "license": "CC0"
+    },
     "jugo-natural": {
       "url": "https://upload.wikimedia.org/wikipedia/commons/e/e7/Pineapple_Juice_fruits-465832.jpg",
       "source": "https://commons.wikimedia.org/wiki/File:Pineapple_Juice_fruits-465832.jpg",
@@ -758,12 +768,13 @@
         },
         {
           "name": "Bebidas",
-          "description": "Las fotos de bebidas quedaron fuera a propósito: así se ve un producto sin imagen.",
+          "description": "Para acompañar la pizza.",
           "products": [
             {
               "name": "Bebida 1,5 L",
               "description": "Ideal para compartir.",
               "price": 2990,
+              "photo": "bebida-botella",
               "groups": [
                 "sabor-bebida-pizza"
               ]
@@ -772,6 +783,7 @@
               "name": "Cerveza artesanal",
               "description": "Rubia o roja, 500 ml.",
               "price": 3990,
+              "photo": "cerveza-artesanal",
               "promo": {
                 "kind": "price",
                 "value": 2990,

@@ -86,6 +86,42 @@ jobs:
       - run: pnpm --filter @app/print-agent typecheck
       - run: pnpm --filter @app/print-agent test
       - run: pnpm --filter @app/print-agent build:exe
+      # Authenticode signing with a .pfx kept in the secrets SIGN_PFX_BASE64 (the file in base64) and
+      # SIGN_PFX_PASSWORD. Without SIGN_PFX_BASE64 (no certificate yet, or a PR from a fork) the .exe is
+      # published unsigned. With it, any signing or verification error fails the job, so a release that should
+      # be signed is never published unsigned. Secrets cannot be used in `if:`, hence the check in the script.
+      #
+      # Cloud signing services keep the key in their HSM and replace this step with their own action
+      # (sign apps/print-agent/dist/munchmate-impresora.exe, SHA-256, RFC 3161 timestamp):
+      # - Azure Artifact Signing: azure/login (OIDC, `permissions: id-token: write`) + azure/artifact-signing-action@v2
+      #   with endpoint, signing-account-name, certificate-profile-name, files-folder: apps/print-agent/dist,
+      #   files-folder-filter: exe. https://github.com/Azure/artifact-signing-action
+      # - SignPath (incl. SignPath Foundation): upload the .exe with actions/upload-artifact, then
+      #   signpath/github-action-submit-signing-request@v1 with api-token, organization-id, project-slug,
+      #   signing-policy-slug, github-artifact-id, wait-for-completion, output-artifact-directory.
+      #   https://docs.signpath.io/trusted-build-systems/github
+      # - SSL.com eSigner: sslcom/esigner-codesign with command: sign, username, password, credential_id,
+      #   totp_secret, file_path. https://github.com/SSLcom/esigner-codesign
+      - name: Sign
+        shell: pwsh
+        env:
+          SIGN_PFX_BASE64: ${{ secrets.SIGN_PFX_BASE64 }}
+          SIGN_PFX_PASSWORD: ${{ secrets.SIGN_PFX_PASSWORD }}
+        run: |
+          if (-not $env:SIGN_PFX_BASE64) {
+            Write-Output "::notice title=print agent::Sin certificado (secreto SIGN_PFX_BASE64): munchmate-impresora.exe queda sin firmar."
+            exit 0
+          }
+          $pfx = Join-Path $env:RUNNER_TEMP "munchmate-sign.pfx"
+          # FromBase64String ignores the line breaks a pasted secret may carry.
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:SIGN_PFX_BASE64))
+          $env:SIGN_PFX_PATH = $pfx
+          pnpm --filter @app/print-agent sign:exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Remove signing certificate
+        if: always()
+        shell: pwsh
+        run: Remove-Item -LiteralPath (Join-Path $env:RUNNER_TEMP "munchmate-sign.pfx") -Force -ErrorAction SilentlyContinue
       - name: Version
         id: version
         shell: bash
