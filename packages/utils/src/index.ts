@@ -1,3 +1,4 @@
+export * from "./floor-plan";
 export * from "./geo";
 export * from "./money";
 export * from "./names";

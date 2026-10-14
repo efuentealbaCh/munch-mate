@@ -2,6 +2,7 @@
 
 import type { RestaurantRole, RestaurantView } from "@app/types";
 import {
+  ActivityIcon,
   ArrowLeftIcon,
   BikeIcon,
   BookOpenIcon,
@@ -121,6 +122,8 @@ function SectionTabs({
   // Tabs a member cannot use are hidden (the api would answer 403 anyway); direct URLs explain why.
   const tabs = [
     { href: base, label: "Resumen", icon: LayoutDashboardIcon, show: true },
+    // The live floor view (phase 9) shows sales, so the same roles as «Ventas».
+    { href: `${base}/en-vivo`, label: "En vivo", icon: ActivityIcon, show: canViewSales(roles) },
     { href: `${base}/pedidos`, label: "Pedidos", icon: ClipboardListIcon, show: canWorkOrders(roles) },
     { href: `${base}/salon`, label: "Salón", icon: ConciergeBellIcon, show: canServeTables(roles) },
     { href: `${base}/repartos`, label: "Repartos", icon: BikeIcon, show: isRider(roles) },

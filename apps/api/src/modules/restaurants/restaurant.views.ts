@@ -41,6 +41,7 @@ export function toRestaurantView(
     maxItemsPerOrder: restaurant.maxItemsPerOrder,
     location: restaurant.location,
     tipPercent: restaurant.tipPercent,
+    kitchenTargetMinutes: restaurant.kitchenTargetMinutes,
     messaging: restaurant.messaging,
     messagingAvailable,
     currency: restaurant.currency,

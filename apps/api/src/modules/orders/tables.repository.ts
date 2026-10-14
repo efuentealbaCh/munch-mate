@@ -1,6 +1,7 @@
+import type { TableLayout } from "@app/types";
 import { Injectable } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
-import { type Model, Types } from "mongoose";
+import { type ClientSession, type Model, Types } from "mongoose";
 import { Table } from "./schemas/table.schema";
 
 export interface TableRecord {
@@ -9,6 +10,8 @@ export interface TableRecord {
   label: string;
   token: string;
   active: boolean;
+  /** Position on the floor plan (phase 9); null = not placed. */
+  layout: TableLayout | null;
 }
 
 const oid = (id: string) => new Types.ObjectId(id);
@@ -70,6 +73,44 @@ export class TablesRepository {
     return doc ? toRecord(doc) : null;
   }
 
+  /**
+   * Replaces the floor plan positions of the restaurant's tables: the listed tables get their layout and every
+   * other table of the restaurant is taken off the plan. Meant to run inside the transaction that saves the
+   * plan; tables deleted meanwhile are simply not matched.
+   * @param layouts Placed tables only (ids already checked to belong to the restaurant).
+   */
+  async replaceLayouts(
+    restaurantId: string,
+    layouts: readonly { tableId: string; layout: TableLayout }[],
+    session?: ClientSession,
+  ): Promise<void> {
+    await this.tables.bulkWrite(
+      [
+        {
+          updateMany: {
+            filter: {
+              restaurantId: oid(restaurantId),
+              _id: { $nin: layouts.map((entry) => oid(entry.tableId)) },
+              layout: { $ne: null },
+            },
+            update: { $set: { layout: null } },
+          },
+        },
+        ...layouts.map((entry) => ({
+          updateOne: {
+            filter: { _id: oid(entry.tableId), restaurantId: oid(restaurantId) },
+            update: {
+              $set: {
+                layout: { x: entry.layout.x, y: entry.layout.y, shape: entry.layout.shape, seats: entry.layout.seats },
+              },
+            },
+          },
+        })),
+      ],
+      { session, ordered: true },
+    );
+  }
+
   async delete(restaurantId: string, tableId: string): Promise<boolean> {
     if (!Types.ObjectId.isValid(tableId)) return false;
     const result = await this.tables.deleteOne({ _id: oid(tableId), restaurantId: oid(restaurantId) });
@@ -84,5 +125,8 @@ function toRecord(doc: Table & { _id: Types.ObjectId }): TableRecord {
     label: doc.label,
     token: doc.token,
     active: doc.active,
+    layout: doc.layout
+      ? { x: doc.layout.x, y: doc.layout.y, shape: doc.layout.shape, seats: doc.layout.seats }
+      : null,
   };
 }

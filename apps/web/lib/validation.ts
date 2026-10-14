@@ -1,6 +1,7 @@
 import {
   CUSTOMER_LIMITS,
   DELIVERY_ZONE_LIMITS,
+  KITCHEN_TARGET_LIMITS,
   MENU_LIMITS,
   ORDER_LIMITS,
   PAYMENT_METHODS,
@@ -106,6 +107,15 @@ export const itemsLimitSchema = z.object({
     .int("Usa un número entero")
     .min(ORDER_LIMITS.itemsPerOrderMin, `El mínimo es ${ORDER_LIMITS.itemsPerOrderMin} producto por pedido`)
     .max(ORDER_LIMITS.itemsPerOrderMax, `El máximo es ${ORDER_LIMITS.itemsPerOrderMax} productos por pedido`),
+});
+
+/** Owner setting `kitchenTargetMinutes` (UpdateRestaurantDto): the kitchen goal of the live view, in minutes. */
+export const kitchenTargetSchema = z.object({
+  kitchenTargetMinutes: z
+    .number({ error: "Ingresa un número" })
+    .int("Usa un número entero de minutos")
+    .min(KITCHEN_TARGET_LIMITS.minutesMin, `El mínimo es ${KITCHEN_TARGET_LIMITS.minutesMin} minutos`)
+    .max(KITCHEN_TARGET_LIMITS.minutesMax, `El máximo es ${KITCHEN_TARGET_LIMITS.minutesMax} minutos`),
 });
 
 const menuName = z
@@ -391,6 +401,7 @@ export type RestaurantValues = z.infer<typeof restaurantSchema>;
 export type InviteValues = z.infer<typeof inviteSchema>;
 export type RestaurantProfileValues = z.infer<typeof restaurantProfileSchema>;
 export type ItemsLimitValues = z.infer<typeof itemsLimitSchema>;
+export type KitchenTargetValues = z.infer<typeof kitchenTargetSchema>;
 export type CategoryValues = z.infer<typeof categorySchema>;
 export type ProductValues = z.infer<typeof productSchema>;
 export type ModifierGroupValues = z.infer<typeof modifierGroupSchema>;

@@ -81,5 +81,7 @@ import { TablesService } from "./tables.service";
     TableSessionsService,
     TableSessionsRepository,
   ],
+  // The live floor module (phase 9) reads tables, orders and table accounts through the same repositories.
+  exports: [TablesRepository, OrdersRepository, TableSessionsRepository],
 })
 export class OrdersModule {}

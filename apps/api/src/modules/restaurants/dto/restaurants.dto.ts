@@ -1,4 +1,5 @@
 import {
+  KITCHEN_TARGET_LIMITS,
   MESSAGE_CHANNELS,
   type MessageChannel,
   ORDER_LIMITS,
@@ -111,6 +112,17 @@ export class UpdateRestaurantDto {
   @Min(0, { message: "La propina sugerida no puede ser negativa" })
   @Max(TIP_LIMITS.percentMax, { message: `La propina sugerida puede ser como máximo ${TIP_LIMITS.percentMax} %` })
   tipPercent?: number;
+
+  /** Minutes the owner expects from accepted to ready (the live view's kitchen goal). */
+  @IsOptional()
+  @IsInt({ message: "kitchenTargetMinutes debe ser un número entero" })
+  @Min(KITCHEN_TARGET_LIMITS.minutesMin, {
+    message: `La meta de cocina debe ser de al menos ${KITCHEN_TARGET_LIMITS.minutesMin} minutos`,
+  })
+  @Max(KITCHEN_TARGET_LIMITS.minutesMax, {
+    message: `La meta de cocina puede ser como máximo ${KITCHEN_TARGET_LIMITS.minutesMax} minutos`,
+  })
+  kitchenTargetMinutes?: number;
 
   @IsOptional()
   @ValidateNested()
