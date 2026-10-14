@@ -569,7 +569,9 @@ pnpm smoke               # infra/scripts/smoke.sh against https://localhost
 pnpm maps:init          # self-hosted map of Chile into Garage (Docker + ~hundreds of MB download; cached in .maps-cache/)
 pnpm push:keys          # VAPID keys for web push into .env (only when empty; rotating breaks existing subscriptions)
 pnpm platform:admin <email>   # grant the platform admin role to an existing account (--revoke to remove)
-pnpm seed:demo           # 3 demo restaurants with full menus, photos, tables, locations and delivery zones drawn on the map (demo@munchmate.local / "munchmate demo 2026"); idempotent
+pnpm seed:demo           # 3 demo restaurants with full menus, photos, tables, locations and delivery zones drawn on the map (demo@munchmate.local / "munchmate demo 2026") + the rider repartidor@munchmate.local; idempotent
+pnpm demo:reset          # sh: wipes the stack's volumes (asks to type BORRAR; --yes skips it) and runs stack:up, stack:init, maps:init, seed:demo, platform:admin; --no-map skips the map
+pnpm demo:load           # same without wiping (fills what is missing)
 pnpm capturas:delivery   # screenshots of the delivery + rider tracking walkthrough into docs/capturas/delivery (needs seed:demo and maps:init; leaves demo orders)
 pnpm stack:down
 

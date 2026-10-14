@@ -117,6 +117,8 @@ function localhostLookup(hostname, options, callback) {
 async function s3Client() {
   const credentials = { accessKeyId: env.S3_ACCESS_KEY_ID, secretAccessKey: env.S3_SECRET_ACCESS_KEY };
   const candidates = [env.MAPS_S3_ENDPOINT, env.S3_ENDPOINT, env.DOMAIN && `https://s3.${env.DOMAIN}`].filter(Boolean);
+  // Endpoints that answered with an HTTP error: Garage is up, but its layout, key or bucket is missing.
+  const answered = [];
   for (const endpoint of candidates) {
     // The local stack uses Caddy's internal CA, which Node does not trust. Only ever for localhost.
     const local = endpoint.startsWith("https://s3.localhost");
@@ -132,9 +134,17 @@ async function s3Client() {
       await client.send(new HeadBucketCommand({ Bucket: env.S3_BUCKET }));
       console.log(`✓ storage reachable at ${endpoint}`);
       return client;
-    } catch {
+    } catch (error) {
+      const status = error?.$metadata?.httpStatusCode;
+      if (status) answered.push(`${endpoint} → HTTP ${status}`);
       client.destroy();
     }
+  }
+  if (answered.length > 0) {
+    throw new Error(
+      `Garage answers but the bucket "${env.S3_BUCKET}" is not usable (${answered.join(", ")}). ` +
+        "On fresh volumes run `pnpm stack:init` (or `pnpm infra:init` in dev) from Git Bash first.",
+    );
   }
   throw new Error(`Garage is not reachable (tried ${candidates.join(", ")}). Is the dev infra or the stack running?`);
 }

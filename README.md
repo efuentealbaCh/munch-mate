@@ -47,7 +47,7 @@ flowchart LR
 | --- | --- |
 | **Primera vez** | 1 → 32 |
 | **Después de un cambio** | 2 · 6 · 7 · 8 · 9 · 10 · 11 · 14 · 15 · 32 |
-| **Solo mostrar la demo** | 11 · 13 · 16 → 32 |
+| **Solo mostrar la demo** | 11 · 13 · 16 → 32, o todo de una vez: 🐚 `pnpm demo:reset` (borra y recarga) / `pnpm demo:load` (conserva los datos) |
 | **Probar la impresora de cocina** | 11 · 16 · 28 y [configurar el computador de cocina](#computador-de-cocina-agente-de-impresión) |
 | **Cargar datos a mano** | [ver más abajo](#ingreso-manual-de-datos) |
 | **Desarrollo diario** | [ver más abajo](#desarrollo-diario) |
@@ -217,7 +217,9 @@ Playwright maneja un Chromium móvil contra `https://localhost`: cuentas, menú,
 pnpm seed:demo
 ```
 
-Crea 3 locales con menú, fotos, mesas, retiro, ubicación en el mapa y zonas de delivery dibujadas, usando la API como lo haría un usuario. Imprime un link `/m/…` para pedir desde una mesa de cada local. Se puede repetir: lo que ya existe no se duplica.
+Crea 3 locales con menú, fotos (todos los productos y logos), mesas, retiro, ubicación en el mapa y zonas de delivery dibujadas, y la cuenta del repartidor (`repartidor@munchmate.local`, misma contraseña) invitada a los locales con delivery, usando la API como lo haría un usuario. Imprime un link `/m/…` para pedir desde una mesa de cada local. Se puede repetir: lo que ya existe no se duplica y solo sube las fotos que faltan. Las fotos se descargan una vez en `.demo-cache/`.
+
+**Todo de una vez** (Git Bash 🐚): `pnpm demo:reset` borra los datos del stack (pide escribir `BORRAR`) y deja la demo lista: levanta el stack, inicializa Garage, sube el mapa, carga los locales con sus fotos y te da el rol de administrador de plataforma (pasos 11, 12, 13, 16 y 17). `pnpm demo:load` hace lo mismo sin borrar nada. Agrega `--no-map` para omitir el mapa (`pnpm demo:reset --no-map`) o `--yes` para no confirmar.
 
 **Cuenta:** `demo@munchmate.local` / `munchmate demo 2026`
 </details>
@@ -378,6 +380,7 @@ Regenera [docs/capturas/delivery](docs/capturas/delivery/README.md): un recorrid
 
 | Síntoma | Causa | Solución |
 | --- | --- | --- |
+| Las fotos de productos y logos no cargan (ícono roto) aunque el panel funciona | Las imágenes vienen de `https://media.localhost`, cuyo certificado local el navegador no acepta: lo bloquea sin avisar (aceptar el aviso en `localhost` no alcanza) | Rápido: abre <https://media.localhost/> y acepta el aviso. Definitivo (PowerShell, stack arriba): `docker cp munch-mate-caddy-1:/data/caddy/pki/authorities/local/root.crt "$env:TEMP\caddy-root.crt"` y `Import-Certificate -FilePath "$env:TEMP\caddy-root.crt" -CertStoreLocation Cert:\CurrentUser\Root`; reinicia el navegador. `pnpm demo:reset` conserva ese certificado; borrar los volúmenes a mano (`down -v`) lo regenera |
 | Página de Apache en `https://localhost` | XAMPP/IIS ocupa los puertos 80/443 | Detenlo antes de `pnpm stack:up` |
 | `sh` no se reconoce / rutas tipo `C:/Program Files/Git/...` | Script `sh` ejecutado desde PowerShell o CMD | Usa Git Bash, o `pnpm config set script-shell` |
 | `&&` da error en PowerShell | PowerShell 5.1 no lo soporta | Un comando por línea, o `cmd1; if ($?) { cmd2 }` |

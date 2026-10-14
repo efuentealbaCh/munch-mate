@@ -38,8 +38,14 @@ export class RedisIoAdapter extends IoAdapter {
     return server;
   }
 
-  override async close(server: Server): Promise<void> {
-    await super.close(server);
+  /**
+   * Closes the Valkey clients once every server is closed. Not in `close()`: Nest calls it for each gateway
+   * server in parallel (the root server and the print agents' namespace), and a namespace closes at once, so
+   * quitting there would cut the clients while the root server's adapters still unsubscribe ("Connection is
+   * closed", unhandled).
+   */
+  override async dispose(): Promise<void> {
+    await super.dispose();
     for (const client of [this.pub, this.sub]) {
       // quit() would hang if Valkey is unreachable (see RedisModule).
       if (client.status === "ready") await client.quit();
