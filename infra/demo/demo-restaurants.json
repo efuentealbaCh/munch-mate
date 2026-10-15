@@ -542,7 +542,212 @@
       "location": {
         "lat": -33.441,
         "lng": -70.651
-      }
+      },
+      "orders": [
+        {
+          "key": "mesa-1",
+          "table": "Mesa 1",
+          "status": "preparing",
+          "items": [
+            {
+              "product": "Completo italiano",
+              "quantity": 2
+            },
+            {
+              "product": "Papas fritas"
+            },
+            {
+              "product": "Bebida en lata",
+              "quantity": 2,
+              "options": {
+                "Sabor": [
+                  "Cola"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "key": "mesa-2",
+          "table": "Mesa 2",
+          "customerName": "Pedro",
+          "status": "served",
+          "items": [
+            {
+              "product": "Churrasco italiano"
+            },
+            {
+              "product": "Chacarero",
+              "options": {
+                "Tipo de pan": [
+                  "Frica"
+                ]
+              }
+            },
+            {
+              "product": "Jugo natural",
+              "quantity": 2,
+              "options": {
+                "Fruta": [
+                  "Frambuesa"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "key": "mesa-4",
+          "table": "Mesa 4",
+          "status": "served",
+          "items": [
+            {
+              "product": "Completo dinámico"
+            },
+            {
+              "product": "Papas rústicas",
+              "options": {
+                "Tamaño": [
+                  "Para compartir"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "key": "barra",
+          "table": "Barra",
+          "status": "pending",
+          "items": [
+            {
+              "product": "As italiano",
+              "options": {
+                "Tamaño": [
+                  "XL (25 cm)"
+                ],
+                "Agregados": [
+                  "Palta extra"
+                ]
+              },
+              "note": "Sin mayo"
+            },
+            {
+              "product": "Bebida en lata",
+              "options": {
+                "Sabor": [
+                  "Limón"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "key": "retiro-listo",
+          "channel": "pickup",
+          "customerName": "Tomás Vargas",
+          "customerPhone": "+56987651001",
+          "status": "ready",
+          "items": [
+            {
+              "product": "Churrasco italiano",
+              "options": {
+                "Tipo de pan": [
+                  "Pan amasado"
+                ],
+                "Agregados": [
+                  "Queso derretido"
+                ]
+              }
+            },
+            {
+              "product": "Papas fritas"
+            }
+          ]
+        },
+        {
+          "key": "retiro-pendiente",
+          "channel": "pickup",
+          "customerName": "Fernanda Castro",
+          "customerPhone": "+56987651002",
+          "status": "pending",
+          "items": [
+            {
+              "product": "Completo italiano",
+              "quantity": 3,
+              "options": {
+                "Tamaño": [
+                  "XL (25 cm)"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "key": "delivery-aceptado",
+          "channel": "delivery",
+          "customerName": "Joaquín Morales",
+          "customerPhone": "+56987651003",
+          "status": "accepted",
+          "delivery": {
+            "zone": "Santiago Centro",
+            "address": "Av. Santa Rosa 650",
+            "unit": "Depto. 1104"
+          },
+          "payment": {
+            "method": "cash",
+            "cashAmount": 15000
+          },
+          "items": [
+            {
+              "product": "Churrasco italiano"
+            },
+            {
+              "product": "Papas fritas"
+            },
+            {
+              "product": "Bebida en lata",
+              "options": {
+                "Sabor": [
+                  "Cola"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "key": "delivery-entregado",
+          "channel": "delivery",
+          "customerName": "Catalina Pérez",
+          "customerPhone": "+56987651004",
+          "status": "delivered",
+          "paid": "card_pos",
+          "delivery": {
+            "zone": "Estación Central",
+            "address": "Av. Ecuador 3500"
+          },
+          "payment": {
+            "method": "card_pos"
+          },
+          "items": [
+            {
+              "product": "Chacarero",
+              "quantity": 2
+            }
+          ]
+        }
+      ],
+      "tableActions": [
+        {
+          "table": "Mesa 4",
+          "callWaiter": true
+        },
+        {
+          "table": "Mesa 2",
+          "close": {
+            "method": "cash",
+            "tip": "none"
+          }
+        }
+      ]
     },
     {
       "name": "Pizzería Forno Rosso",
@@ -1023,7 +1228,464 @@
         "enabled": true,
         "channel": "whatsapp",
         "senderPhone": "+56 9 5555 0101"
-      }
+      },
+      "orders": [
+        {
+          "key": "mesa-1-a",
+          "table": "Mesa 1",
+          "customerName": "Familia Rojas",
+          "status": "served",
+          "items": [
+            {
+              "product": "Pepperoni",
+              "options": {
+                "Tamaño": [
+                  "Familiar (8 porciones)"
+                ]
+              }
+            },
+            {
+              "product": "Pan de ajo"
+            },
+            {
+              "product": "Bebida 1,5 L",
+              "options": {
+                "Sabor": [
+                  "Cola"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "key": "mesa-1-b",
+          "table": "Mesa 1",
+          "customerName": "Familia Rojas",
+          "status": "preparing",
+          "items": [
+            {
+              "product": "Cuatro quesos",
+              "options": {
+                "Masa": [
+                  "Delgada"
+                ]
+              },
+              "note": "Bien dorada, por favor"
+            }
+          ]
+        },
+        {
+          "key": "mesa-2",
+          "table": "Mesa 2",
+          "status": "pending",
+          "items": [
+            {
+              "product": "Margarita",
+              "options": {
+                "Ingredientes extra": [
+                  "Albahaca fresca"
+                ]
+              }
+            },
+            {
+              "product": "Cerveza artesanal",
+              "quantity": 2
+            }
+          ]
+        },
+        {
+          "key": "mesa-3",
+          "table": "Mesa 3",
+          "customerName": "Andrés",
+          "status": "ready",
+          "items": [
+            {
+              "product": "Pollo BBQ",
+              "options": {
+                "Tamaño": [
+                  "Familiar (8 porciones)"
+                ],
+                "Masa": [
+                  "Borde relleno con queso"
+                ]
+              }
+            },
+            {
+              "product": "Bebida 1,5 L",
+              "options": {
+                "Sabor": [
+                  "Naranja"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "key": "mesa-5",
+          "table": "Mesa 5",
+          "status": "served",
+          "items": [
+            {
+              "product": "Napolitana",
+              "options": {
+                "Tamaño": [
+                  "Familiar (8 porciones)"
+                ]
+              }
+            },
+            {
+              "product": "Ensalada césar",
+              "options": {
+                "Aderezo": [
+                  "Aderezo césar"
+                ]
+              }
+            },
+            {
+              "product": "Cerveza artesanal",
+              "quantity": 2
+            }
+          ]
+        },
+        {
+          "key": "terraza-1",
+          "table": "Terraza 1",
+          "customerName": "Cumpleaños de Sofía",
+          "status": "served",
+          "items": [
+            {
+              "product": "Pepperoni",
+              "options": {
+                "Tamaño": [
+                  "XL (12 porciones)"
+                ]
+              }
+            },
+            {
+              "product": "Margarita",
+              "options": {
+                "Tamaño": [
+                  "Familiar (8 porciones)"
+                ]
+              }
+            },
+            {
+              "product": "Bebida 1,5 L",
+              "quantity": 2,
+              "options": {
+                "Sabor": [
+                  "Cola sin azúcar"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "key": "mesa-7",
+          "table": "Mesa 7",
+          "status": "served",
+          "items": [
+            {
+              "product": "Margarita",
+              "quantity": 2
+            },
+            {
+              "product": "Pan de ajo"
+            },
+            {
+              "product": "Cerveza artesanal",
+              "quantity": 2
+            }
+          ]
+        },
+        {
+          "key": "mesa-8",
+          "table": "Mesa 8",
+          "status": "accepted",
+          "items": [
+            {
+              "product": "Cuatro quesos",
+              "options": {
+                "Tamaño": [
+                  "Familiar (8 porciones)"
+                ],
+                "Ingredientes extra": [
+                  "Champiñones"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "key": "retiro-pendiente",
+          "channel": "pickup",
+          "customerName": "Camila Fuentes",
+          "customerPhone": "+56987650001",
+          "status": "pending",
+          "note": "Sin orégano, por favor",
+          "items": [
+            {
+              "product": "Pepperoni"
+            },
+            {
+              "product": "Bebida 1,5 L",
+              "options": {
+                "Sabor": [
+                  "Cola"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "key": "retiro-aceptado",
+          "channel": "pickup",
+          "customerName": "Matías González",
+          "customerPhone": "+56987650002",
+          "status": "accepted",
+          "items": [
+            {
+              "product": "Napolitana",
+              "options": {
+                "Tamaño": [
+                  "Familiar (8 porciones)"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "key": "retiro-listo",
+          "channel": "pickup",
+          "customerName": "Valentina Muñoz",
+          "customerPhone": "+56987650003",
+          "status": "ready",
+          "paid": "card_pos",
+          "items": [
+            {
+              "product": "Margarita",
+              "options": {
+                "Tamaño": [
+                  "Familiar (8 porciones)"
+                ],
+                "Masa": [
+                  "Delgada"
+                ]
+              }
+            },
+            {
+              "product": "Pan de ajo"
+            }
+          ]
+        },
+        {
+          "key": "retiro-entregado",
+          "channel": "pickup",
+          "customerName": "Sebastián Díaz",
+          "customerPhone": "+56987650004",
+          "status": "picked_up",
+          "paid": "cash",
+          "items": [
+            {
+              "product": "Pollo BBQ"
+            }
+          ]
+        },
+        {
+          "key": "retiro-rechazado",
+          "channel": "pickup",
+          "customerName": "Francisca Rojas",
+          "customerPhone": "+56987650005",
+          "status": "rejected",
+          "reason": "La cocina está copada en este momento; vuelve a intentarlo en 30 minutos.",
+          "items": [
+            {
+              "product": "Cuatro quesos",
+              "quantity": 3,
+              "options": {
+                "Tamaño": [
+                  "XL (12 porciones)"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "key": "delivery-pendiente",
+          "channel": "delivery",
+          "customerName": "Ignacia Torres",
+          "customerPhone": "+56987650006",
+          "status": "pending",
+          "delivery": {
+            "zone": "Ñuñoa",
+            "address": "Av. Irarrázaval 3450",
+            "unit": "Depto. 502",
+            "reference": "Edificio azul, conserjería 24 h"
+          },
+          "payment": {
+            "method": "cash",
+            "cashAmount": 30000
+          },
+          "items": [
+            {
+              "product": "Pepperoni",
+              "options": {
+                "Tamaño": [
+                  "Familiar (8 porciones)"
+                ]
+              }
+            },
+            {
+              "product": "Bebida 1,5 L",
+              "options": {
+                "Sabor": [
+                  "Cola"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "key": "delivery-cocina",
+          "channel": "delivery",
+          "customerName": "Benjamín Soto",
+          "customerPhone": "+56987650007",
+          "status": "preparing",
+          "rider": true,
+          "delivery": {
+            "zone": "Providencia",
+            "address": "Av. Pedro de Valdivia 1200"
+          },
+          "payment": {
+            "method": "card_pos"
+          },
+          "items": [
+            {
+              "product": "Cuatro quesos",
+              "options": {
+                "Tamaño": [
+                  "Familiar (8 porciones)"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "key": "delivery-en-camino",
+          "channel": "delivery",
+          "customerName": "Antonia Reyes",
+          "customerPhone": "+56987650008",
+          "status": "out_for_delivery",
+          "rider": true,
+          "delivery": {
+            "zone": "Ñuñoa",
+            "address": "Suecia 2550",
+            "reference": "Casa con reja verde"
+          },
+          "payment": {
+            "method": "transfer"
+          },
+          "items": [
+            {
+              "product": "Margarita",
+              "options": {
+                "Tamaño": [
+                  "Familiar (8 porciones)"
+                ]
+              }
+            },
+            {
+              "product": "Pan de ajo"
+            },
+            {
+              "product": "Cerveza artesanal",
+              "quantity": 2
+            }
+          ]
+        },
+        {
+          "key": "delivery-entregado",
+          "channel": "delivery",
+          "customerName": "Diego Herrera",
+          "customerPhone": "+56987650009",
+          "status": "delivered",
+          "rider": true,
+          "paid": "cash",
+          "delivery": {
+            "zone": "Macul",
+            "address": "Av. Macul 3000"
+          },
+          "payment": {
+            "method": "cash",
+            "cashAmount": 20000
+          },
+          "items": [
+            {
+              "product": "Napolitana",
+              "options": {
+                "Tamaño": [
+                  "Familiar (8 porciones)"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "key": "delivery-cancelado",
+          "channel": "delivery",
+          "customerName": "Martina Silva",
+          "customerPhone": "+56987650010",
+          "status": "cancelled",
+          "reason": "La clienta llamó para anularlo.",
+          "delivery": {
+            "zone": "La Reina",
+            "address": "Av. Larraín 6500"
+          },
+          "payment": {
+            "method": "card_pos"
+          },
+          "items": [
+            {
+              "product": "Pollo BBQ",
+              "options": {
+                "Tamaño": [
+                  "Familiar (8 porciones)"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "tableActions": [
+        {
+          "table": "Mesa 3",
+          "callWaiter": true
+        },
+        {
+          "table": "Mesa 5",
+          "requestBill": {
+            "kind": "suggested"
+          }
+        },
+        {
+          "table": "Terraza 1",
+          "split": 2,
+          "payParts": [
+            {
+              "part": 1,
+              "method": "cash",
+              "tip": 2000
+            }
+          ]
+        },
+        {
+          "table": "Mesa 7",
+          "close": {
+            "method": "card_pos",
+            "tip": "suggested"
+          }
+        }
+      ]
     },
     {
       "name": "Café Brote",
@@ -1270,7 +1932,172 @@
       "location": {
         "lat": -33.4256,
         "lng": -70.6114
-      }
+      },
+      "orders": [
+        {
+          "key": "mesa-1",
+          "table": "Mesa 1",
+          "status": "served",
+          "items": [
+            {
+              "product": "Cappuccino",
+              "quantity": 2,
+              "options": {
+                "Tamaño": [
+                  "Mediano (12 oz)"
+                ],
+                "Leche": [
+                  "Avena"
+                ]
+              }
+            },
+            {
+              "product": "Torta de chocolate"
+            }
+          ]
+        },
+        {
+          "key": "ventana",
+          "table": "Ventana",
+          "customerName": "Javiera",
+          "status": "preparing",
+          "items": [
+            {
+              "product": "Latte",
+              "options": {
+                "Tamaño": [
+                  "Grande (16 oz)"
+                ],
+                "Extras": [
+                  "Jarabe de vainilla"
+                ]
+              }
+            },
+            {
+              "product": "Croissant de mantequilla"
+            }
+          ]
+        },
+        {
+          "key": "mesa-2",
+          "table": "Mesa 2",
+          "status": "served",
+          "items": [
+            {
+              "product": "Ave palta",
+              "options": {
+                "Pan": [
+                  "Pan integral"
+                ]
+              }
+            },
+            {
+              "product": "Chai latte"
+            },
+            {
+              "product": "Cheesecake de frutos rojos"
+            }
+          ]
+        },
+        {
+          "key": "mesa-3",
+          "table": "Mesa 3",
+          "status": "pending",
+          "items": [
+            {
+              "product": "Espresso",
+              "quantity": 2,
+              "options": {
+                "Extras": [
+                  "Shot extra de espresso"
+                ]
+              }
+            },
+            {
+              "product": "Croissant de mantequilla",
+              "quantity": 2
+            }
+          ]
+        },
+        {
+          "key": "retiro-preparando",
+          "channel": "pickup",
+          "customerName": "Josefa Navarro",
+          "customerPhone": "+56987652001",
+          "status": "preparing",
+          "items": [
+            {
+              "product": "Mocha",
+              "options": {
+                "Tamaño": [
+                  "Grande (16 oz)"
+                ],
+                "Leche": [
+                  "Almendra"
+                ]
+              }
+            },
+            {
+              "product": "Jamón queso",
+              "options": {
+                "Pan": [
+                  "Croissant"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "key": "retiro-entregado",
+          "channel": "pickup",
+          "customerName": "Vicente Rojas",
+          "customerPhone": "+56987652002",
+          "status": "picked_up",
+          "paid": "transfer",
+          "items": [
+            {
+              "product": "Latte",
+              "quantity": 2,
+              "options": {
+                "Leche": [
+                  "Descremada"
+                ]
+              }
+            },
+            {
+              "product": "Cheesecake de frutos rojos"
+            }
+          ]
+        },
+        {
+          "key": "retiro-pendiente",
+          "channel": "pickup",
+          "customerName": "Isidora Contreras",
+          "customerPhone": "+56987652003",
+          "status": "pending",
+          "items": [
+            {
+              "product": "Té de la casa",
+              "quantity": 2
+            }
+          ]
+        }
+      ],
+      "tableActions": [
+        {
+          "table": "Mesa 1",
+          "requestBill": {
+            "kind": "none"
+          }
+        },
+        {
+          "table": "Mesa 2",
+          "close": {
+            "method": "transfer",
+            "tip": "suggested"
+          }
+        }
+      ]
     }
   ]
 }
