@@ -52,7 +52,13 @@ function trustOnWindows(certificate) {
     return;
   }
   console.log("Windows va a pedir que confirmes la instalación del certificado: responde «Sí».");
-  ps(`Import-Certificate -FilePath '${OUT_FILE}' -CertStoreLocation 'Cert:\\CurrentUser\\Root' | Out-Null`);
+  // Not Import-Certificate: adding a root asks for confirmation, and a -NonInteractive PowerShell refuses to show
+  // it ("UI is not allowed in this operation"). certutil shows the dialog; a "No" leaves the store unchanged.
+  try {
+    run("certutil.exe", ["-user", "-addstore", "Root", OUT_FILE]);
+  } catch (error) {
+    console.log(`• certutil: ${(error.stdout || error.message).toString().trim().split("\n").at(-1)}`);
+  }
   if (ps(`Test-Path 'Cert:\\CurrentUser\\Root\\${thumbprint}'`) !== "True") {
     throw new Error("No se instaló el certificado (¿respondiste «No» en el aviso de Windows?). Vuelve a correr pnpm cert:trust.");
   }

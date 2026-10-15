@@ -76,7 +76,7 @@ else
   echo "• Mapa omitido (--no-map): las zonas se eligen de una lista hasta que corras pnpm maps:init."
 fi
 
-step "Cargando los 3 locales de la demo con sus fotos"
+step "Cargando los 3 locales de la demo con sus fotos y los pedidos de ejemplo de hoy"
 node infra/scripts/seed-demo.mjs
 
 step "Dando el rol de administrador de plataforma a $DEMO_EMAIL"
