@@ -31,6 +31,7 @@ import {
   actionStep,
   availableChannelFilters,
   type BOARD_COLUMNS,
+  type BoardStatus,
   boardColumns,
   boardTitle,
   canAssignRider,
@@ -838,6 +839,101 @@ function ListState({ error, onRetry, columns }: { error: unknown; onRetry(): voi
   );
 }
 
+/** DOM id of a board column, the target of its status pill. */
+function columnId(status: BoardStatus): string {
+  return `board-column-${status}`;
+}
+
+/**
+ * Phones only (the columns are stacked there, one under the other): a sticky row of pills, one per status
+ * with its count, that scrolls to that column; the pill of the column on screen is marked. Empty statuses are
+ * shown disabled (their columns are hidden on phones), so the row keeps its order.
+ */
+function StatusPills({ columns }: { columns: ReadonlyArray<{ status: BoardStatus; title: string; count: number }> }) {
+  const [current, setCurrent] = useState<BoardStatus | null>(null);
+  const shown = columns.filter((column) => column.count > 0).map((column) => column.status).join(",");
+
+  useEffect(() => {
+    const sections = shown
+      .split(",")
+      .flatMap((status) => document.getElementById(columnId(status as BoardStatus)) ?? []);
+    if (sections.length === 0) return;
+    const last = sections.at(-1)!;
+    const statusOf = (element: Element) => element.id.replace("board-column-", "") as BoardStatus;
+    // The last column may be too short to ever reach the band below: at the bottom of the page it is the one shown.
+    const atBottom = () => window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 4;
+    // A column counts as "on screen" while it crosses the band just below the header and the pills.
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (atBottom()) return setCurrent(statusOf(last));
+        const visible = entries.find((entry) => entry.isIntersecting);
+        if (visible) setCurrent(statusOf(visible.target));
+      },
+      { rootMargin: "-130px 0px -55% 0px" },
+    );
+    for (const section of sections) observer.observe(section);
+    const onScroll = () => {
+      if (atBottom()) setCurrent(statusOf(last));
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("scroll", onScroll);
+    };
+  }, [shown]);
+
+  // Keep the marked pill inside the row while the page scrolls by hand (the row is narrower than the pills).
+  const bar = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const pill = current && bar.current?.querySelector<HTMLElement>(`[data-status="${current}"]`);
+    if (!pill || !bar.current) return;
+    const row = bar.current;
+    // The row is sticky, so it is the pills' offsetParent: offsetLeft is already relative to it.
+    const left = pill.offsetLeft;
+    if (left < row.scrollLeft || left + pill.offsetWidth > row.scrollLeft + row.clientWidth) {
+      row.scrollTo({ left: left - 16, behavior: "smooth" });
+    }
+  }, [current]);
+
+  return (
+    <nav
+      ref={bar}
+      aria-label="Ir a un estado"
+      className="sticky top-[57px] z-30 -my-1 flex gap-2 overflow-x-auto bg-background/95 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/80 md:hidden"
+      data-testid="status-pills"
+    >
+      {columns.map((column) => (
+        <button
+          key={column.status}
+          type="button"
+          data-status={column.status}
+          disabled={column.count === 0}
+          aria-current={current === column.status ? "true" : undefined}
+          onClick={() => {
+            setCurrent(column.status);
+            document.getElementById(columnId(column.status))?.scrollIntoView({ behavior: "smooth", block: "start" });
+          }}
+          className={cn(
+            "flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium whitespace-nowrap transition-colors",
+            current === column.status ? "border-primary bg-primary text-primary-foreground" : "border-border bg-card text-foreground",
+            "disabled:opacity-40",
+          )}
+        >
+          {column.title}
+          <span
+            className={cn(
+              "rounded-full px-1.5 text-xs tabular-nums",
+              current === column.status ? "bg-primary-foreground/20" : "bg-muted text-muted-foreground",
+            )}
+          >
+            {column.count}
+          </span>
+        </button>
+      ))}
+    </nav>
+  );
+}
+
 function BoardColumns({
   columns: shownColumns,
   orders,
@@ -859,6 +955,9 @@ function BoardColumns({
   return (
     <div className="flex flex-col gap-3">
       {error ? <FormError error={error} /> : null}
+      {orders.length > 0 ? (
+        <StatusPills columns={shownColumns.map((column) => ({ ...column, count: columns[column.status].length }))} />
+      ) : null}
       {orders.length === 0 ? (
         <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed bg-card px-6 py-10 text-center text-sm text-muted-foreground">
           <InboxIcon className="size-8" aria-hidden />
@@ -876,8 +975,10 @@ function BoardColumns({
           return (
             <section
               key={column.status}
+              id={columnId(column.status)}
               aria-label={column.title}
-              className={cn("flex flex-col gap-3", list.length === 0 && "hidden md:flex")}
+              // Below the sticky header and the status pills when a pill scrolls here.
+              className={cn("flex scroll-mt-32 flex-col gap-3", list.length === 0 && "hidden md:flex")}
               data-testid={`column-${column.status}`}
             >
               <h2 className="flex items-center justify-between text-sm font-semibold tracking-wide text-muted-foreground uppercase">
