@@ -14,6 +14,8 @@ import {
   destinationLabel,
   elapsedLabel,
   filterByChannel,
+  focusOrderHref,
+  focusOrderPlace,
   groupByColumn,
   handOverStatus,
   isPastReadyTime,
@@ -418,5 +420,21 @@ describe("actionStep (what happens when the staff tap an action)", () => {
     expect(REASON_DIALOG_TEXTS.rejected.submit).toBe("Rechazar pedido");
     expect(REASON_DIALOG_TEXTS.cancelled.submit).toBe("Cancelar pedido");
     expect(REASON_DIALOG_TEXTS.cancelled.quickReasons.length).toBeGreaterThan(0);
+  });
+});
+
+describe("focusing an order from En vivo", () => {
+  const orders = (...ids: string[]) => ids.map((id) => ({ id }));
+
+  it("links to Pedidos with the order id", () => {
+    expect(focusOrderHref("r1", "o 1")).toBe("/admin/r1/pedidos?pedido=o%201");
+  });
+
+  it("finds the order on the board, then in Hoy, waiting for each list to load", () => {
+    expect(focusOrderPlace("o1", null, null)).toBeNull();
+    expect(focusOrderPlace("o1", orders("o1"), null)).toBe("board");
+    expect(focusOrderPlace("o2", orders("o1"), null)).toBeNull();
+    expect(focusOrderPlace("o2", orders("o1"), orders("o2"))).toBe("today");
+    expect(focusOrderPlace("o3", orders("o1"), orders("o2"))).toBe("missing");
   });
 });

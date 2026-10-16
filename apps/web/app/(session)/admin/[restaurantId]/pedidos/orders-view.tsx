@@ -40,7 +40,9 @@ import {
   canWorkOrders,
   dayTotals,
   destinationLabel,
+  FOCUS_ORDER_PARAM,
   filterByChannel,
+  focusOrderPlace,
   groupByColumn,
   handOverStatus,
   isDroppedStatus,
@@ -64,7 +66,7 @@ import { canSeePrintJobs, jobFailedMessage, kitchenPrintTarget, type PrintBanner
 import { cn } from "@/lib/utils";
 import { useRestaurant } from "../restaurant-context";
 import { useRestaurantRealtime } from "../restaurant-realtime";
-import { OrderCard, PaymentBadge } from "./order-card";
+import { OrderCard, orderCardId, PaymentBadge } from "./order-card";
 import { RiderMapDialog } from "./rider-map-dialog";
 import { HandOverDialog, PaymentDialog, ReadyTimeDialog, ReasonDialog, RiderDialog } from "./order-dialogs";
 import { OrderEditDialog } from "./order-edit-dialog";
@@ -136,6 +138,72 @@ function useOrderList(restaurantId: string, scope: "active" | "today", enabled: 
   return { orders, error, refetch, apply };
 }
 
+/** How long the order opened from En vivo stays highlighted. */
+const FOCUS_HIGHLIGHT_MS = 4000;
+
+/**
+ * Opens «Pedidos» on the order named in `?pedido=<orderId>` (the «Ver en Pedidos» buttons of En vivo): shows it on
+ * the board or, when it is already finished, in «Hoy»; clears the channel filter that could hide it, scrolls to
+ * its card, focuses it and highlights it for a few seconds. The parameter is then removed from the URL, so a
+ * reload does not jump again. Read from `window.location` (not `useSearchParams`, which needs a Suspense
+ * boundary for the static shell).
+ * @returns The id of the highlighted order, or null.
+ */
+function useFocusedOrder(
+  active: OrderView[] | null,
+  today: OrderView[] | null,
+  setTab: (tab: "board" | "today") => void,
+  setChannel: (channel: ChannelFilter) => void,
+): string | null {
+  const [target, setTarget] = useState<string | null>(null);
+  const [highlighted, setHighlighted] = useState<string | null>(null);
+
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const id = url.searchParams.get(FOCUS_ORDER_PARAM);
+    if (!id) return;
+    setTarget(id);
+    url.searchParams.delete(FOCUS_ORDER_PARAM);
+    window.history.replaceState(window.history.state, "", url);
+  }, []);
+
+  const place = target ? focusOrderPlace(target, active, today) : null;
+  useEffect(() => {
+    if (!target || !place) return;
+    if (place === "missing") {
+      toast.info("Ese pedido ya no está en los pedidos de hoy.");
+      setTarget(null);
+      return;
+    }
+    // «Hoy» loads only once its tab is open: switching to it is what makes `today` arrive.
+    setTab(place);
+    setChannel("all");
+    setHighlighted(target);
+    setTarget(null);
+  }, [target, place, setTab, setChannel]);
+  // While only the board is loaded and the order is not on it, open «Hoy» so it loads.
+  useEffect(() => {
+    if (target && active && !today && !active.some((order) => order.id === target)) setTab("today");
+  }, [target, active, today, setTab]);
+
+  useEffect(() => {
+    if (!highlighted) return;
+    // After the tab switch has rendered the card.
+    const frame = requestAnimationFrame(() => {
+      const element = document.getElementById(orderCardId(highlighted));
+      element?.scrollIntoView({ behavior: "smooth", block: "center" });
+      element?.focus({ preventScroll: true });
+    });
+    const timer = setTimeout(() => setHighlighted(null), FOCUS_HIGHLIGHT_MS);
+    return () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(timer);
+    };
+  }, [highlighted]);
+
+  return highlighted;
+}
+
 function OrdersBoard() {
   const { restaurant, setRestaurant, reload: reloadRestaurant } = useRestaurant();
   const { socket, status: live, syncCount } = useRestaurantRealtime();
@@ -166,6 +234,7 @@ function OrdersBoard() {
   const [handingOver, setHandingOver] = useState<OrderView | null>(null);
   const [handOverPending, setHandOverPending] = useState<PaymentMethod | "handover" | null>(null);
   const [channel, setChannel] = useState<ChannelFilter>("all");
+  const focus = useFocusedOrder(active.orders, today.orders, setTab, setChannel);
   const [savingAccepting, setSavingAccepting] = useState(false);
   const switchId = useId();
   const receipts = useReceiptDownload(socket);
@@ -547,6 +616,7 @@ function OrdersBoard() {
                 printBusy={sendingPrint.has(order.id)}
                 onEdit={canModifyOrder(order, roles) ? () => setEditing(order) : undefined}
                 fresh={fresh.has(order.id)}
+                highlighted={focus === order.id}
                 busy={busy[order.id] ?? null}
                 onAction={(to) => onAction(order, to)}
                 onPay={() => setPaying(order)}
@@ -568,6 +638,7 @@ function OrdersBoard() {
             busy={busy}
             onRetry={() => void today.refetch()}
             onPay={setPaying}
+            highlighted={focus}
           />
         </TabsContent>
       </Tabs>
@@ -830,6 +901,7 @@ function TodayList({
   busy,
   onRetry,
   onPay,
+  highlighted,
 }: {
   /** Board columns (only for the loading skeleton). */
   columns: number;
@@ -839,6 +911,8 @@ function TodayList({
   busy: Record<string, Busy>;
   onRetry(): void;
   onPay(order: OrderView): void;
+  /** Order opened from En vivo: its row is highlighted. */
+  highlighted: string | null;
 }) {
   if (!orders) return <ListState error={error} onRetry={onRetry} columns={columns} />;
   const sorted = sortNewestFirst(orders);
@@ -863,7 +937,16 @@ function TodayList({
       ) : (
         <ul className="flex flex-col divide-y rounded-xl bg-card ring-1 ring-foreground/10" aria-label="Pedidos de hoy">
           {sorted.map((order) => (
-            <li key={order.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3" data-testid="today-row">
+            <li
+              key={order.id}
+              id={orderCardId(order.id)}
+              tabIndex={-1}
+              className={cn(
+                "flex scroll-mt-24 flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 outline-none transition-colors",
+                highlighted === order.id && "bg-primary/10 ring-2 ring-primary ring-inset",
+              )}
+              data-testid="today-row"
+            >
               <span className="w-14 text-xl font-black tabular-nums">#{order.ticketNumber}</span>
               <span className="flex min-w-0 flex-1 flex-col">
                 <span className="text-sm font-medium">
