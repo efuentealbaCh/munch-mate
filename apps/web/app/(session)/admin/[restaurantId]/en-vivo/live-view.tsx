@@ -1,12 +1,13 @@
 "use client";
 
 import { type FloorPlanView, type GeoArea, type LiveSummary, ORDER_STATUS_LABELS, type OrderView, type TableSessionView } from "@app/types";
-import { MapIcon, PencilRulerIcon } from "lucide-react";
+import { ChefHatIcon, MapIcon, PencilRulerIcon } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AccessDenied } from "@/components/access-denied";
 import { FormError } from "@/components/form-error";
 import { CameraControls } from "@/components/live-floor/camera-controls";
+import { FloorTabs } from "@/components/live-floor/floor-tabs";
 import { LiveScene, type SceneData, type SceneTooltip } from "@/components/live-floor/live-scene";
 import { DetailPanel, type DetailContext, GLASS, KpiCards, LiveStatus, TableLegend, TrackingStrip, WorkQueue } from "@/components/live-floor/panels";
 import { RidersCard } from "@/components/live-floor/riders-card";
@@ -26,8 +27,11 @@ import { upsertSession } from "@/lib/floor";
 import {
   type CameraTurns,
   channelPlace,
+  clampFloor,
+  floorLayout,
   KITCHEN_GROUPS,
   loadCameraTurns,
+  loadLiveFloor,
   type LiveModel,
   liveModel,
   type LiveTarget,
@@ -36,6 +40,7 @@ import {
   resolveTarget,
   rotateLayout,
   saveCameraTurns,
+  saveLiveFloor,
   TABLE_STATE_LABELS,
   ticketTimer,
   timerLabel,
@@ -261,6 +266,22 @@ function useCamera(restaurantId: string, sceneShown: boolean) {
   return { turns, turn };
 }
 
+/**
+ * The floor the scene draws: remembered per device and restaurant (`mm:live-floor:<id>`) and clamped to the floors
+ * the plan has now, so a floor removed meanwhile (on load or by `floor-plan.updated`) falls back to the last one.
+ */
+function useLiveFloor(restaurantId: string, floors: number) {
+  const [choice, setChoice] = useState(() => loadLiveFloor(localStore(), restaurantId));
+  const choose = useCallback(
+    (floor: number) => {
+      setChoice(floor);
+      saveLiveFloor(localStore(), restaurantId, floor);
+    },
+    [restaurantId],
+  );
+  return { floor: clampFloor(choice, floors), choose };
+}
+
 /** Order the ring on the floor follows: a moto on its way, its bag on the counter, its table, or the kitchen. */
 function ringOf(target: LiveTarget, model: LiveModel): LiveTarget {
   if (target.kind !== "order") return target;
@@ -289,6 +310,7 @@ function LiveFloor() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [showPlan, setShowPlan] = useState(false);
   const camera = useCamera(restaurant.id, wide || showPlan);
+  const floors = useLiveFloor(restaurant.id, floor.view?.plan?.floors.length ?? 1);
 
   const ready = floor.view !== null && active.orders !== null && open.sessions !== null;
   const model = useMemo(
@@ -308,23 +330,22 @@ function LiveFloor() {
   const zones = useZoneAreas(restaurant.id, Boolean(model?.layout.delivery) && map.available);
 
   const target = model ? resolveTarget(selected, model.layout, model.orders) : ({ kind: "kitchen" } as LiveTarget);
-  const sceneData = useMemo<SceneData | null>(
-    () =>
-      model
-        ? {
-            // Only the scene sees the turned plan; panels, lists and selection work with ids.
-            layout: rotateLayout(model.layout, camera.turns),
-            restaurantName: restaurant.name,
-            tableStates: model.tableStates,
-            groups: model.groups,
-            readyPickups: model.readyPickups,
-            riders: model.onTheWay,
-            ring: wide ? ringOf(target, model) : null,
-          }
-        : null,
+  const sceneData = useMemo<SceneData | null>(() => {
+    if (!model) return null;
+    // Only the scene sees the turned plan and one floor; panels, lists and selection work with ids (every floor).
+    const turned = rotateLayout(model.layout, camera.turns);
+    return {
+      layout: floorLayout(turned, floors.floor),
+      framePlan: turned.plan,
+      restaurantName: restaurant.name,
+      tableStates: model.tableStates,
+      groups: model.groups,
+      readyPickups: model.readyPickups,
+      riders: model.onTheWay,
+      ring: wide ? ringOf(target, model) : null,
+    };
     // The ring depends on the target's key only (a new object every render would redraw the scene).
-    [model, restaurant.name, wide, camera.turns, target.kind, "id" in target ? target.id : ""],
-  );
+  }, [model, restaurant.name, wide, camera.turns, floors.floor, target.kind, "id" in target ? target.id : ""]);
 
   if (!model || !sceneData) {
     const error = floor.error ?? active.error ?? open.error;
@@ -361,6 +382,13 @@ function LiveFloor() {
 
   function select(next: LiveTarget) {
     setSelected(next);
+    // A table chosen from a list or the queue is shown on its floor; the kitchen, counter and door are on the first.
+    if (next.kind === "table") {
+      const table = model?.layout.tables.find((t) => t.id === next.id);
+      if (table && table.layout.floor !== floors.floor) floors.choose(table.layout.floor);
+    } else if ((next.kind === "kitchen" || next.kind === "pickup" || next.kind === "door") && floors.floor !== 0 && wide) {
+      floors.choose(0);
+    }
     if (!wide) setSheetOpen(true);
   }
 
@@ -401,8 +429,34 @@ function LiveFloor() {
   const ctx: DetailContext = { model, summary: summary.summary, restaurantId: restaurant.id, now, positions, onSelect: select };
   const tracked = target.kind === "order" ? (model.orders.find((o) => o.id === target.id) ?? model.featured) : model.featured;
   const planHref = `/admin/${restaurant.id}/mesas/plano`;
-  const sceneLabel = `Plano en vivo de ${restaurant.name}: cocina${model.layout.dining ? `, salón con ${model.layout.tables.length} mesas` : ""}${model.layout.pickup ? ", mesón de retiro" : ""}${model.layout.delivery ? ", puerta de delivery" : ""}`;
-  const ridersCard = (className?: string) =>
+  const drawn = sceneData.layout;
+  const multiFloor = model.floors.length > 1;
+  const floorName = model.floors[drawn.floor]?.name ?? "";
+  const firstFloorName = model.floors[0]?.name ?? "primer piso";
+  const sceneLabel = multiFloor && !drawn.ground
+    ? `Plano en vivo de ${restaurant.name}, ${floorName}: ${drawn.dining ? `salón con ${drawn.tables.length} mesas` : "sin mesas ubicadas"}. La cocina está en ${firstFloorName}`
+    : `Plano en vivo de ${restaurant.name}${multiFloor ? `, ${floorName}` : ""}: cocina${drawn.dining ? `, salón con ${drawn.tables.length} mesas` : ""}${drawn.pickup ? ", mesón de retiro" : ""}${drawn.delivery ? ", puerta de delivery" : ""}`;
+  // On the other floors the kitchen, the counter and the door are not drawn: say where they are, one tap away.
+  const sceneOverlay = multiFloor ? (
+    <div className="flex flex-col items-start gap-1.5">
+      <FloorTabs tabs={model.floors} floor={drawn.floor} onChange={floors.choose} />
+      {!drawn.ground ? (
+        <button
+          type="button"
+          className="flex items-center gap-1.5 rounded-lg border border-border bg-background/80 px-2.5 py-1 text-xs text-muted-foreground shadow-sm backdrop-blur-sm hover:text-foreground"
+          onClick={() => floors.choose(0)}
+          data-testid="live-floor-kitchen-note"
+        >
+          <ChefHatIcon className="size-3.5" aria-hidden />
+          <span>
+            Cocina{model.layout.pickup ? ", retiro" : ""}
+            {model.layout.delivery ? " y delivery" : ""} en <strong className="font-semibold">{firstFloorName}</strong>
+          </span>
+        </button>
+      ) : null}
+    </div>
+  ) : null;
+  const ridersCard = (className?: string, expandable = false) =>
     model.layout.delivery ? (
       <RidersCard
         model={model}
@@ -412,6 +466,7 @@ function LiveFloor() {
         zones={zones}
         center={restaurant.location}
         onSelect={select}
+        expandable={expandable}
         className={className}
       />
     ) : null;
@@ -477,7 +532,7 @@ function LiveFloor() {
         </Button>
         {showPlan ? (
           <div className="relative overflow-hidden rounded-2xl border border-border bg-[#f4f2ef]">
-            <LiveScene data={sceneData} label={sceneLabel} onSelect={select} describe={describe} camera={camera.turns} className="aspect-[4/3] w-full" />
+            <LiveScene data={sceneData} label={sceneLabel} onSelect={select} describe={describe} camera={camera.turns} overlay={sceneOverlay} className="aspect-[4/3] w-full" />
             <CameraControls turns={camera.turns} onTurn={camera.turn} className="absolute top-2 right-2 z-[2] rounded-lg bg-background/70 p-0.5 backdrop-blur-sm" />
           </div>
         ) : null}
@@ -523,10 +578,12 @@ function LiveFloor() {
           onSelect={select}
           describe={describe}
           camera={camera.turns}
+          overlay={sceneOverlay}
           className="col-span-2 aspect-[16/10] xl:absolute xl:top-[132px] xl:right-[368px] xl:bottom-[146px] xl:left-0 xl:aspect-auto"
         />
         {/* Front-left corner of the scene: the kitchen and the tickets usually sit at the back or on the right. */}
-        {ridersCard("col-span-2 h-64 xl:absolute xl:left-4 xl:bottom-[162px] xl:z-[2] xl:h-[230px] xl:w-[240px]")}
+        {/* The riders map belongs to the door, on the first floor. */}
+        {drawn.ground ? ridersCard("col-span-2 h-64 xl:absolute xl:left-4 xl:bottom-[162px] xl:z-[2] xl:h-[230px] xl:w-[240px]", true) : null}
         <TrackingStrip order={tracked} ctx={ctx} className="col-span-2 xl:absolute xl:right-[376px] xl:bottom-4 xl:left-4 xl:z-[2]" />
         <DetailPanel target={target} ctx={ctx} className={cn(GLASS, "max-h-[520px] overflow-auto xl:absolute xl:top-4 xl:right-4 xl:bottom-[330px] xl:z-[3] xl:max-h-none xl:w-[344px]")} />
         <WorkQueue model={model} now={now} onSelect={select} className="max-h-[520px] xl:absolute xl:right-4 xl:bottom-4 xl:z-[3] xl:h-[300px] xl:max-h-none xl:w-[344px]" />
