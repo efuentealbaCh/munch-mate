@@ -144,7 +144,8 @@ const SceneSvg = memo(function SceneSvg({ data, ids, label }: { data: SceneData;
   const pickupPlace = plan.pickup ? fitArt(plan.pickup, PICKUP_ART, "center") : null;
   const side = plan.door ? doorSide(plan.door, plan.cols, plan.rows) : null;
   const front = side === "east" || side === "south";
-  const motos = riders.slice(0, MAX_MOTOS);
+  // The bikes wait at the door: on a floor without it (above the first one) none is drawn, and `frames` is empty.
+  const motos = layout.plan.door ? riders.slice(0, MAX_MOTOS) : [];
   const frames = motoFrames(layout, motos.length);
   const name = nameSpot(plan, layout.floor);
   const corners = freeCorners(plan, layout.tables, layout.floor);
