@@ -1,8 +1,19 @@
-import type { FloorPlan, TableLayout } from "@app/types";
-import { FLOOR_PLAN_MESSAGES, floorPlanProblem, isEdgeCell, rectInGrid, rectsOverlap, tableFootprint } from "./floor-plan";
+import type { FloorLevel, FloorPlanInput, TableLayout } from "@app/types";
+import {
+  defaultFloors,
+  FLOOR_PLAN_MESSAGES,
+  floorPlanProblem,
+  isEdgeCell,
+  materialAt,
+  paintTerrain,
+  rectInGrid,
+  rectsOverlap,
+  resizeTerrain,
+  tableFootprint,
+} from "./floor-plan";
 
 /** 14 × 9 with the kitchen in the top-left corner, the counter on the right and the door at the bottom. */
-const plan = (overrides: Partial<FloorPlan> = {}): FloorPlan => ({
+const plan = (overrides: Partial<FloorPlanInput> = {}): FloorPlanInput => ({
   cols: 14,
   rows: 9,
   kitchen: { x: 0, y: 0, w: 4, h: 3 },
@@ -125,7 +136,9 @@ describe("floorPlanProblem", () => {
   it("rejects tables on each other, on an area or on the door", () => {
     expect(floorPlanProblem(plan(), [table("t1", { x: 5, y: 4 }), table("t2", { x: 5, y: 4 })])).toBe("overlap");
     // The long table starting at 4 takes cell 5 too.
-    expect(floorPlanProblem(plan(), [table("t1", { x: 4, y: 4, seats: 6 }), table("t2", { x: 5, y: 4 })])).toBe("overlap");
+    expect(floorPlanProblem(plan(), [table("t1", { x: 4, y: 4, seats: 6 }), table("t2", { x: 5, y: 4 })])).toBe(
+      "overlap",
+    );
     expect(floorPlanProblem(plan(), [table("t1", { x: 4, y: 4, seats: 6 }), table("t2", { x: 6, y: 4 })])).toBeNull();
     expect(floorPlanProblem(plan(), [table("t1", { x: 3, y: 2 })])).toBe("overlap");
     expect(floorPlanProblem(plan(), [table("t1", { x: 10, y: 1, seats: 8 })])).toBe("overlap");
@@ -172,5 +185,150 @@ describe("floorPlanProblem", () => {
 
   it("has a message for every problem", () => {
     for (const message of Object.values(FLOOR_PLAN_MESSAGES)) expect(message.length).toBeGreaterThan(10);
+  });
+});
+
+describe("terrain", () => {
+  it("reads unpainted floors as plain floor", () => {
+    expect(materialAt(null, 14, { x: 3, y: 3 })).toBe("floor");
+  });
+
+  it("paints cells and collapses an unpainted floor back to null", () => {
+    const painted = paintTerrain(
+      null,
+      6,
+      4,
+      [
+        { x: 0, y: 0 },
+        { x: 5, y: 3 },
+        { x: 9, y: 9 },
+      ],
+      "wall",
+    );
+    expect(painted).toHaveLength(24);
+    expect(materialAt(painted, 6, { x: 0, y: 0 })).toBe("wall");
+    expect(materialAt(painted, 6, { x: 5, y: 3 })).toBe("wall");
+    expect(materialAt(painted, 6, { x: 1, y: 0 })).toBe("floor");
+    expect(
+      paintTerrain(
+        painted,
+        6,
+        4,
+        [
+          { x: 0, y: 0 },
+          { x: 5, y: 3 },
+        ],
+        "floor",
+      ),
+    ).toBeNull();
+  });
+
+  it("keeps painted cells in place when the grid is resized", () => {
+    const painted = paintTerrain(
+      null,
+      6,
+      4,
+      [
+        { x: 1, y: 1 },
+        { x: 5, y: 3 },
+      ],
+      "grass",
+    );
+    const grown = resizeTerrain(painted, 6, 8, 5);
+    expect(grown).toHaveLength(40);
+    expect(materialAt(grown, 8, { x: 1, y: 1 })).toBe("grass");
+    expect(materialAt(grown, 8, { x: 5, y: 3 })).toBe("grass");
+    expect(materialAt(grown, 8, { x: 7, y: 4 })).toBe("floor");
+    // Shrinking drops the cells beyond the new size.
+    expect(materialAt(resizeTerrain(painted, 6, 6, 4), 6, { x: 1, y: 1 })).toBe("grass");
+    expect(resizeTerrain(paintTerrain(null, 6, 4, [{ x: 5, y: 3 }], "grass"), 6, 5, 3)).toBeNull();
+  });
+});
+
+describe("floorPlanProblem with floors, terrain and decorations", () => {
+  const level = (overrides: Partial<FloorLevel> = {}): FloorLevel => ({
+    name: "Terraza",
+    terrain: null,
+    decor: [],
+    ...overrides,
+  });
+  const paint = (cells: { x: number; y: number }[], material: "wall" | "void" | "wood") =>
+    paintTerrain(null, 14, 9, cells, material);
+
+  it("reads a plan without floors as one plain floor", () => {
+    expect(defaultFloors()).toEqual([{ name: "Primer piso", terrain: null, decor: [] }]);
+    expect(floorPlanProblem(plan({ floors: defaultFloors() }), [table("t1", {})])).toBeNull();
+  });
+
+  it("places tables on other floors, where the kitchen and the door take no cell", () => {
+    const floors = [level({ name: "Primer piso" }), level()];
+    expect(
+      floorPlanProblem(plan({ floors }), [table("t1", { x: 0, y: 0, floor: 1 }), table("t2", { x: 0, y: 4 })]),
+    ).toBeNull();
+    expect(floorPlanProblem(plan({ floors }), [table("t1", { x: 0, y: 0 })])).toBe("overlap");
+    expect(floorPlanProblem(plan({ floors }), [table("t1", { floor: 2 })])).toBe("unknown_floor");
+    expect(floorPlanProblem(plan(), [table("t1", { floor: 1 })])).toBe("unknown_floor");
+  });
+
+  it("rejects bad floor lists", () => {
+    expect(floorPlanProblem(plan({ floors: [] }), [])).toBe("invalid_floors");
+    expect(floorPlanProblem(plan({ floors: [level(), level(), level(), level(), level()] }), [])).toBe(
+      "invalid_floors",
+    );
+    expect(floorPlanProblem(plan({ floors: [level({ name: "  " })] }), [])).toBe("invalid_floors");
+    expect(floorPlanProblem(plan({ floors: [level({ name: "x".repeat(31) })] }), [])).toBe("invalid_floors");
+  });
+
+  it("rejects terrain of another size or with unknown codes", () => {
+    expect(floorPlanProblem(plan({ floors: [level({ terrain: ".".repeat(10) })] }), [])).toBe("invalid_terrain");
+    expect(floorPlanProblem(plan({ floors: [level({ terrain: "x".repeat(126) })] }), [])).toBe("invalid_terrain");
+    expect(floorPlanProblem(plan({ floors: [level({ terrain: paint([{ x: 6, y: 6 }], "wood") })] }), [])).toBeNull();
+  });
+
+  it("keeps tables, areas and decorations off walls and cells outside the building", () => {
+    const walled = (cells: { x: number; y: number }[], material: "wall" | "void" = "wall") =>
+      plan({ floors: [level({ terrain: paint(cells, material) })] });
+    expect(floorPlanProblem(walled([{ x: 5, y: 4 }]), [table("t1", { x: 5, y: 4 })])).toBe("blocked_cell");
+    expect(floorPlanProblem(walled([{ x: 6, y: 4 }]), [table("t1", { x: 5, y: 4, seats: 8 })])).toBe("blocked_cell");
+    expect(floorPlanProblem(walled([{ x: 1, y: 1 }], "void"), [])).toBe("blocked_cell");
+    // The door may open a wall, never lead outside the building.
+    expect(floorPlanProblem(walled([{ x: 13, y: 8 }]), [])).toBeNull();
+    expect(floorPlanProblem(walled([{ x: 13, y: 8 }], "void"), [])).toBe("blocked_cell");
+    const decorated = plan({
+      floors: [level({ terrain: paint([{ x: 6, y: 6 }], "wall"), decor: [{ kind: "plant", x: 6, y: 6 }] })],
+    });
+    expect(floorPlanProblem(decorated, [])).toBe("blocked_cell");
+  });
+
+  it("checks decorations: kinds, count, grid and free cells", () => {
+    const decorated = (decor: FloorLevel["decor"]) => plan({ floors: [level({ decor })] });
+    expect(
+      floorPlanProblem(
+        decorated([
+          { kind: "tree", x: 6, y: 6 },
+          { kind: "planter", x: 7, y: 6 },
+        ]),
+        [],
+      ),
+    ).toBeNull();
+    expect(floorPlanProblem(decorated([{ kind: "statue" as "tree", x: 6, y: 6 }]), [])).toBe("invalid_decor");
+    expect(
+      floorPlanProblem(
+        decorated(Array.from({ length: 151 }, (_, i) => ({ kind: "plant" as const, x: i % 14, y: 8 }))),
+        [],
+      ),
+    ).toBe("invalid_decor");
+    expect(floorPlanProblem(decorated([{ kind: "plant", x: 14, y: 0 }]), [])).toBe("out_of_bounds");
+    expect(floorPlanProblem(decorated([{ kind: "plant", x: 1, y: 1 }]), [])).toBe("overlap");
+    expect(floorPlanProblem(decorated([{ kind: "plant", x: 5, y: 4 }]), [table("t1", {})])).toBe("overlap");
+    expect(
+      floorPlanProblem(
+        decorated([
+          { kind: "plant", x: 6, y: 6 },
+          { kind: "lamp", x: 6, y: 6 },
+        ]),
+        [],
+      ),
+    ).toBe("overlap");
   });
 });

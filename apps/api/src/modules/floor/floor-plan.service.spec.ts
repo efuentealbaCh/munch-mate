@@ -14,8 +14,9 @@ const PLAN: FloorPlan = {
   kitchen: { x: 0, y: 0, w: 4, h: 3 },
   pickup: null,
   door: { x: 13, y: 8 },
+  floors: [{ name: "Primer piso", terrain: null, decor: [] }],
 };
-const ROUND4: TableLayout = { x: 5, y: 4, shape: "round", seats: 4, rotation: 0 };
+const ROUND4: TableLayout = { x: 5, y: 4, shape: "round", seats: 4, rotation: 0, floor: 0 };
 
 const tableRecord = (id: string, overrides: Partial<TableRecord> = {}): TableRecord => ({
   id,
@@ -106,7 +107,7 @@ describe("FloorPlanService", () => {
 
   it("stores a layout sent without rotation as horizontal and keeps vertical tables", async () => {
     const { service, tables } = setup();
-    const long: TableLayout = { x: 7, y: 2, shape: "square", seats: 8, rotation: 90 };
+    const long: TableLayout = { x: 7, y: 2, shape: "square", seats: 8, rotation: 90, floor: 0 };
 
     const view = await service.save(tenant, {
       plan: PLAN,
@@ -125,6 +126,40 @@ describe("FloorPlanService", () => {
       { id: "tx" },
     );
     expect(view.tables.map((t) => t.layout)).toEqual([ROUND4, long]);
+  });
+
+  it("stores a plan sent without floors with one plain floor, and tables and decorations on other floors", async () => {
+    const { service, restaurants, tables } = setup();
+    const { floors: _floors, ...older } = PLAN;
+
+    await service.save(tenant, { plan: older, tables: [] });
+    expect(restaurants.setFloorPlan).toHaveBeenLastCalledWith("r1", PLAN, { id: "tx" });
+
+    const terrace = { name: "Terraza", terrain: null, decor: [{ kind: "umbrella" as const, x: 1, y: 1 }] };
+    const view = await service.save(tenant, {
+      plan: { ...PLAN, floors: [...PLAN.floors, terrace] },
+      // On the terrace (0, 0) is free: the kitchen is on the first floor.
+      tables: [{ tableId: "t1", layout: { x: 0, y: 0, shape: "round", seats: 2, floor: 1 } }],
+    });
+    expect(tables.replaceLayouts).toHaveBeenLastCalledWith(
+      "r1",
+      [{ tableId: "t1", layout: { x: 0, y: 0, shape: "round", seats: 2, rotation: 0, floor: 1 } }],
+      { id: "tx" },
+    );
+    expect(view.plan?.floors).toEqual([...PLAN.floors, terrace]);
+  });
+
+  it("rejects tables on missing floors and on painted walls", async () => {
+    const { service, connection } = setup();
+    const walled = { ...PLAN, floors: [{ name: "Primer piso", terrain: "#".repeat(14) + ".".repeat(112), decor: [] }] };
+
+    await expect(
+      service.save(tenant, { plan: PLAN, tables: [{ tableId: "t1", layout: { ...ROUND4, floor: 1 } }] }),
+    ).rejects.toMatchObject({ response: { code: "INVALID_FLOOR_PLAN", meta: { problem: "unknown_floor" } } });
+    await expect(
+      service.save(tenant, { plan: walled, tables: [{ tableId: "t1", layout: { ...ROUND4, x: 6, y: 0 } }] }),
+    ).rejects.toMatchObject({ response: { code: "INVALID_FLOOR_PLAN", meta: { problem: "blocked_cell" } } });
+    expect(connection.transaction).not.toHaveBeenCalled();
   });
 
   it("validates the footprint of vertical tables", async () => {

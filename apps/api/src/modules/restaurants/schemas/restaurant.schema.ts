@@ -1,4 +1,6 @@
 import {
+  DECOR_KINDS,
+  type DecorKind,
   FLOOR_LIMITS,
   KITCHEN_TARGET_LIMITS,
   MESSAGE_CHANNELS,
@@ -37,6 +39,34 @@ export class FloorCellDoc {
 }
 const FloorCellSchema = SchemaFactory.createForClass(FloorCellDoc);
 
+/** A decoration on a floor (purely visual). */
+@Schema({ _id: false })
+export class FloorDecorDoc {
+  @Prop({ type: String, enum: DECOR_KINDS, required: true })
+  kind!: DecorKind;
+
+  @Prop({ required: true, min: 0 })
+  x!: number;
+
+  @Prop({ required: true, min: 0 })
+  y!: number;
+}
+const FloorDecorSchema = SchemaFactory.createForClass(FloorDecorDoc);
+
+/** One floor of the plan: its name, painted terrain (one code per cell, null = plain) and decorations. */
+@Schema({ _id: false })
+export class FloorLevelDoc {
+  @Prop({ required: true, trim: true, maxlength: FLOOR_LIMITS.floorNameMax })
+  name!: string;
+
+  @Prop({ type: String, default: null })
+  terrain!: string | null;
+
+  @Prop({ type: [FloorDecorSchema], default: [] })
+  decor!: FloorDecorDoc[];
+}
+const FloorLevelSchema = SchemaFactory.createForClass(FloorLevelDoc);
+
 /**
  * The restaurant drawn on a grid (phase 9, live view), validated by `floorPlanProblem` before saving. The
  * tables' positions live on each table (`tables.layout`).
@@ -57,6 +87,10 @@ export class FloorPlanDoc {
 
   @Prop({ type: FloorCellSchema, default: null })
   door!: FloorCellDoc | null;
+
+  /** Missing in plans saved before floors existed: read as one plain floor (`defaultFloors`). */
+  @Prop({ type: [FloorLevelSchema], default: undefined })
+  floors?: FloorLevelDoc[];
 }
 const FloorPlanSchema = SchemaFactory.createForClass(FloorPlanDoc);
 

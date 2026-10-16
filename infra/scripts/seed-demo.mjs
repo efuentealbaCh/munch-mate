@@ -291,7 +291,11 @@ async function seedRestaurant(spec, existing) {
   if (spec.floorPlan) {
     const current = await api("GET", `${base}/floor-plan`);
     if (!current.plan) {
-      const { tables: places, ...plan } = spec.floorPlan;
+      const { tables: places, floors, ...plan } = spec.floorPlan;
+      // Terrain is written in the JSON one string per row, for readability; the api takes them joined.
+      if (floors) {
+        plan.floors = floors.map(({ terrainRows, ...floor }) => ({ ...floor, terrain: terrainRows ? terrainRows.join("") : null }));
+      }
       await api("PUT", `${base}/floor-plan`, {
         plan,
         tables: current.tables.map((table) => {
@@ -300,10 +304,12 @@ async function seedRestaurant(spec, existing) {
           const layout = { x: place.x, y: place.y, shape: place.shape, seats: place.seats };
           // Optional: 90 = vertical (a long table one cell under the other); missing = horizontal.
           if (place.rotation !== undefined) layout.rotation = place.rotation;
+          // Optional: index of its floor in `floors`; missing = the first one.
+          if (place.floor !== undefined) layout.floor = place.floor;
           return { tableId: table.id, layout };
         }),
       });
-      console.log(`✓ ${spec.name}: plano del local con ${places.length} mesas`);
+      console.log(`✓ ${spec.name}: plano del local con ${places.length} mesas en ${plan.floors?.length ?? 1} piso(s)`);
     }
   }
 

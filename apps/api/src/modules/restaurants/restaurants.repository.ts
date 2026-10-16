@@ -1,4 +1,5 @@
 import {
+  type FloorLevel,
   type FloorPlan,
   type FloorRect,
   type GeoPoint,
@@ -9,6 +10,7 @@ import {
   TIP_LIMITS,
   type WeeklyHours,
 } from "@app/types";
+import { defaultFloors } from "@app/utils";
 import { Injectable } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { type ClientSession, type Model, Types } from "mongoose";
@@ -196,6 +198,7 @@ export class RestaurantsRepository {
       kitchen: rect(floorPlan.kitchen),
       pickup: floorPlan.pickup && rect(floorPlan.pickup),
       door: floorPlan.door && { x: floorPlan.door.x, y: floorPlan.door.y },
+      floors: floorPlan.floors.map(floorLevel),
     };
     const result = await this.restaurants.updateOne(
       { _id: new Types.ObjectId(id) },
@@ -218,6 +221,11 @@ function mapDuplicateSlug(error: unknown, slug: string): unknown {
 
 /** Copies only the known fields (no stray keys reach the document). */
 const rect = (r: FloorRect): FloorRect => ({ x: r.x, y: r.y, w: r.w, h: r.h });
+const floorLevel = (level: FloorLevel): FloorLevel => ({
+  name: level.name,
+  terrain: level.terrain ?? null,
+  decor: (level.decor ?? []).map((item) => ({ kind: item.kind, x: item.x, y: item.y })),
+});
 
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -253,6 +261,7 @@ function toRecord(doc: Restaurant & { _id: Types.ObjectId }): RestaurantRecord {
           kitchen: rect(doc.floorPlan.kitchen),
           pickup: doc.floorPlan.pickup ? rect(doc.floorPlan.pickup) : null,
           door: doc.floorPlan.door ? { x: doc.floorPlan.door.x, y: doc.floorPlan.door.y } : null,
+          floors: doc.floorPlan.floors?.length ? doc.floorPlan.floors.map(floorLevel) : defaultFloors(),
         }
       : null,
     messaging: {

@@ -1,8 +1,12 @@
 import {
+  DECOR_KINDS,
   type FloorCell,
-  type FloorPlan,
+  type FloorLevel,
+  type FloorMaterial,
+  type FloorPlanInput,
   type FloorRect,
   FLOOR_LIMITS,
+  FLOOR_MATERIALS,
   TABLE_ROTATIONS,
   TABLE_SEATS,
   TABLE_SHAPES,
@@ -24,6 +28,11 @@ import {
  * - invalid_table: a table layout with an unknown shape, number of seats or rotation.
  * - duplicate_table: the same table listed twice.
  * - table_without_plan: tables placed while there is no plan.
+ * - invalid_floors: no floor, more than FLOOR_LIMITS.floorsMax, or a floor without a name or with a longer one.
+ * - invalid_terrain: a floor's terrain is not `cols × rows` FLOOR_MATERIALS codes.
+ * - blocked_cell: a table, an area or a decoration on a wall or outside the building (void), or the door outside.
+ * - invalid_decor: an unknown decoration or more than FLOOR_LIMITS.decorMax on a floor.
+ * - unknown_floor: a table on a floor the plan does not have.
  */
 export type FloorPlanProblem =
   | "size"
@@ -36,7 +45,12 @@ export type FloorPlanProblem =
   | "door_inside_area"
   | "invalid_table"
   | "duplicate_table"
-  | "table_without_plan";
+  | "table_without_plan"
+  | "invalid_floors"
+  | "invalid_terrain"
+  | "blocked_cell"
+  | "invalid_decor"
+  | "unknown_floor";
 
 /** Spanish (Chile) messages for each problem, shown by the api and the editor. */
 export const FLOOR_PLAN_MESSAGES: Record<FloorPlanProblem, string> = {
@@ -45,13 +59,96 @@ export const FLOOR_PLAN_MESSAGES: Record<FloorPlanProblem, string> = {
   not_integer: "Las posiciones y tamaños del plano deben ser celdas enteras",
   area_too_small: `La cocina y el mesón de retiro deben medir al menos ${FLOOR_LIMITS.areaMin}×${FLOOR_LIMITS.areaMin} celdas`,
   out_of_bounds: "Hay elementos fuera del plano; agrándalo o muévelos",
-  overlap: "Hay elementos superpuestos en el plano (mesas, cocina, mesón de retiro o puerta)",
+  overlap: "Hay elementos superpuestos en el plano (mesas, decoración, cocina, mesón de retiro o puerta)",
   door_not_on_edge: "La puerta de delivery debe estar en el borde del plano",
   door_inside_area: "La puerta de delivery no puede quedar dentro de la cocina ni del mesón de retiro",
   invalid_table: "Las mesas deben ser redondas o cuadradas, de 2, 4, 6 u 8 puestos, horizontales o verticales",
   duplicate_table: "Una mesa aparece dos veces en el plano",
   table_without_plan: "Dibuja el plano antes de ubicar las mesas",
+  invalid_floors: `El plano debe tener entre 1 y ${FLOOR_LIMITS.floorsMax} pisos, cada uno con un nombre de hasta ${FLOOR_LIMITS.floorNameMax} caracteres`,
+  invalid_terrain: "El terreno pintado de un piso no calza con el tamaño del plano; recarga la página",
+  blocked_cell: "Hay mesas, áreas o decoración sobre un muro o fuera del local (y la puerta debe quedar dentro)",
+  invalid_decor: `Cada piso admite hasta ${FLOOR_LIMITS.decorMax} decoraciones de los tipos disponibles`,
+  unknown_floor: "Una mesa está en un piso que ya no existe",
 };
+
+/** Name of the floor of plans saved before floors existed, and of a new plan's first floor. */
+export const FIRST_FLOOR_NAME = "Primer piso";
+
+/** The floors of a plan saved before floors existed (or sent without them): one plain floor. */
+export function defaultFloors(): FloorLevel[] {
+  return [{ name: FIRST_FLOOR_NAME, terrain: null, decor: [] }];
+}
+
+const MATERIAL_BY_CODE = new Map<string, FloorMaterial>(
+  Object.entries(FLOOR_MATERIALS).map(([material, code]) => [code, material as FloorMaterial]),
+);
+
+/** Whether a material keeps tables, areas and decorations out (walls, and cells outside the building). */
+export function isBlockedMaterial(material: FloorMaterial): boolean {
+  return material === "wall" || material === "void";
+}
+
+/**
+ * The material of one cell of a floor.
+ * @param terrain `FloorLevel.terrain` (null = all plain floor).
+ * @returns "floor" for null terrain, cells outside the string or unknown codes.
+ */
+export function materialAt(terrain: string | null, cols: number, cell: FloorCell): FloorMaterial {
+  if (!terrain) return "floor";
+  return MATERIAL_BY_CODE.get(terrain.charAt(cell.y * cols + cell.x)) ?? "floor";
+}
+
+/** Joins cell codes into a terrain; a floor without paint is stored as null. */
+function joinTerrain(codes: readonly string[]): string | null {
+  return codes.every((code) => code === FLOOR_MATERIALS.floor) ? null : codes.join("");
+}
+
+/**
+ * Paints cells of a floor with a material (cells outside the grid are ignored).
+ * @returns The new terrain (null when no cell is painted any more).
+ */
+export function paintTerrain(
+  terrain: string | null,
+  cols: number,
+  rows: number,
+  cells: readonly FloorCell[],
+  material: FloorMaterial,
+): string | null {
+  const codes = Array.from(
+    { length: cols * rows },
+    (_, i): string => FLOOR_MATERIALS[materialAt(terrain, cols, { x: i % cols, y: Math.floor(i / cols) })],
+  );
+  for (const cell of cells) {
+    if (cell.x < 0 || cell.y < 0 || cell.x >= cols || cell.y >= rows) continue;
+    codes[cell.y * cols + cell.x] = FLOOR_MATERIALS[material];
+  }
+  return joinTerrain(codes);
+}
+
+/**
+ * A floor's terrain for a grid of another size: cells keep their position from the top-left corner, new cells
+ * are plain floor and cells beyond the new size are dropped.
+ * @param cols Columns of the grid the terrain was painted on.
+ */
+export function resizeTerrain(terrain: string | null, cols: number, newCols: number, newRows: number): string | null {
+  if (!terrain) return null;
+  const rows = Math.floor(terrain.length / cols);
+  const codes: string[] = [];
+  for (let y = 0; y < newRows; y++) {
+    for (let x = 0; x < newCols; x++) {
+      codes.push(x < cols && y < rows ? FLOOR_MATERIALS[materialAt(terrain, cols, { x, y })] : FLOOR_MATERIALS.floor);
+    }
+  }
+  return joinTerrain(codes);
+}
+
+/** Every cell of a rectangle. */
+export function rectCells(rect: FloorRect): FloorCell[] {
+  const cells: FloorCell[] = [];
+  for (let y = rect.y; y < rect.y + rect.h; y++) for (let x = rect.x; x < rect.x + rect.w; x++) cells.push({ x, y });
+  return cells;
+}
 
 /**
  * The cells a table takes on the plan, starting at `x, y`: tables of 2–4 seats take their own cell (their
@@ -92,17 +189,43 @@ function areaProblem(rect: FloorRect, cols: number, rows: number): FloorPlanProb
   return null;
 }
 
+/** Problems of the floors themselves: count, names, terrain codes and decoration kinds and count. */
+function floorsProblem(floors: readonly FloorLevel[], cols: number, rows: number): FloorPlanProblem | null {
+  if (!Array.isArray(floors) || floors.length < 1 || floors.length > FLOOR_LIMITS.floorsMax) return "invalid_floors";
+  for (const level of floors) {
+    const name = typeof level?.name === "string" ? level.name.trim() : "";
+    if (name.length < 1 || name.length > FLOOR_LIMITS.floorNameMax) return "invalid_floors";
+    if (level.terrain !== null) {
+      if (typeof level.terrain !== "string" || level.terrain.length !== cols * rows) return "invalid_terrain";
+      for (const code of level.terrain) if (!MATERIAL_BY_CODE.has(code)) return "invalid_terrain";
+    }
+    if (!Array.isArray(level.decor) || level.decor.length > FLOOR_LIMITS.decorMax) return "invalid_decor";
+    if (
+      level.decor.some((item: { kind?: unknown } | null) => !(DECOR_KINDS as readonly unknown[]).includes(item?.kind))
+    ) {
+      return "invalid_decor";
+    }
+  }
+  return null;
+}
+
+/** Whether any cell of a rectangle is a wall or outside the building on that floor. */
+function blocked(level: FloorLevel, cols: number, rect: FloorRect): boolean {
+  return rectCells(rect).some((cell) => isBlockedMaterial(materialAt(level.terrain, cols, cell)));
+}
+
 /**
  * Validates a floor plan together with the tables placed on it: grid within FLOOR_LIMITS, a kitchen, areas of
- * whole cells inside the grid and apart from each other, the door on an edge and outside the areas, and every
- * table inside the grid without sharing a cell with another table, an area or the door. Defensive about
- * values typed by hand (it may receive anything the editor holds).
- * @param plan null = no plan: then no table may be placed.
+ * whole cells inside the grid and apart from each other, the door on an edge and outside the areas, the floors
+ * (names, painted terrain, decorations), and every table and decoration inside the grid, off walls and cells
+ * outside the building, without sharing a cell with another one, an area or the door (areas and door are on
+ * the first floor). Defensive about values typed by hand (it may receive anything the editor holds).
+ * @param plan null = no plan: then no table may be placed. Without `floors` = one plain floor.
  * @param tables Every table to place, by id; entries with a null layout are not on the plan.
  * @returns The first problem found, or null when the plan can be saved.
  */
 export function floorPlanProblem(
-  plan: FloorPlan | null,
+  plan: FloorPlanInput | null,
   tables: readonly { tableId: string; layout: TableLayout | TableLayoutInput | null }[],
 ): FloorPlanProblem | null {
   const ids = new Set<string>();
@@ -126,12 +249,18 @@ export function floorPlanProblem(
   }
   if (!plan.kitchen) return "kitchen_required";
 
+  const floors = plan.floors ?? defaultFloors();
+  const floorsIssue = floorsProblem(floors, cols, rows);
+  if (floorsIssue) return floorsIssue;
+  const ground = floors[0]!;
+
   const areas = [plan.kitchen, ...(plan.pickup ? [plan.pickup] : [])];
   for (const area of areas) {
     const problem = areaProblem(area, cols, rows);
     if (problem) return problem;
   }
   if (plan.pickup && rectsOverlap(plan.kitchen, plan.pickup)) return "overlap";
+  if (areas.some((area) => blocked(ground, cols, area))) return "blocked_cell";
 
   const door = plan.door;
   if (door) {
@@ -139,10 +268,13 @@ export function floorPlanProblem(
     if (!rectInGrid(cellRect(door), cols, rows)) return "out_of_bounds";
     if (!isEdgeCell(door, cols, rows)) return "door_not_on_edge";
     if (areas.some((area) => rectsOverlap(area, cellRect(door)))) return "door_inside_area";
+    // On a wall the door opens it; outside the building it would lead nowhere.
+    if (materialAt(ground.terrain, cols, door) === "void") return "blocked_cell";
   }
 
-  // The door counts as taken: a table there would block the riders' way out.
-  const taken: FloorRect[] = [...areas, ...(door ? [cellRect(door)] : [])];
+  // Cells taken per floor. The door counts as taken: a table there would block the riders' way out.
+  const taken: FloorRect[][] = floors.map(() => []);
+  taken[0]!.push(...areas, ...(door ? [cellRect(door)] : []));
   for (const layout of placed) {
     if (
       !(TABLE_SHAPES as readonly unknown[]).includes(layout.shape) ||
@@ -152,11 +284,26 @@ export function floorPlanProblem(
     ) {
       return "invalid_table";
     }
+    // Missing = first floor (clients older than the floors).
+    const floor = layout.floor ?? 0;
+    if (!isInt(floor) || floor < 0 || floor >= floors.length) return "unknown_floor";
     if (!isInt(layout.x) || !isInt(layout.y)) return "not_integer";
     const footprint = tableFootprint(layout);
     if (!rectInGrid(footprint, cols, rows)) return "out_of_bounds";
-    if (taken.some((rect) => rectsOverlap(rect, footprint))) return "overlap";
-    taken.push(footprint);
+    if (blocked(floors[floor]!, cols, footprint)) return "blocked_cell";
+    if (taken[floor]!.some((rect) => rectsOverlap(rect, footprint))) return "overlap";
+    taken[floor]!.push(footprint);
+  }
+
+  for (const [index, level] of floors.entries()) {
+    for (const item of level.decor) {
+      if (!isInt(item.x) || !isInt(item.y)) return "not_integer";
+      const cell = cellRect(item);
+      if (!rectInGrid(cell, cols, rows)) return "out_of_bounds";
+      if (blocked(level, cols, cell)) return "blocked_cell";
+      if (taken[index]!.some((rect) => rectsOverlap(rect, cell))) return "overlap";
+      taken[index]!.push(cell);
+    }
   }
   return null;
 }

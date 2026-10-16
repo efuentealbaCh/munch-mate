@@ -20,6 +20,12 @@ export const FLOOR_LIMITS = {
   areaMin: 2,
   /** Entries a save may list (a 24 × 16 grid has 384 cells; inactive or unplaced tables may be listed too). */
   tablesMax: 500,
+  /** Floors (levels) of a plan: the first one holds the kitchen, the pickup counter and the door. */
+  floorsMax: 4,
+  /** Characters of a floor's name. */
+  floorNameMax: 30,
+  /** Decorations per floor. */
+  decorMax: 150,
 } as const;
 
 /** Minutes the owner expects an order to take from accepted to ready (the kitchen gauge). */
@@ -39,6 +45,48 @@ export interface FloorCell {
   y: number;
 }
 
+/**
+ * What a cell of a floor is made of, painted by the owner: the code is the character stored for the cell in
+ * `FloorLevel.terrain`. `floor` is the plain floor (every cell of plans saved before painting existed). `wall`
+ * and `void` (outside the building: L-shaped places, patios) cannot hold tables, areas or decorations; the
+ * delivery door may sit on a wall (it opens it), never on a void.
+ */
+export const FLOOR_MATERIALS = {
+  floor: ".",
+  wood: "w",
+  tile: "t",
+  carpet: "c",
+  stone: "s",
+  grass: "g",
+  wall: "#",
+  void: "_",
+} as const;
+export type FloorMaterial = keyof typeof FLOOR_MATERIALS;
+
+/** Purely decorative items (no effect on orders): each takes one cell. */
+export const DECOR_KINDS = ["plant", "tree", "planter", "flowers", "lamp", "umbrella", "bench"] as const;
+export type DecorKind = (typeof DECOR_KINDS)[number];
+
+export interface FloorDecor {
+  kind: DecorKind;
+  x: number;
+  y: number;
+}
+
+/**
+ * One floor (level) of the restaurant. Every floor shares the plan's grid size; tables say which floor they
+ * are on (`TableLayout.floor`, the index in `FloorPlan.floors`).
+ */
+export interface FloorLevel {
+  /** Shown in the floor selector ("Primer piso", "Terraza"). */
+  name: string;
+  /**
+   * One FLOOR_MATERIALS code per cell, row by row (`cols × rows` characters). null = every cell plain floor.
+   */
+  terrain: string | null;
+  decor: FloorDecor[];
+}
+
 /** Owner-drawn layout of the restaurant. */
 export interface FloorPlan {
   cols: number;
@@ -49,7 +97,15 @@ export interface FloorPlan {
   pickup: FloorRect | null;
   /** Where riders leave, on an edge of the grid; drawn only while `deliveryEnabled`. */
   door: FloorCell | null;
+  /**
+   * At least one. Kitchen, pickup counter and door are on the first one. Plans saved before floors existed
+   * read as one floor of plain cells without decorations.
+   */
+  floors: FloorLevel[];
 }
+
+/** A plan as clients send it: `floors` may be omitted (= one plain floor), so older clients keep working. */
+export type FloorPlanInput = Omit<FloorPlan, "floors"> & { floors?: FloorLevel[] };
 
 export const TABLE_SHAPES = ["round", "square"] as const;
 export type TableShape = (typeof TABLE_SHAPES)[number];
@@ -75,10 +131,12 @@ export interface TableLayout {
   seats: TableSeats;
   /** Always present in views (documents saved before it existed read as 0). */
   rotation: TableRotation;
+  /** Index of its floor in `FloorPlan.floors`; always present in views (older documents read as 0). */
+  floor: number;
 }
 
-/** A table layout as clients send it: `rotation` may be omitted (= 0), so older clients keep working. */
-export type TableLayoutInput = Omit<TableLayout, "rotation"> & { rotation?: TableRotation };
+/** A table layout as clients send it: `rotation` and `floor` may be omitted (= 0), so older clients keep working. */
+export type TableLayoutInput = Omit<TableLayout, "rotation" | "floor"> & { rotation?: TableRotation; floor?: number };
 
 /** A table as the floor plan editor and the live view see it. */
 export interface FloorTableView {
@@ -103,7 +161,7 @@ export interface FloorPlanView {
  * listed with null) are taken off the plan. `plan: null` deletes the plan and every table layout.
  */
 export interface SaveFloorPlanInput {
-  plan: FloorPlan | null;
+  plan: FloorPlanInput | null;
   tables: { tableId: string; layout: TableLayoutInput | null }[];
 }
 

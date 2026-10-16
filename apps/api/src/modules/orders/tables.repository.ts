@@ -107,6 +107,7 @@ export class TablesRepository {
                   shape: entry.layout.shape,
                   seats: entry.layout.seats,
                   rotation: entry.layout.rotation,
+                  floor: entry.layout.floor,
                 },
               },
             },
@@ -139,6 +140,8 @@ function toRecord(doc: Table & { _id: Types.ObjectId }): TableRecord {
           seats: doc.layout.seats,
           // Layouts saved before the rotation existed lack the field (lean reads skip schema defaults).
           rotation: doc.layout.rotation === 90 ? 90 : 0,
+          // Same for the floor: layouts saved before floors existed are on the first one.
+          floor: doc.layout.floor ?? 0,
         }
       : null,
   };

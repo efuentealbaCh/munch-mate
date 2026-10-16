@@ -1,9 +1,23 @@
 import type { FloorPlan, FloorPlanView, LiveSummary, OrderStatus, OrderView, TableSessionView } from "@app/types";
-import { floorPlanProblem, tableFootprint } from "@app/utils";
+import { defaultFloors, floorPlanProblem, materialAt, tableFootprint } from "@app/utils";
 import { describe, expect, it } from "vitest";
 import {
+  buildingRuns,
   cameraAngle,
   CELL,
+  clampFloor,
+  floorLayout,
+  floorTabs,
+  hasVoid,
+  liveModel,
+  loadLiveFloor,
+  saveLiveFloor,
+  takenCells,
+  terrainRuns,
+  turnTerrain,
+  voidEdgeRect,
+  voidEdges,
+  wallRuns,
   changeLabel,
   defaultPlan,
   diningLabelSpot,
@@ -119,14 +133,14 @@ function session(over: Partial<TableSessionView> = {}): TableSessionView {
   };
 }
 
-const PLAN: FloorPlan = { cols: 14, rows: 9, kitchen: { x: 0, y: 0, w: 4, h: 3 }, pickup: { x: 11, y: 0, w: 3, h: 2 }, door: { x: 13, y: 8 } };
+const PLAN: FloorPlan = { cols: 14, rows: 9, kitchen: { x: 0, y: 0, w: 4, h: 3 }, pickup: { x: 11, y: 0, w: 3, h: 2 }, door: { x: 13, y: 8 }, floors: defaultFloors() };
 
 function view(plan: FloorPlan | null, tables: FloorPlanView["tables"] = []): FloorPlanView {
   return { plan, tables };
 }
 
-const TABLE_A = { id: "t1", label: "Mesa 1", active: true, layout: { x: 5, y: 4, shape: "round" as const, seats: 4 as const, rotation: 0 as const } };
-const TABLE_B = { id: "t2", label: "Mesa 2", active: true, layout: { x: 7, y: 4, shape: "square" as const, seats: 6 as const, rotation: 0 as const } };
+const TABLE_A = { id: "t1", label: "Mesa 1", active: true, layout: { x: 5, y: 4, shape: "round" as const, seats: 4 as const, rotation: 0 as const, floor: 0 } };
+const TABLE_B = { id: "t2", label: "Mesa 2", active: true, layout: { x: 7, y: 4, shape: "square" as const, seats: 6 as const, rotation: 0 as const, floor: 0 } };
 
 describe("isometric projection", () => {
   it("puts +x down-right and +y down-left at 30°, z straight up", () => {
@@ -218,7 +232,7 @@ describe("which zones are drawn", () => {
   });
 
   it("draws the active placed tables with their footprint", () => {
-    const layout = liveLayout(view(PLAN, [TABLE_A, TABLE_B, { id: "t3", label: "Mesa 3", active: false, layout: { x: 9, y: 6, shape: "round", seats: 2, rotation: 0 } }]), flags(false, false));
+    const layout = liveLayout(view(PLAN, [TABLE_A, TABLE_B, { id: "t3", label: "Mesa 3", active: false, layout: { x: 9, y: 6, shape: "round", seats: 2, rotation: 0, floor: 0 } }]), flags(false, false));
     expect(layout.dining).toBe(true);
     expect(layout.tables.map((t) => [t.id, t.rect])).toEqual([
       ["t1", { x: 5, y: 4, w: 1, h: 1 }],
@@ -426,7 +440,7 @@ describe("scene geometry", () => {
   it("paints the name on the longest free stretch of a back wall", () => {
     expect(nameSpot(PLAN)).toEqual({ wall: "north", start: 4, length: 7 });
     expect(nameSpot(defaultPlan(true, true))).toEqual({ wall: "north", start: 5, length: 3 });
-    const blocked = { cols: 6, rows: 4, kitchen: { x: 0, y: 0, w: 6, h: 2 }, pickup: null, door: null };
+    const blocked = { cols: 6, rows: 4, kitchen: { x: 0, y: 0, w: 6, h: 2 }, pickup: null, door: null, floors: defaultFloors() };
     expect(nameSpot(blocked)).toEqual({ wall: "west", start: 2, length: 2 });
   });
 
@@ -496,10 +510,10 @@ describe("camera", () => {
   const flags = { pickupEnabled: true, deliveryEnabled: true };
   // A vertical long table, a horizontal one, a 2-seat round one and a turned 4-seat square one.
   const TABLES: FloorPlanView["tables"] = [
-    { id: "v", label: "Mesa 1", active: true, layout: { x: 5, y: 3, shape: "square", seats: 8, rotation: 90 } },
-    { id: "h", label: "Mesa 2", active: true, layout: { x: 7, y: 4, shape: "round", seats: 6, rotation: 0 } },
-    { id: "r", label: "Mesa 3", active: true, layout: { x: 10, y: 6, shape: "round", seats: 2, rotation: 0 } },
-    { id: "s", label: "Mesa 4", active: true, layout: { x: 2, y: 6, shape: "square", seats: 4, rotation: 90 } },
+    { id: "v", label: "Mesa 1", active: true, layout: { x: 5, y: 3, shape: "square", seats: 8, rotation: 90, floor: 0 } },
+    { id: "h", label: "Mesa 2", active: true, layout: { x: 7, y: 4, shape: "round", seats: 6, rotation: 0, floor: 0 } },
+    { id: "r", label: "Mesa 3", active: true, layout: { x: 10, y: 6, shape: "round", seats: 2, rotation: 0, floor: 0 } },
+    { id: "s", label: "Mesa 4", active: true, layout: { x: 2, y: 6, shape: "square", seats: 4, rotation: 90, floor: 0 } },
   ];
   const layout = liveLayout(view(PLAN, TABLES), flags);
   const all = { plan: layout.plan, tables: layout.tables };
@@ -517,9 +531,9 @@ describe("camera", () => {
   it("each angle swaps cols and rows on 90° and 270° and moves every area to its turned cells", () => {
     const at = (turns: number) => rotatePlanView(layout.plan, layout.tables, turns).plan;
     expect(at(0)).toEqual(layout.plan);
-    expect(at(1)).toEqual({ cols: 9, rows: 14, kitchen: { x: 6, y: 0, w: 3, h: 4 }, pickup: { x: 7, y: 11, w: 2, h: 3 }, door: { x: 0, y: 13 } });
-    expect(at(2)).toEqual({ cols: 14, rows: 9, kitchen: { x: 10, y: 6, w: 4, h: 3 }, pickup: { x: 0, y: 7, w: 3, h: 2 }, door: { x: 0, y: 0 } });
-    expect(at(3)).toEqual({ cols: 9, rows: 14, kitchen: { x: 0, y: 10, w: 3, h: 4 }, pickup: { x: 0, y: 0, w: 2, h: 3 }, door: { x: 8, y: 0 } });
+    expect(at(1)).toEqual({ cols: 9, rows: 14, kitchen: { x: 6, y: 0, w: 3, h: 4 }, pickup: { x: 7, y: 11, w: 2, h: 3 }, door: { x: 0, y: 13 }, floors: defaultFloors() });
+    expect(at(2)).toEqual({ cols: 14, rows: 9, kitchen: { x: 10, y: 6, w: 4, h: 3 }, pickup: { x: 0, y: 7, w: 3, h: 2 }, door: { x: 0, y: 0 }, floors: defaultFloors() });
+    expect(at(3)).toEqual({ cols: 9, rows: 14, kitchen: { x: 0, y: 10, w: 3, h: 4 }, pickup: { x: 0, y: 0, w: 2, h: 3 }, door: { x: 8, y: 0 }, floors: defaultFloors() });
   });
 
   it("four turns (or three and one more, or one back) give the same plan back; the input is not changed", () => {
@@ -551,12 +565,12 @@ describe("camera", () => {
     expect(zero.get("r")?.chairs).toBe("top-bottom");
     expect(zero.get("s")?.chairs).toBe("left-right");
     const one = byId(1);
-    expect(one.get("v")).toMatchObject({ rect: { x: 4, y: 5, w: 2, h: 1 }, layout: { x: 4, y: 5, rotation: 0 }, chairs: "top-bottom" });
-    expect(one.get("h")).toMatchObject({ rect: { x: 4, y: 7, w: 1, h: 2 }, layout: { x: 4, y: 7, rotation: 90 }, chairs: "left-right" });
+    expect(one.get("v")).toMatchObject({ rect: { x: 4, y: 5, w: 2, h: 1 }, layout: { x: 4, y: 5, rotation: 0, floor: 0 }, chairs: "top-bottom" });
+    expect(one.get("h")).toMatchObject({ rect: { x: 4, y: 7, w: 1, h: 2 }, layout: { x: 4, y: 7, rotation: 90, floor: 0 }, chairs: "left-right" });
     expect(one.get("r")).toMatchObject({ rect: { x: 2, y: 10, w: 1, h: 1 }, chairs: "left-right" });
     const two = byId(2);
-    expect(two.get("v")).toMatchObject({ rect: { x: 8, y: 4, w: 1, h: 2 }, layout: { rotation: 90 }, chairs: "left-right" });
-    expect(two.get("h")).toMatchObject({ rect: { x: 5, y: 4, w: 2, h: 1 }, layout: { rotation: 0 }, chairs: "top-bottom" });
+    expect(two.get("v")).toMatchObject({ rect: { x: 8, y: 4, w: 1, h: 2 }, layout: { rotation: 90, floor: 0 }, chairs: "left-right" });
+    expect(two.get("h")).toMatchObject({ rect: { x: 5, y: 4, w: 2, h: 1 }, layout: { rotation: 0, floor: 0 }, chairs: "top-bottom" });
   });
 
   it("the door follows its edge clockwise: east → south → west → north", () => {
@@ -626,5 +640,186 @@ describe("camera", () => {
     expect(loadCameraTurns(broken, "r1")).toBe(0);
     expect(() => saveCameraTurns(broken, "r1", 2)).not.toThrow();
     expect(loadCameraTurns(undefined, "r1")).toBe(0);
+  });
+});
+
+describe("floors", () => {
+  const flags = { pickupEnabled: true, deliveryEnabled: true, kitchenTargetMinutes: 20 };
+  const TWO: FloorPlan = {
+    ...PLAN,
+    floors: [
+      { name: "Primer piso", terrain: null, decor: [] },
+      { name: "Terraza", terrain: null, decor: [{ kind: "umbrella", x: 1, y: 1 }] },
+    ],
+  };
+  const UP = { id: "t2", label: "Terraza 1", active: true, layout: { x: 2, y: 2, shape: "round" as const, seats: 4 as const, rotation: 0 as const, floor: 1 } };
+  const layout = liveLayout(view(TWO, [TABLE_A, UP]), flags);
+
+  it("the whole layout keeps the tables of every floor; each floor draws only its own", () => {
+    expect(layout.tables.map((t) => t.id)).toEqual(["t1", "t2"]);
+    expect(layout).toMatchObject({ floor: 0, ground: true });
+    const ground = floorLayout(layout, 0);
+    expect(ground.tables.map((t) => t.id)).toEqual(["t1"]);
+    expect(ground).toMatchObject({ floor: 0, ground: true, dining: true, pickup: true, delivery: true });
+    const terrace = floorLayout(layout, 1);
+    expect(terrace.tables.map((t) => t.id)).toEqual(["t2"]);
+    expect(terrace).toMatchObject({ floor: 1, ground: false, dining: true, pickup: false, delivery: false });
+    // The counter and the door belong to the first floor.
+    expect(terrace.plan).toMatchObject({ pickup: null, door: null });
+    // A floor removed meanwhile falls back to the last one.
+    expect(floorLayout(layout, 7).floor).toBe(1);
+    expect(floorLayout(liveLayout(view(PLAN, [TABLE_A]), flags), 1).floor).toBe(0);
+  });
+
+  it("an upper floor without tables has no dining room, and a table on an unknown floor shows on the first", () => {
+    expect(floorLayout(liveLayout(view(TWO, [TABLE_A]), flags), 1).dining).toBe(false);
+    const lost = { ...UP, layout: { ...UP.layout, floor: 5 } };
+    expect(liveLayout(view(TWO, [lost]), flags).tables[0]!.layout.floor).toBe(0);
+  });
+
+  it("picking the floor commutes with the camera", () => {
+    for (const turns of [1, 2, 3]) {
+      expect(floorLayout(rotateLayout(layout, turns), 1)).toEqual(rotateLayout(floorLayout(layout, 1), turns));
+    }
+  });
+
+  it("counts per floor the tables calling the waiter or asking for the bill", () => {
+    const sessions = [
+      session({ id: "s1", tableId: "t1", billRequestedAt: ago(2) }),
+      session({ id: "s2", tableId: "t2", waiterCalledAt: ago(1), billRequestedAt: ago(3) }),
+    ];
+    const model = liveModel({ view: view(TWO, [TABLE_A, UP]), restaurant: flags, orders: [], sessions, now: NOW });
+    expect(model.floors).toEqual([
+      { index: 0, name: "Primer piso", tables: 1, waiter: 0, bill: 1, attention: 1 },
+      { index: 1, name: "Terraza", tables: 1, waiter: 1, bill: 1, attention: 1 },
+    ]);
+    expect(floorTabs(layout, new Map()).map((t) => t.attention)).toEqual([0, 0]);
+  });
+
+  it("remembers the floor per restaurant; unreadable values give 0 and the caller clamps", () => {
+    const data = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => data.get(key) ?? null,
+      setItem: (key: string, value: string) => void data.set(key, value),
+      removeItem: (key: string) => void data.delete(key),
+    };
+    expect(loadLiveFloor(storage, "r1")).toBe(0);
+    saveLiveFloor(storage, "r1", 2);
+    expect(data.get("mm:live-floor:r1")).toBe("2");
+    expect(loadLiveFloor(storage, "r1")).toBe(2);
+    expect(clampFloor(loadLiveFloor(storage, "r1"), 2)).toBe(1);
+    for (const junk of ["-1", "1.5", "abc"]) {
+      data.set("mm:live-floor:r1", junk);
+      expect(loadLiveFloor(storage, "r1")).toBe(0);
+    }
+    const broken = {
+      getItem: (): string | null => {
+        throw new Error("denied");
+      },
+      setItem: () => {
+        throw new Error("full");
+      },
+      removeItem: () => undefined,
+    };
+    expect(loadLiveFloor(broken, "r1")).toBe(0);
+    expect(() => saveLiveFloor(broken, "r1", 1)).not.toThrow();
+    expect(clampFloor(Number.NaN, 3)).toBe(0);
+    expect(clampFloor(2, 3)).toBe(2);
+  });
+});
+
+describe("terrain", () => {
+  // 4 × 3: a void corner at the top left, a wall run on the middle row, wood and tile at the bottom.
+  const TERRAIN = "__.." + "###t" + "wwt.";
+
+  it("draws runs of equal cells per row and skips the cells outside the building", () => {
+    expect(terrainRuns(TERRAIN, 4, 3)).toEqual([
+      { x: 2, y: 0, w: 2, material: "floor" },
+      { x: 0, y: 1, w: 3, material: "wall" },
+      { x: 3, y: 1, w: 1, material: "tile" },
+      { x: 0, y: 2, w: 2, material: "wood" },
+      { x: 2, y: 2, w: 1, material: "tile" },
+      { x: 3, y: 2, w: 1, material: "floor" },
+    ]);
+    expect(terrainRuns(null, 3, 2)).toEqual([
+      { x: 0, y: 0, w: 3, material: "floor" },
+      { x: 0, y: 1, w: 3, material: "floor" },
+    ]);
+    expect(buildingRuns(TERRAIN, 4, 3)).toEqual([
+      { x: 2, y: 0, w: 2 },
+      { x: 0, y: 1, w: 4 },
+      { x: 0, y: 2, w: 4 },
+    ]);
+    expect(hasVoid(TERRAIN)).toBe(true);
+    expect(hasVoid(null)).toBe(false);
+    expect(hasVoid("ww##")).toBe(false);
+  });
+
+  it("raises wall runs, leaving the door's cell open", () => {
+    expect(wallRuns(TERRAIN, 4, 3)).toEqual([{ x: 0, y: 1, w: 3 }]);
+    expect(wallRuns(TERRAIN, 4, 3, { x: 1, y: 1 })).toEqual([
+      { x: 0, y: 1, w: 1 },
+      { x: 2, y: 1, w: 1 },
+    ]);
+    expect(wallRuns(TERRAIN, 4, 3, { x: 0, y: 1 })).toEqual([{ x: 1, y: 1, w: 2 }]);
+    expect(wallRuns(null, 4, 3)).toEqual([]);
+  });
+
+  it("outlines the building where it meets void cells (not the grid's own edges)", () => {
+    const edges = voidEdges(TERRAIN, 4, 3);
+    expect(edges).toEqual([
+      { side: "north", x: 0, y: 1, length: 2 },
+      { side: "west", x: 2, y: 0, length: 1 },
+    ]);
+    expect(voidEdgeRect(edges[0]!)).toEqual({ x: 0, y: 0.9, w: 2, h: 0.1 });
+    expect(voidEdgeRect(edges[1]!)).toEqual({ x: 1.9, y: 0, w: 0.1, h: 1 });
+    expect(voidEdges(null, 4, 3)).toEqual([]);
+    // A curb sorts after what is behind it and before the table standing on its cell.
+    expect(paintOrder([{ x: 0, y: 1, w: 1, h: 1 }, voidEdgeRect(edges[0]!)], (r) => r)[0]).toEqual(voidEdgeRect(edges[0]!));
+  });
+
+  it("walls, void cells and decorations are taken: no plants, «SALÓN» or name there", () => {
+    const plan: FloorPlan = {
+      cols: 6,
+      rows: 4,
+      kitchen: { x: 2, y: 0, w: 2, h: 2 },
+      pickup: null,
+      door: null,
+      floors: [{ name: "Primer piso", terrain: "_....." + "......" + "......" + ".....#", decor: [{ kind: "plant", x: 0, y: 3 }] }],
+    };
+    const taken = takenCells(plan, []);
+    expect(["0,0", "5,3", "0,3", "2,0"].every((key) => taken.has(key))).toBe(true);
+    expect(taken.has("1,1")).toBe(false);
+    // The owner decorated this floor: the scene adds no plants of its own.
+    expect(freeCorners(plan, [])).toEqual([]);
+    expect(freeCorners({ ...plan, floors: [{ ...plan.floors[0]!, decor: [] }] }, [])).toEqual([{ x: 5, y: 0 }, { x: 0, y: 3 }]);
+    // No back wall over the void corner: the name starts after it.
+    expect(nameSpot({ ...plan, kitchen: { x: 0, y: 2, w: 2, h: 2 } })).toEqual({ wall: "north", start: 1, length: 5 });
+    // On an upper floor the kitchen cells are free.
+    const upper = { ...plan, floors: [...plan.floors, { name: "Terraza", terrain: null, decor: [] }] };
+    expect(takenCells(upper, [], 1).has("2,0")).toBe(false);
+  });
+
+  it("turns the terrain and the decorations with the camera, and four turns give them back", () => {
+    const plan: FloorPlan = {
+      ...PLAN,
+      floors: [
+        { name: "Primer piso", terrain: Array.from({ length: 14 * 9 }, (_, i) => "._w#tcsg"[i % 8]).join(""), decor: [{ kind: "lamp", x: 6, y: 7 }] },
+        { name: "Terraza", terrain: null, decor: [{ kind: "tree", x: 13, y: 0 }] },
+      ],
+    };
+    const level = plan.floors[0]!;
+    const one = rotatePlanView(plan, [], 1).plan;
+    expect(one.floors[0]!.terrain).toHaveLength(14 * 9);
+    for (const cell of [{ x: 0, y: 0 }, { x: 13, y: 8 }, { x: 5, y: 3 }, { x: 13, y: 0 }]) {
+      expect(materialAt(one.floors[0]!.terrain, one.cols, turnCell(cell, plan.rows))).toBe(materialAt(level.terrain, plan.cols, cell));
+    }
+    expect(one.floors[0]!.decor).toEqual([{ kind: "lamp", ...turnCell({ x: 6, y: 7 }, 9) }]);
+    expect(one.floors[1]).toEqual({ name: "Terraza", terrain: null, decor: [{ kind: "tree", x: 8, y: 13 }] });
+    expect(rotatePlanView(plan, [], 4).plan).toEqual(plan);
+    expect(turnTerrain(null, 4, 3)).toBeNull();
+    // 2 × 1 "ab" → 1 × 2 with "a" on top (the first row becomes the last column).
+    expect(turnTerrain("w#", 2, 1)).toBe("w#");
+    expect(turnTerrain("wt" + "#g", 2, 2)).toBe("#w" + "gt");
   });
 });
