@@ -31,6 +31,7 @@ import {
   actionStep,
   availableChannelFilters,
   type BOARD_COLUMNS,
+  type BoardStatus,
   boardColumns,
   boardTitle,
   canAssignRider,
@@ -40,7 +41,9 @@ import {
   canWorkOrders,
   dayTotals,
   destinationLabel,
+  FOCUS_ORDER_PARAM,
   filterByChannel,
+  focusOrderPlace,
   groupByColumn,
   handOverStatus,
   isDroppedStatus,
@@ -64,7 +67,7 @@ import { canSeePrintJobs, jobFailedMessage, kitchenPrintTarget, type PrintBanner
 import { cn } from "@/lib/utils";
 import { useRestaurant } from "../restaurant-context";
 import { useRestaurantRealtime } from "../restaurant-realtime";
-import { OrderCard, PaymentBadge } from "./order-card";
+import { OrderCard, orderCardId, PaymentBadge } from "./order-card";
 import { RiderMapDialog } from "./rider-map-dialog";
 import { HandOverDialog, PaymentDialog, ReadyTimeDialog, ReasonDialog, RiderDialog } from "./order-dialogs";
 import { OrderEditDialog } from "./order-edit-dialog";
@@ -136,6 +139,72 @@ function useOrderList(restaurantId: string, scope: "active" | "today", enabled: 
   return { orders, error, refetch, apply };
 }
 
+/** How long the order opened from En vivo stays highlighted. */
+const FOCUS_HIGHLIGHT_MS = 4000;
+
+/**
+ * Opens «Pedidos» on the order named in `?pedido=<orderId>` (the «Ver en Pedidos» buttons of En vivo): shows it on
+ * the board or, when it is already finished, in «Hoy»; clears the channel filter that could hide it, scrolls to
+ * its card, focuses it and highlights it for a few seconds. The parameter is then removed from the URL, so a
+ * reload does not jump again. Read from `window.location` (not `useSearchParams`, which needs a Suspense
+ * boundary for the static shell).
+ * @returns The id of the highlighted order, or null.
+ */
+function useFocusedOrder(
+  active: OrderView[] | null,
+  today: OrderView[] | null,
+  setTab: (tab: "board" | "today") => void,
+  setChannel: (channel: ChannelFilter) => void,
+): string | null {
+  const [target, setTarget] = useState<string | null>(null);
+  const [highlighted, setHighlighted] = useState<string | null>(null);
+
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const id = url.searchParams.get(FOCUS_ORDER_PARAM);
+    if (!id) return;
+    setTarget(id);
+    url.searchParams.delete(FOCUS_ORDER_PARAM);
+    window.history.replaceState(window.history.state, "", url);
+  }, []);
+
+  const place = target ? focusOrderPlace(target, active, today) : null;
+  useEffect(() => {
+    if (!target || !place) return;
+    if (place === "missing") {
+      toast.info("Ese pedido ya no está en los pedidos de hoy.");
+      setTarget(null);
+      return;
+    }
+    // «Hoy» loads only once its tab is open: switching to it is what makes `today` arrive.
+    setTab(place);
+    setChannel("all");
+    setHighlighted(target);
+    setTarget(null);
+  }, [target, place, setTab, setChannel]);
+  // While only the board is loaded and the order is not on it, open «Hoy» so it loads.
+  useEffect(() => {
+    if (target && active && !today && !active.some((order) => order.id === target)) setTab("today");
+  }, [target, active, today, setTab]);
+
+  useEffect(() => {
+    if (!highlighted) return;
+    // After the tab switch has rendered the card.
+    const frame = requestAnimationFrame(() => {
+      const element = document.getElementById(orderCardId(highlighted));
+      element?.scrollIntoView({ behavior: "smooth", block: "center" });
+      element?.focus({ preventScroll: true });
+    });
+    const timer = setTimeout(() => setHighlighted(null), FOCUS_HIGHLIGHT_MS);
+    return () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(timer);
+    };
+  }, [highlighted]);
+
+  return highlighted;
+}
+
 function OrdersBoard() {
   const { restaurant, setRestaurant, reload: reloadRestaurant } = useRestaurant();
   const { socket, status: live, syncCount } = useRestaurantRealtime();
@@ -166,6 +235,7 @@ function OrdersBoard() {
   const [handingOver, setHandingOver] = useState<OrderView | null>(null);
   const [handOverPending, setHandOverPending] = useState<PaymentMethod | "handover" | null>(null);
   const [channel, setChannel] = useState<ChannelFilter>("all");
+  const focus = useFocusedOrder(active.orders, today.orders, setTab, setChannel);
   const [savingAccepting, setSavingAccepting] = useState(false);
   const switchId = useId();
   const receipts = useReceiptDownload(socket);
@@ -547,6 +617,7 @@ function OrdersBoard() {
                 printBusy={sendingPrint.has(order.id)}
                 onEdit={canModifyOrder(order, roles) ? () => setEditing(order) : undefined}
                 fresh={fresh.has(order.id)}
+                highlighted={focus === order.id}
                 busy={busy[order.id] ?? null}
                 onAction={(to) => onAction(order, to)}
                 onPay={() => setPaying(order)}
@@ -568,6 +639,7 @@ function OrdersBoard() {
             busy={busy}
             onRetry={() => void today.refetch()}
             onPay={setPaying}
+            highlighted={focus}
           />
         </TabsContent>
       </Tabs>
@@ -767,6 +839,101 @@ function ListState({ error, onRetry, columns }: { error: unknown; onRetry(): voi
   );
 }
 
+/** DOM id of a board column, the target of its status pill. */
+function columnId(status: BoardStatus): string {
+  return `board-column-${status}`;
+}
+
+/**
+ * Phones only (the columns are stacked there, one under the other): a sticky row of pills, one per status
+ * with its count, that scrolls to that column; the pill of the column on screen is marked. Empty statuses are
+ * shown disabled (their columns are hidden on phones), so the row keeps its order.
+ */
+function StatusPills({ columns }: { columns: ReadonlyArray<{ status: BoardStatus; title: string; count: number }> }) {
+  const [current, setCurrent] = useState<BoardStatus | null>(null);
+  const shown = columns.filter((column) => column.count > 0).map((column) => column.status).join(",");
+
+  useEffect(() => {
+    const sections = shown
+      .split(",")
+      .flatMap((status) => document.getElementById(columnId(status as BoardStatus)) ?? []);
+    if (sections.length === 0) return;
+    const last = sections.at(-1)!;
+    const statusOf = (element: Element) => element.id.replace("board-column-", "") as BoardStatus;
+    // The last column may be too short to ever reach the band below: at the bottom of the page it is the one shown.
+    const atBottom = () => window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 4;
+    // A column counts as "on screen" while it crosses the band just below the header and the pills.
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (atBottom()) return setCurrent(statusOf(last));
+        const visible = entries.find((entry) => entry.isIntersecting);
+        if (visible) setCurrent(statusOf(visible.target));
+      },
+      { rootMargin: "-130px 0px -55% 0px" },
+    );
+    for (const section of sections) observer.observe(section);
+    const onScroll = () => {
+      if (atBottom()) setCurrent(statusOf(last));
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("scroll", onScroll);
+    };
+  }, [shown]);
+
+  // Keep the marked pill inside the row while the page scrolls by hand (the row is narrower than the pills).
+  const bar = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const pill = current && bar.current?.querySelector<HTMLElement>(`[data-status="${current}"]`);
+    if (!pill || !bar.current) return;
+    const row = bar.current;
+    // The row is sticky, so it is the pills' offsetParent: offsetLeft is already relative to it.
+    const left = pill.offsetLeft;
+    if (left < row.scrollLeft || left + pill.offsetWidth > row.scrollLeft + row.clientWidth) {
+      row.scrollTo({ left: left - 16, behavior: "smooth" });
+    }
+  }, [current]);
+
+  return (
+    <nav
+      ref={bar}
+      aria-label="Ir a un estado"
+      className="sticky top-[57px] z-30 -my-1 flex gap-2 overflow-x-auto bg-background/95 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/80 md:hidden"
+      data-testid="status-pills"
+    >
+      {columns.map((column) => (
+        <button
+          key={column.status}
+          type="button"
+          data-status={column.status}
+          disabled={column.count === 0}
+          aria-current={current === column.status ? "true" : undefined}
+          onClick={() => {
+            setCurrent(column.status);
+            document.getElementById(columnId(column.status))?.scrollIntoView({ behavior: "smooth", block: "start" });
+          }}
+          className={cn(
+            "flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium whitespace-nowrap transition-colors",
+            current === column.status ? "border-primary bg-primary text-primary-foreground" : "border-border bg-card text-foreground",
+            "disabled:opacity-40",
+          )}
+        >
+          {column.title}
+          <span
+            className={cn(
+              "rounded-full px-1.5 text-xs tabular-nums",
+              current === column.status ? "bg-primary-foreground/20" : "bg-muted text-muted-foreground",
+            )}
+          >
+            {column.count}
+          </span>
+        </button>
+      ))}
+    </nav>
+  );
+}
+
 function BoardColumns({
   columns: shownColumns,
   orders,
@@ -788,6 +955,9 @@ function BoardColumns({
   return (
     <div className="flex flex-col gap-3">
       {error ? <FormError error={error} /> : null}
+      {orders.length > 0 ? (
+        <StatusPills columns={shownColumns.map((column) => ({ ...column, count: columns[column.status].length }))} />
+      ) : null}
       {orders.length === 0 ? (
         <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed bg-card px-6 py-10 text-center text-sm text-muted-foreground">
           <InboxIcon className="size-8" aria-hidden />
@@ -805,8 +975,10 @@ function BoardColumns({
           return (
             <section
               key={column.status}
+              id={columnId(column.status)}
               aria-label={column.title}
-              className={cn("flex flex-col gap-3", list.length === 0 && "hidden md:flex")}
+              // Below the sticky header and the status pills when a pill scrolls here.
+              className={cn("flex scroll-mt-32 flex-col gap-3", list.length === 0 && "hidden md:flex")}
               data-testid={`column-${column.status}`}
             >
               <h2 className="flex items-center justify-between text-sm font-semibold tracking-wide text-muted-foreground uppercase">
@@ -830,6 +1002,7 @@ function TodayList({
   busy,
   onRetry,
   onPay,
+  highlighted,
 }: {
   /** Board columns (only for the loading skeleton). */
   columns: number;
@@ -839,6 +1012,8 @@ function TodayList({
   busy: Record<string, Busy>;
   onRetry(): void;
   onPay(order: OrderView): void;
+  /** Order opened from En vivo: its row is highlighted. */
+  highlighted: string | null;
 }) {
   if (!orders) return <ListState error={error} onRetry={onRetry} columns={columns} />;
   const sorted = sortNewestFirst(orders);
@@ -863,7 +1038,16 @@ function TodayList({
       ) : (
         <ul className="flex flex-col divide-y rounded-xl bg-card ring-1 ring-foreground/10" aria-label="Pedidos de hoy">
           {sorted.map((order) => (
-            <li key={order.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3" data-testid="today-row">
+            <li
+              key={order.id}
+              id={orderCardId(order.id)}
+              tabIndex={-1}
+              className={cn(
+                "flex scroll-mt-24 flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 outline-none transition-colors",
+                highlighted === order.id && "bg-primary/10 ring-2 ring-primary ring-inset",
+              )}
+              data-testid="today-row"
+            >
               <span className="w-14 text-xl font-black tabular-nums">#{order.ticketNumber}</span>
               <span className="flex min-w-0 flex-1 flex-col">
                 <span className="text-sm font-medium">

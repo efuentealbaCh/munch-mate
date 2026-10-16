@@ -62,6 +62,8 @@ interface OrderCardProps {
   onEdit?(): void;
   /** Just arrived: highlighted for a few seconds. */
   fresh: boolean;
+  /** Opened from En vivo («Ver en Pedidos»): highlighted and focused for a few seconds. */
+  highlighted?: boolean;
   /** A request for this order is in flight (its buttons are disabled). */
   busy: OrderStatus | "payment" | "rider" | null;
   onAction(to: OrderStatus): void;
@@ -74,6 +76,11 @@ interface OrderCardProps {
   onAssignRider(): void;
   /** Delivery on its way with a rider, and the base map is available: "Seguir al repartidor". */
   onTrackRider?(): void;
+}
+
+/** DOM id of an order's card on the board (and of its row in «Hoy»), to scroll to and focus it. */
+export function orderCardId(orderId: string): string {
+  return `order-card-${orderId}`;
 }
 
 /**
@@ -90,6 +97,7 @@ export function OrderCard({
   printBusy = false,
   onEdit,
   fresh,
+  highlighted = false,
   busy,
   onAction,
   onPay,
@@ -106,10 +114,14 @@ export function OrderCard({
 
   return (
     <article
+      id={orderCardId(order.id)}
+      // Focusable by script only (the board scrolls to it), not a tab stop.
+      tabIndex={-1}
       aria-labelledby={`order-${order.id}`}
       className={cn(
-        "flex flex-col gap-3 rounded-xl bg-card p-4 ring-1 ring-foreground/10 transition-shadow",
+        "flex scroll-mt-24 flex-col gap-3 rounded-xl bg-card p-4 ring-1 ring-foreground/10 transition-shadow outline-none",
         fresh && "animate-in ring-2 ring-primary fade-in-0 slide-in-from-top-2 duration-500",
+        highlighted && "shadow-lg ring-4 ring-primary",
       )}
       data-testid="order-card"
       data-ticket={order.ticketNumber}

@@ -1,5 +1,9 @@
 import {
   type FloorCell,
+  type FloorDecor,
+  type FloorLevel,
+  type FloorMaterial,
+  FLOOR_MATERIALS,
   type FloorPlan,
   type FloorPlanView,
   type FloorRect,
@@ -12,7 +16,7 @@ import {
   type TableRotation,
   type TableSessionView,
 } from "@app/types";
-import { tableFootprint } from "@app/utils";
+import { defaultFloors, isBlockedMaterial, materialAt, tableFootprint } from "@app/utils";
 import type { KeyValueStorage } from "./cart";
 import { shortTableLabel, tableChairs } from "./floor-editor";
 import { formatPrice } from "./money";
@@ -197,6 +201,13 @@ export interface LiveLayout {
   /** Delivery door and riders mini-map: `deliveryEnabled` and (with a plan) a door on it. */
   delivery: boolean;
   tables: PlacedTable[];
+  /**
+   * Index in `plan.floors` of the floor drawn. The layout of the whole restaurant (`liveLayout`) has the tables
+   * of every floor and says 0; `floorLayout` narrows it to one floor for the scene.
+   */
+  floor: number;
+  /** Whether the floor drawn holds the kitchen, the pickup counter and the door (the first one). */
+  ground: boolean;
 }
 
 /**
@@ -212,6 +223,7 @@ export function defaultPlan(pickup: boolean, delivery: boolean): FloorPlan {
     kitchen: { x: 0, y: 0, w: 5, h: 4 },
     pickup: pickup ? { x: 0, y: 4, w: 5, h: 3 } : null,
     door: delivery ? { x: 7, y: rows - 1 } : null,
+    floors: defaultFloors(),
   };
 }
 
@@ -228,22 +240,265 @@ export function liveLayout(
   const base = own ?? defaultPlan(restaurant.pickupEnabled, restaurant.deliveryEnabled);
   const pickup = restaurant.pickupEnabled && base.pickup !== null;
   const delivery = restaurant.deliveryEnabled && base.door !== null;
+  const floors = base.floors?.length ? base.floors : defaultFloors();
   const tables: PlacedTable[] =
     own && view
-      ? view.tables.flatMap((table) =>
-          table.active && table.layout
-            ? [{ id: table.id, label: table.label, layout: table.layout, rect: tableFootprint(table.layout), chairs: tableChairs(table.layout).sides }]
-            : [],
-        )
+      ? view.tables.flatMap((table) => {
+          if (!table.active || !table.layout) return [];
+          // A table on a floor the plan does not have (the api never saves one) is shown on the first floor.
+          const { floor } = table.layout;
+          const layout = Number.isInteger(floor) && floor >= 0 && floor < floors.length ? table.layout : { ...table.layout, floor: 0 };
+          return [{ id: table.id, label: table.label, layout, rect: tableFootprint(layout), chairs: tableChairs(layout).sides }];
+        })
       : [];
   return {
-    plan: { ...base, pickup: pickup ? base.pickup : null, door: delivery ? base.door : null },
+    plan: { ...base, pickup: pickup ? base.pickup : null, door: delivery ? base.door : null, floors },
     hasPlan: own !== null,
     dining: tables.length > 0,
     pickup,
     delivery,
     tables,
+    floor: 0,
+    ground: true,
   };
+}
+
+// ── Floors ──────────────────────────────────────────────────────────────────
+
+/** A floor index made valid for a plan with `count` floors: unreadable → 0, past the last one → the last one. */
+export function clampFloor(floor: number, count: number): number {
+  if (!Number.isInteger(floor) || floor < 0 || count < 1) return 0;
+  return Math.min(floor, count - 1);
+}
+
+/**
+ * The layout of one floor, for the scene: only its tables, and the counter and the door only on the first floor
+ * (the kitchen too: see `ground`). Its `dining` says whether that floor has tables. It commutes with
+ * {@link rotateLayout}, so the scene may turn the whole layout once and then pick the floor.
+ */
+export function floorLayout(layout: LiveLayout, floor: number): LiveLayout {
+  const index = clampFloor(floor, layout.plan.floors.length);
+  const ground = index === 0;
+  const tables = layout.tables.filter((table) => table.layout.floor === index);
+  return {
+    ...layout,
+    plan: ground ? layout.plan : { ...layout.plan, pickup: null, door: null },
+    dining: tables.length > 0,
+    pickup: ground && layout.pickup,
+    delivery: ground && layout.delivery,
+    tables,
+    floor: index,
+    ground,
+  };
+}
+
+/** One tab of the floor selector. */
+export interface FloorTab {
+  index: number;
+  name: string;
+  /** Active tables placed on it. */
+  tables: number;
+  /** Its tables calling the waiter, and asking for the bill (a table doing both counts in both). */
+  waiter: number;
+  bill: number;
+  /** Its tables needing someone (calling the waiter or asking for the bill), each counted once: the tab's badge. */
+  attention: number;
+}
+
+/**
+ * The tabs of the floor selector, with the tables that need someone on each floor: a call on a floor that is not
+ * on screen must not be missed.
+ */
+export function floorTabs(layout: LiveLayout, tableStates: ReadonlyMap<string, TableStatus>): FloorTab[] {
+  const tabs: FloorTab[] = layout.plan.floors.map((level, index) => ({ index, name: level.name, tables: 0, waiter: 0, bill: 0, attention: 0 }));
+  for (const table of layout.tables) {
+    const tab = tabs[table.layout.floor];
+    if (!tab) continue;
+    tab.tables += 1;
+    const state = tableStates.get(table.id);
+    if (state?.waiter) tab.waiter += 1;
+    if (state?.bill) tab.bill += 1;
+    if (state?.waiter || state?.bill) tab.attention += 1;
+  }
+  return tabs;
+}
+
+const FLOOR_STORAGE_KEY = "mm:live-floor";
+
+/**
+ * The floor this device last looked at for this restaurant (0 when unknown or unreadable). Not clamped: the plan
+ * may change meanwhile, so callers clamp it with {@link clampFloor} against the floors they have.
+ */
+export function loadLiveFloor(storage: KeyValueStorage | undefined, restaurantId: string): number {
+  try {
+    const raw = storage?.getItem(`${FLOOR_STORAGE_KEY}:${restaurantId}`);
+    const value = raw ? Number(raw) : 0;
+    return Number.isInteger(value) && value >= 0 ? value : 0;
+  } catch {
+    return 0;
+  }
+}
+
+export function saveLiveFloor(storage: KeyValueStorage | undefined, restaurantId: string, floor: number): void {
+  try {
+    storage?.setItem(`${FLOOR_STORAGE_KEY}:${restaurantId}`, String(floor));
+  } catch {
+    // Private mode or full storage: the choice lasts until the page closes.
+  }
+}
+
+// ── Terrain ─────────────────────────────────────────────────────────────────
+
+/** A run of cells of one row (`x` to `x + w − 1` on row `y`). */
+export interface CellRun {
+  x: number;
+  y: number;
+  w: number;
+}
+
+/** A run of cells of the same material (void cells never form runs: nothing is drawn outside the building). */
+export interface TerrainRun extends CellRun {
+  material: Exclude<FloorMaterial, "void">;
+}
+
+/**
+ * The cells of a floor as runs of the same material along each row, back to front: few shapes even on a 24 × 16
+ * plan. Void cells are skipped.
+ */
+export function terrainRuns(terrain: string | null, cols: number, rows: number): TerrainRun[] {
+  const runs: TerrainRun[] = [];
+  for (let y = 0; y < rows; y++) {
+    let current: TerrainRun | null = null;
+    for (let x = 0; x < cols; x++) {
+      const material = materialAt(terrain, cols, { x, y });
+      if (material === "void") {
+        current = null;
+      } else if (current && current.material === material) {
+        current.w += 1;
+      } else {
+        current = { x, y, w: 1, material };
+        runs.push(current);
+      }
+    }
+  }
+  return runs;
+}
+
+/** Runs of cells inside the building (any material but void) per row: where the slab under the floor goes. */
+export function buildingRuns(terrain: string | null, cols: number, rows: number): CellRun[] {
+  const runs: CellRun[] = [];
+  for (let y = 0; y < rows; y++) {
+    let current: CellRun | null = null;
+    for (let x = 0; x < cols; x++) {
+      if (materialAt(terrain, cols, { x, y }) === "void") {
+        current = null;
+      } else if (current) {
+        current.w += 1;
+      } else {
+        current = { x, y, w: 1 };
+        runs.push(current);
+      }
+    }
+  }
+  return runs;
+}
+
+/** Whether a floor has cells outside the building (then its slab is drawn row by row instead of as one block). */
+export function hasVoid(terrain: string | null): boolean {
+  return terrain !== null && terrain.includes(FLOOR_MATERIALS.void);
+}
+
+/** Whether a cell of a floor is inside the building (not void). */
+export function isInside(terrain: string | null, cols: number, cell: FloorCell): boolean {
+  return materialAt(terrain, cols, cell) !== "void";
+}
+
+/**
+ * Wall cells of a floor as runs along each row (each run is drawn as one raised block). The door's cell is left
+ * out: a door on a wall opens it.
+ */
+export function wallRuns(terrain: string | null, cols: number, rows: number, door: FloorCell | null = null): CellRun[] {
+  return terrainRuns(terrain, cols, rows)
+    .filter((run) => run.material === "wall")
+    .flatMap(({ x, y, w }) => {
+      if (!door || door.y !== y || door.x < x || door.x >= x + w) return [{ x, y, w }];
+      return [
+        { x, y, w: door.x - x },
+        { x: door.x + 1, y, w: x + w - door.x - 1 },
+      ].filter((run) => run.w > 0);
+    });
+}
+
+/** Side of a building cell facing a void cell. */
+export type EdgeSide = "north" | "south" | "west" | "east";
+
+/** A run of edges facing void cells: along x (from `x`) for north/south, along y (from `y`) for west/east. */
+export interface VoidEdge {
+  side: EdgeSide;
+  x: number;
+  y: number;
+  length: number;
+}
+
+const EDGE_SIDES: readonly { side: EdgeSide; dx: number; dy: number }[] = [
+  { side: "north", dx: 0, dy: -1 },
+  { side: "south", dx: 0, dy: 1 },
+  { side: "west", dx: -1, dy: 0 },
+  { side: "east", dx: 1, dy: 0 },
+];
+
+/**
+ * The inner outline of the building: edges between a building cell and a void cell of the grid, merged into runs.
+ * The scene puts a low curb on them so an L-shaped place reads as one building; the grid's own edges keep the
+ * walls of an unpainted plan.
+ */
+export function voidEdges(terrain: string | null, cols: number, rows: number): VoidEdge[] {
+  if (!hasVoid(terrain)) return [];
+  const inGrid = (x: number, y: number) => x >= 0 && y >= 0 && x < cols && y < rows;
+  const edges: VoidEdge[] = [];
+  for (const { side, dx, dy } of EDGE_SIDES) {
+    const alongX = dy !== 0;
+    for (let a = 0; a < (alongX ? rows : cols); a++) {
+      let run: VoidEdge | null = null;
+      for (let b = 0; b < (alongX ? cols : rows); b++) {
+        const x = alongX ? b : a;
+        const y = alongX ? a : b;
+        const edge = isInside(terrain, cols, { x, y }) && inGrid(x + dx, y + dy) && !isInside(terrain, cols, { x: x + dx, y: y + dy });
+        if (!edge) {
+          run = null;
+        } else if (run) {
+          run.length += 1;
+        } else {
+          run = { side, x, y, length: 1 };
+          edges.push(run);
+        }
+      }
+    }
+  }
+  return edges;
+}
+
+/**
+ * The thin rectangle a curb is painted by (see {@link paintOrder}): just outside its cells, on the void side, so
+ * it goes after what stands behind it and before what stands on its own cells (void cells hold nothing).
+ */
+export function voidEdgeRect(edge: VoidEdge): GridRect {
+  const t = 0.1;
+  switch (edge.side) {
+    case "north":
+      return { x: edge.x, y: edge.y - t, w: edge.length, h: t };
+    case "south":
+      return { x: edge.x, y: edge.y + 1, w: edge.length, h: t };
+    case "west":
+      return { x: edge.x - t, y: edge.y, w: t, h: edge.length };
+    default:
+      return { x: edge.x + 1, y: edge.y, w: t, h: edge.length };
+  }
+}
+
+/** The floor drawn by a layout (its terrain and decorations); a plain floor when the plan has none. */
+export function drawnLevel(layout: Pick<LiveLayout, "plan" | "floor">): FloorLevel {
+  return layout.plan.floors[layout.floor] ?? { name: "", terrain: null, decor: [] };
 }
 
 // ── Camera ──────────────────────────────────────────────────────────────────
@@ -280,10 +535,28 @@ export function turnRect(rect: GridRect, rows: number): GridRect {
   return { x: rows - rect.y - rect.h, y: rect.x, w: rect.h, h: rect.w };
 }
 
+/** One quarter turn clockwise of a floor's painted terrain (see {@link turnCell}): `cols × rows` becomes `rows × cols`. */
+export function turnTerrain(terrain: string | null, cols: number, rows: number): string | null {
+  if (terrain === null) return null;
+  let turned = "";
+  // Cell (x', y') of the turned grid comes from (y', rows − 1 − x'): the inverse of turnCell.
+  for (let y = 0; y < cols; y++) for (let x = 0; x < rows; x++) turned += FLOOR_MATERIALS[materialAt(terrain, cols, { x: y, y: rows - 1 - x })];
+  return turned;
+}
+
+/** One quarter turn clockwise of a floor: its terrain and its decorations. */
+function turnLevel(level: FloorLevel, cols: number, rows: number): FloorLevel {
+  return {
+    ...level,
+    terrain: turnTerrain(level.terrain, cols, rows),
+    decor: level.decor.map((item): FloorDecor => ({ ...item, ...turnCell(item, rows) })),
+  };
+}
+
 /**
  * The plan as the camera sees it after `quarterTurns` clockwise quarter turns: the grid turned (cols and rows
- * swapped on 90° and 270°), the kitchen, counter and door moved to their turned cells, and each table on its
- * turned footprint. A long table turns from horizontal to vertical and back (its view `rotation` alternates),
+ * swapped on 90° and 270°), the kitchen, counter and door moved to their turned cells, the painted terrain and the
+ * decorations of every floor turned with them, and each table on its turned footprint. A long table turns from horizontal to vertical and back (its view `rotation` alternates),
  * and the sides of its chairs swap. Only the camera turns: the saved plan never changes. Four turns give the
  * same plan back. Then the scene draws it as always: the walls of the x = 0 and y = 0 edges stay at the back.
  */
@@ -298,6 +571,7 @@ export function rotatePlanView<T extends PlacedTable>(plan: FloorPlan, tables: r
         kitchen: turnRect(current.plan.kitchen, rows),
         pickup: current.plan.pickup ? turnRect(current.plan.pickup, rows) : null,
         door: current.plan.door ? turnCell(current.plan.door, rows) : null,
+        floors: current.plan.floors.map((level) => turnLevel(level, current.plan.cols, rows)),
       },
       tables: current.tables.map((table) => {
         const rect = turnRect(table.rect, rows);
@@ -766,6 +1040,8 @@ export const PICKUP_ART = { w: 15, h: 9 } as const;
 export const TABLE_SCALE = 0.78;
 /** Height of the back walls (world units). */
 export const WALL_HEIGHT = 4;
+/** Height of the walls the owner paints inside the plan: low, so the tables behind them stay in sight. */
+export const WALL_BLOCK_HEIGHT = 1.4;
 
 /** Where a drawing goes in the world: its origin and its uniform scale. */
 export interface ArtPlacement {
@@ -804,16 +1080,30 @@ export function doorSide(door: FloorCell, cols: number, rows: number): DoorSide 
   return "north";
 }
 
-/** Cells taken by areas, the door and tables ("x,y" keys). */
-export function takenCells(plan: FloorPlan, tables: readonly { rect: GridRect }[]): Set<string> {
+/**
+ * Cells taken on a floor ("x,y" keys): tables, decorations, walls and cells outside the building, and on the first
+ * floor the areas and the door.
+ */
+export function takenCells(plan: FloorPlan, tables: readonly { rect: GridRect }[], floor = 0): Set<string> {
   const taken = new Set<string>();
   const add = (rect: GridRect) => {
     for (let x = rect.x; x < rect.x + rect.w; x++) for (let y = rect.y; y < rect.y + rect.h; y++) taken.add(`${x},${y}`);
   };
-  add(plan.kitchen);
-  if (plan.pickup) add(plan.pickup);
-  if (plan.door) add({ ...plan.door, w: 1, h: 1 });
+  if (floor === 0) {
+    add(plan.kitchen);
+    if (plan.pickup) add(plan.pickup);
+    if (plan.door) add({ ...plan.door, w: 1, h: 1 });
+  }
   for (const table of tables) add(table.rect);
+  const level = plan.floors[floor];
+  if (level) {
+    for (const item of level.decor) add({ x: item.x, y: item.y, w: 1, h: 1 });
+    if (level.terrain) {
+      for (let y = 0; y < plan.rows; y++) {
+        for (let x = 0; x < plan.cols; x++) if (isBlockedMaterial(materialAt(level.terrain, plan.cols, { x, y }))) taken.add(`${x},${y}`);
+      }
+    }
+  }
   return taken;
 }
 
@@ -834,21 +1124,28 @@ function longestRun(length: number, free: (i: number) => boolean): { start: numb
 
 /**
  * Where the restaurant's name is painted: the longest stretch of a back wall (north = y 0, west = x 0) with no
- * kitchen or counter against it (their drawings are tall). In cells.
+ * kitchen or counter against it (their drawings are tall) and inside the building (no back wall over void cells).
+ * In cells.
  */
-export function nameSpot(plan: FloorPlan): { wall: "north" | "west"; start: number; length: number } | null {
-  const areas = [plan.kitchen, ...(plan.pickup ? [plan.pickup] : [])];
-  const against = (x: number, y: number) => areas.some((a) => x >= a.x && x < a.x + a.w && y >= a.y && y < a.y + a.h);
-  const doorAt = (x: number, y: number) => plan.door !== null && plan.door.x === x && plan.door.y === y;
+export function nameSpot(plan: FloorPlan, floor = 0): { wall: "north" | "west"; start: number; length: number } | null {
+  const areas = floor === 0 ? [plan.kitchen, ...(plan.pickup ? [plan.pickup] : [])] : [];
+  const terrain = plan.floors[floor]?.terrain ?? null;
+  const against = (x: number, y: number) =>
+    areas.some((a) => x >= a.x && x < a.x + a.w && y >= a.y && y < a.y + a.h) || !isInside(terrain, plan.cols, { x, y });
+  const doorAt = (x: number, y: number) => floor === 0 && plan.door !== null && plan.door.x === x && plan.door.y === y;
   const north = longestRun(plan.cols, (x) => !against(x, 0) && !doorAt(x, 0));
   const west = longestRun(plan.rows, (y) => !against(0, y) && !doorAt(0, y));
   if (north.length === 0 && west.length === 0) return null;
   return north.length >= west.length ? { wall: "north", ...north } : { wall: "west", ...west };
 }
 
-/** Free corner cells (for plants), never the door's. */
-export function freeCorners(plan: FloorPlan, tables: readonly { rect: GridRect }[]): FloorCell[] {
-  const taken = takenCells(plan, tables);
+/**
+ * Free corner cells (for plants), never the door's nor a wall or void. None once the owner decorated the floor:
+ * then the scene shows their decoration only.
+ */
+export function freeCorners(plan: FloorPlan, tables: readonly { rect: GridRect }[], floor = 0): FloorCell[] {
+  if ((plan.floors[floor]?.decor.length ?? 0) > 0) return [];
+  const taken = takenCells(plan, tables, floor);
   const corners: FloorCell[] = [
     { x: 0, y: 0 },
     { x: plan.cols - 1, y: 0 },
@@ -859,8 +1156,8 @@ export function freeCorners(plan: FloorPlan, tables: readonly { rect: GridRect }
 }
 
 /** First run of at least 3 free cells on the last row, where «SALÓN» is painted on the floor; null if none. */
-export function diningLabelSpot(plan: FloorPlan, tables: readonly { rect: GridRect }[]): FloorCell | null {
-  const taken = takenCells(plan, tables);
+export function diningLabelSpot(plan: FloorPlan, tables: readonly { rect: GridRect }[], floor = 0): FloorCell | null {
+  const taken = takenCells(plan, tables, floor);
   const y = plan.rows - 1;
   let run = 0;
   for (let x = 0; x < plan.cols; x++) {
@@ -965,6 +1262,8 @@ export interface LiveModel {
   tabs: QueueTab[];
   /** The order the tracking strip follows when nothing is selected. */
   featured: OrderView | null;
+  /** The floors with their tables needing someone (the selector appears with more than one). */
+  floors: FloorTab[];
 }
 
 /** Everything the live view shows, from the plan, the active orders and the open table accounts. */
@@ -1003,5 +1302,6 @@ export function liveModel(input: {
     channels,
     tabs: ["kitchen", ...(hasPickup ? (["pickup"] as const) : []), ...(hasDelivery ? (["delivery"] as const) : [])],
     featured: featuredOrder(orders, hasDelivery),
+    floors: floorTabs(layout, tableStates),
   };
 }

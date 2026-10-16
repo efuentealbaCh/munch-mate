@@ -56,6 +56,8 @@ Descartadas por ahora:
 - El GPS del repartidor se pausa con la pantalla bloqueada, sobre todo en iPhone: la página pide mantenerla encendida.
 - Imprimir desde el navegador abre el diálogo de impresión en cada comanda, salvo que Chrome se abra con `--kiosk-printing` en el dispositivo de cocina.
 - La cuenta de mesa es visible para cualquiera que tenga el QR de esa mesa (no muestra nombres ni teléfonos). Si un QR se filtra, se regenera desde «Mesas».
+- Plano del local: pintar el terreno se hace con el puntero o el dedo (no hay alternativa por teclado), y para pasar una mesa a otro piso hay que quitarla del plano y ubicarla en el otro. En el celular, mientras está activo «Pintar», la grilla no se desplaza al deslizar.
+- El seed nunca reemplaza un plano existente: una Pizzería cargada antes de los pisos no trae la «Terraza» hasta `pnpm demo:reset` (o borrar el plano y repetir `pnpm seed:demo`).
 
 ## Corregido en esta revisión
 

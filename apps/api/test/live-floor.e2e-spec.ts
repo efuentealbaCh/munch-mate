@@ -10,6 +10,7 @@ const PLAN: FloorPlan = {
   kitchen: { x: 0, y: 0, w: 4, h: 3 },
   pickup: { x: 11, y: 0, w: 3, h: 2 },
   door: { x: 13, y: 8 },
+  floors: [{ name: "Primer piso", terrain: null, decor: [] }],
 };
 
 /** Phase 9 end to end: the owner draws the floor plan, the staff read it, and the live indicators. */
@@ -68,10 +69,10 @@ describe("Phase 9: live floor (e2e)", () => {
       const kitchen = await f.staff(s.owner.agent, s.restaurant.id, ["kitchen"]);
       const read = (await kitchen.agent.get(`${s.base}/floor-plan`).expect(200)).body as FloorPlanView;
       expect(read).toEqual(saved);
-      // Sent without rotation (older clients): they come back horizontal.
+      // Sent without rotation or floor (older clients): they come back horizontal, on the first floor.
       expect(read.tables).toEqual([
-        { id: s.table1.id, label: "Mesa 1", active: true, layout: { ...round, rotation: 0 } },
-        { id: s.table2.id, label: "Mesa 2", active: true, layout: { ...long, rotation: 0 } },
+        { id: s.table1.id, label: "Mesa 1", active: true, layout: { ...round, rotation: 0, floor: 0 } },
+        { id: s.table2.id, label: "Mesa 2", active: true, layout: { ...long, rotation: 0, floor: 0 } },
       ]);
 
       // Tables left out of the next save come off the plan.
@@ -82,7 +83,7 @@ describe("Phase 9: live floor (e2e)", () => {
           .expect(200)
       ).body as FloorPlanView;
       expect(moved.plan).toEqual({ ...PLAN, pickup: null, door: null });
-      expect(moved.tables.map((t) => t.layout)).toEqual([null, { ...long, y: 6, rotation: 0 }]);
+      expect(moved.tables.map((t) => t.layout)).toEqual([null, { ...long, y: 6, rotation: 0, floor: 0 }]);
 
       // A null plan deletes the plan and every layout.
       const cleared = (await s.owner.agent.put(`${s.base}/floor-plan`).send({ plan: null, tables: [] }).expect(200))
@@ -99,9 +100,9 @@ describe("Phase 9: live floor (e2e)", () => {
 
       const saved = (await put({ plan: PLAN, tables: [{ tableId: s.table1.id, layout: vertical }] }).expect(200))
         .body as FloorPlanView;
-      expect(saved.tables.map((t) => t.layout)).toEqual([vertical, null]);
+      expect(saved.tables.map((t) => t.layout)).toEqual([{ ...vertical, floor: 0 }, null]);
       const read = (await s.owner.agent.get(`${s.base}/floor-plan`).expect(200)).body as FloorPlanView;
-      expect(read.tables[0]?.layout).toEqual(vertical);
+      expect(read.tables[0]?.layout).toEqual({ ...vertical, floor: 0 });
 
       // Its second cell (13, 5) is where the other table is.
       const crash = await put({
@@ -115,8 +116,61 @@ describe("Phase 9: live floor (e2e)", () => {
       // Only 0 and 90 (caught by the DTO).
       await put({ plan: PLAN, tables: [{ tableId: s.table1.id, layout: { ...vertical, rotation: 45 } }] }).expect(400);
       expect(((await s.owner.agent.get(`${s.base}/floor-plan`).expect(200)).body as FloorPlanView).tables[0]?.layout).toEqual(
-        vertical,
+        { ...vertical, floor: 0 },
       );
+    });
+
+    it("saves floors with painted terrain and decorations, and tables on each floor", async () => {
+      const s = await setup();
+      const put = (body: unknown) => s.owner.agent.put(`${s.base}/floor-plan`).send(body as object);
+      // The first row of the ground floor is wall, the rest plain floor (the door at (13, 8) included).
+      const terrain = "#".repeat(14) + ".".repeat(14 * 8);
+      const floors = [
+        { name: "  Primer   piso ", terrain, decor: [{ kind: "plant", x: 5, y: 1 }] },
+        { name: "Terraza", terrain: null, decor: [{ kind: "umbrella", x: 3, y: 3 }, { kind: "tree", x: 4, y: 3 }] },
+      ];
+      const saved = (
+        await put({
+          plan: { ...PLAN, kitchen: { x: 0, y: 1, w: 4, h: 3 }, pickup: { x: 11, y: 1, w: 3, h: 2 }, floors },
+          tables: [
+            { tableId: s.table1.id, layout: { x: 5, y: 4, shape: "round", seats: 4 } },
+            // The kitchen's cell on the ground floor, but on the terrace.
+            { tableId: s.table2.id, layout: { x: 0, y: 1, shape: "square", seats: 2, floor: 1 } },
+          ],
+        }).expect(200)
+      ).body as FloorPlanView;
+      expect(saved.plan?.floors).toEqual([{ ...floors[0], name: "Primer piso" }, floors[1]]);
+      expect(saved.tables.map((t) => t.layout?.floor)).toEqual([0, 1]);
+      const read = (await s.owner.agent.get(`${s.base}/floor-plan`).expect(200)).body as FloorPlanView;
+      expect(read).toEqual(saved);
+
+      // A plan sent without floors (older clients) gets one plain floor.
+      const older = (await put({ plan: { cols: 14, rows: 9, kitchen: PLAN.kitchen }, tables: [] }).expect(200))
+        .body as FloorPlanView;
+      expect(older.plan?.floors).toEqual(PLAN.floors);
+
+      const problem = async (body: unknown) => ((await put(body).expect(400)).body as { meta?: unknown }).meta;
+      const ground = PLAN.floors[0]!;
+      expect(await problem({ plan: { ...PLAN, floors: [{ ...ground, terrain: "#".repeat(14) }] }, tables: [] })).toEqual({
+        problem: "invalid_terrain",
+      });
+      expect(
+        await problem({
+          plan: { ...PLAN, floors: [{ ...ground, terrain }] },
+          tables: [{ tableId: s.table1.id, layout: { x: 5, y: 0, shape: "round", seats: 4 } }],
+        }),
+      ).toEqual({ problem: "blocked_cell" });
+      expect(
+        await problem({
+          plan: PLAN,
+          tables: [{ tableId: s.table1.id, layout: { x: 5, y: 4, shape: "round", seats: 4, floor: 1 } }],
+        }),
+      ).toEqual({ problem: "unknown_floor" });
+      // Caught by the DTO: unknown material code, unknown decoration, too many floors, blank name.
+      await put({ plan: { ...PLAN, floors: [{ ...ground, terrain: "x".repeat(126) }] }, tables: [] }).expect(400);
+      await put({ plan: { ...PLAN, floors: [{ ...ground, decor: [{ kind: "statue", x: 5, y: 5 }] }] } }).expect(400);
+      await put({ plan: { ...PLAN, floors: Array.from({ length: 5 }, () => ground) }, tables: [] }).expect(400);
+      await put({ plan: { ...PLAN, floors: [{ ...ground, name: "   " }] }, tables: [] }).expect(400);
     });
 
     it("only the owner edits it; riders cannot read it; other tenants get 404", async () => {

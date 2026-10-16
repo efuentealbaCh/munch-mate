@@ -1,5 +1,5 @@
-import type { FloorPlanView, SaveFloorPlanInput, TableLayout } from "@app/types";
-import { FLOOR_PLAN_MESSAGES, floorPlanProblem } from "@app/utils";
+import type { FloorPlan, FloorPlanView, SaveFloorPlanInput, TableLayout } from "@app/types";
+import { defaultFloors, FLOOR_PLAN_MESSAGES, floorPlanProblem } from "@app/utils";
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { InjectConnection } from "@nestjs/mongoose";
 import type { Connection } from "mongoose";
@@ -13,8 +13,8 @@ const notFound = () => new NotFoundException(apiError("RESTAURANT_NOT_FOUND", "R
 
 /**
  * The floor plan of the live view (phase 9): the restaurant's grid with kitchen, pickup counter and delivery
- * door (`restaurants.floorPlan`) plus where each table sits (`tables.layout`). The owner edits it; the staff
- * read it.
+ * door, its floors with painted terrain and decorations (`restaurants.floorPlan`) plus where each table sits
+ * and on which floor (`tables.layout`). The owner edits it; the staff read it.
  */
 @Injectable()
 export class FloorPlanService {
@@ -77,12 +77,21 @@ export class FloorPlanService {
       throw new BadRequestException(apiError("INVALID_FLOOR_PLAN", FLOOR_PLAN_MESSAGES[problem], { problem }));
     }
 
-    // A layout sent without rotation is horizontal: stored as 0 so the views always carry it.
+    // A plan sent without floors has one plain floor; a layout without rotation or floor is horizontal and on
+    // the first floor. Stored complete, so the views always carry them.
+    const plan: FloorPlan | null = input.plan && { ...input.plan, floors: input.plan.floors ?? defaultFloors() };
     const placed = entries.flatMap((entry): { tableId: string; layout: TableLayout }[] =>
-      entry.layout ? [{ tableId: entry.tableId, layout: { ...entry.layout, rotation: entry.layout.rotation ?? 0 } }] : [],
+      entry.layout
+        ? [
+            {
+              tableId: entry.tableId,
+              layout: { ...entry.layout, rotation: entry.layout.rotation ?? 0, floor: entry.layout.floor ?? 0 },
+            },
+          ]
+        : [],
     );
     await this.connection.transaction(async (session) => {
-      if (!(await this.restaurants.setFloorPlan(restaurantId, input.plan, session))) throw notFound();
+      if (!(await this.restaurants.setFloorPlan(restaurantId, plan, session))) throw notFound();
       await this.tables.replaceLayouts(restaurantId, placed, session);
     });
 

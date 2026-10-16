@@ -33,6 +33,7 @@ import {
 } from "@/lib/live-floor";
 import { formatAgo, type TrackedPosition } from "@/lib/maps";
 import { formatPrice } from "@/lib/money";
+import { focusOrderHref } from "@/lib/orders-board";
 import { equalPartRows, paymentKindLabel, splitPlanLabel } from "@/lib/split-bill";
 import { cn } from "@/lib/utils";
 
@@ -394,10 +395,12 @@ function TableDetail({ tableId, ctx }: { tableId: string; ctx: DetailContext }) 
   const indicator = state?.indicator ?? "free";
   const salon = `/admin/${restaurantId}/salon`;
   const shape = `${table.layout.shape === "round" ? "Redonda" : "Cuadrada"} · ${table.layout.seats} puestos`;
+  // With more than one floor the eyebrow says which one («Mesa · Terraza»).
+  const place = model.floors.length > 1 ? (model.floors[table.layout.floor]?.name ?? "Salón") : "Salón";
   if (!session) {
     return (
       <>
-        <Head eyebrow="Mesa · Salón" title={table.label} meta={shape} chip={<Chip tone="neu">Libre</Chip>} />
+        <Head eyebrow={`Mesa · ${place}`} title={table.label} meta={shape} chip={<Chip tone="neu">Libre</Chip>} />
         <Callout>
           <strong className="text-sm">Sin cuenta abierta</strong>
           <span className="text-[13px] text-muted-foreground">El próximo pedido desde el QR de la mesa abre una cuenta nueva.</span>
@@ -411,6 +414,8 @@ function TableDetail({ tableId, ctx }: { tableId: string; ctx: DetailContext }) 
     );
   }
   const active = model.orders.filter((order) => order.tableSessionId === session.id);
+  // «Ver en Pedidos» opens the oldest one in progress: the one the kitchen is working on first.
+  const oldest = active.reduce<(typeof active)[number] | undefined>((first, o) => (!first || o.createdAt < first.createdAt ? o : first), undefined);
   const tone: ChipTone = indicator === "waiter" ? "warn" : indicator === "bill" || indicator === "kitchen" ? "pri" : indicator === "free" ? "neu" : "ok";
   const ago = state?.since && (indicator === "waiter" || indicator === "bill") ? ` · ${formatAgo(now - Date.parse(state.since))}` : "";
   const rows = equalPartRows(session);
@@ -420,7 +425,7 @@ function TableDetail({ tableId, ctx }: { tableId: string; ctx: DetailContext }) 
   return (
     <>
       <Head
-        eyebrow="Mesa · Salón"
+        eyebrow={`Mesa · ${place}`}
         title={table.label}
         meta={`${shape} · desde las ${clock(session.openedAt)}`}
         chip={
@@ -508,9 +513,9 @@ function TableDetail({ tableId, ctx }: { tableId: string; ctx: DetailContext }) 
         <Button asChild className="flex-1">
           <Link href={salon}>{charging ? "Cobrar" : "Ir a Salón"}</Link>
         </Button>
-        {active.length > 0 ? (
+        {oldest ? (
           <Button asChild variant="outline">
-            <Link href={`/admin/${restaurantId}/pedidos`}>Ver en Pedidos</Link>
+            <Link href={focusOrderHref(restaurantId, oldest.id)}>Ver en Pedidos</Link>
           </Button>
         ) : null}
       </Actions>
@@ -706,7 +711,7 @@ function OrderDetail({ orderId, ctx }: { orderId: string; ctx: DetailContext }) 
       </Section>
       <Actions>
         <Button asChild className="flex-1">
-          <Link href={`/admin/${restaurantId}/pedidos`}>Ver en Pedidos</Link>
+          <Link href={focusOrderHref(restaurantId, order.id)}>Ver en Pedidos</Link>
         </Button>
         {order.channel === "dine_in" ? (
           <Button asChild variant="outline">

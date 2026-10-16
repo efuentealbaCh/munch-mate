@@ -1,6 +1,6 @@
 "use client";
 
-import type { OrderView } from "@app/types";
+import type { FloorPlan, OrderView } from "@app/types";
 import { type FocusEvent, type KeyboardEvent, memo, type PointerEvent, type ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   ALERT_COLORS,
@@ -8,12 +8,15 @@ import {
   CELL,
   diningLabelSpot,
   doorSide,
+  drawnLevel,
   ellipsize,
   fitArt,
   floorEllipse,
   floorRectPath,
   freeCorners,
   type GridRect,
+  hasVoid,
+  isInside,
   KITCHEN_ART,
   type KitchenGroup,
   type LiveLayout,
@@ -32,15 +35,20 @@ import {
   TABLE_STATE_LABELS,
   type TableStatus,
   targetKey,
+  terrainRuns,
   TICKET_GROUP,
   timerLabel,
   tone,
+  voidEdgeRect,
+  voidEdges,
   WALL_HEIGHT,
+  wallRuns,
 } from "@/lib/live-floor";
 import { formatClockTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { IsoBox, IsoText, Line3, PALETTE, Plant, Poly, type SceneIds, SceneIdsContext, sceneIds, url } from "./iso-shapes";
 import { BAG_X, KITCHEN_ANCHORS, KitchenArt, type MotoFrame, MotoArt, PickupArt, TABLE_TOP_Z, TableArt } from "./scene-art";
+import { DecorArt, PLAIN_FLOOR, SlabRuns, TerrainFloor, VoidCurb, WallBlock } from "./terrain-art";
 
 /** What the scene draws: the layout plus the live state of tables, kitchen, counter and riders. */
 export interface SceneData {
@@ -55,6 +63,11 @@ export interface SceneData {
   riders: OrderView[];
   /** What the dashed ring marks on the floor. */
   ring: LiveTarget | null;
+  /**
+   * The plan the drawing's box is computed from: the first floor's (with its door and kitchen), so switching floors
+   * does not resize the drawing. Default: `layout.plan`.
+   */
+  framePlan?: FloorPlan;
 }
 
 const MAX_MOTOS = 3;
@@ -122,8 +135,8 @@ function riderTag(order: OrderView): string {
 /** The drawing itself. Memoized: hovering (tooltip, highlight) must not redraw a thousand shapes. */
 const SceneSvg = memo(function SceneSvg({ data, ids, label }: { data: SceneData; ids: SceneIds; label: string }) {
   const { layout, tableStates, groups, readyPickups, riders, restaurantName, ring } = data;
-  const { plan } = layout;
-  const frame = sceneFrame(plan);
+  const { plan, ground: groundFloor } = layout;
+  const frame = sceneFrame(data.framePlan ?? plan);
   const os = frame.overlayScale;
   const W = frame.width;
   const H = frame.depth;
@@ -133,9 +146,23 @@ const SceneSvg = memo(function SceneSvg({ data, ids, label }: { data: SceneData;
   const front = side === "east" || side === "south";
   const motos = riders.slice(0, MAX_MOTOS);
   const frames = motoFrames(layout, motos.length);
-  const name = nameSpot(plan);
-  const corners = freeCorners(plan, layout.tables);
-  const diningSpot = layout.dining ? diningLabelSpot(plan, layout.tables) : null;
+  const name = nameSpot(plan, layout.floor);
+  const corners = freeCorners(plan, layout.tables, layout.floor);
+  const diningSpot = layout.dining ? diningLabelSpot(plan, layout.tables, layout.floor) : null;
+  const level = drawnLevel(layout);
+  const { terrain } = level;
+  const inside = (x: number, y: number) => isInside(terrain, plan.cols, { x, y });
+  /** Spans (world units) of a row or column of the grid's edge that are inside the building. */
+  const insideSpans = (count: number, cellAt: (i: number) => [number, number]): [number, number][] => {
+    const spans: [number, number][] = [];
+    for (let i = 0; i < count; i++) {
+      if (!inside(...cellAt(i))) continue;
+      const last = spans.at(-1);
+      if (last && last[1] === i * CELL) last[1] = (i + 1) * CELL;
+      else spans.push([i * CELL, (i + 1) * CELL]);
+    }
+    return spans;
+  };
   const kitchenCount = groups.reduce((sum, g) => sum + g.tickets.length, 0);
 
   // ── Ground ──
@@ -158,12 +185,22 @@ const SceneSvg = memo(function SceneSvg({ data, ids, label }: { data: SceneData;
       </g>,
     );
   }
-  ground.push(<IsoBox key="slab" x={-0.6} y={-0.6} z={-1} w={W + 0.6} d={H + 0.6} h={1} c={PALETTE.slab} />);
-  ground.push(<Poly key="floor" points={[[0, 0, 0], [W, 0, 0], [W, H, 0], [0, H, 0]]} fill={layout.dining ? "#f2e7d9" : "#f3efe9"} />);
+  if (hasVoid(terrain)) {
+    // Cells outside the building: no slab under them (the whole-plan shadow becomes one per row of the building).
+    ground[0] = <SlabRuns key="slab" level={level} cols={plan.cols} rows={plan.rows} />;
+  } else {
+    ground.push(<IsoBox key="slab" x={-0.6} y={-0.6} z={-1} w={W + 0.6} d={H + 0.6} h={1} c={PALETTE.slab} />);
+  }
+  if (terrain === null) {
+    ground.push(<Poly key="floor" points={[[0, 0, 0], [W, 0, 0], [W, H, 0], [0, H, 0]]} fill={layout.dining ? PLAIN_FLOOR.dining : PLAIN_FLOOR.bare} />);
+  } else {
+    ground.push(<TerrainFloor key="terrain" runs={terrainRuns(terrain, plan.cols, plan.rows)} dining={layout.dining} />);
+  }
   if (layout.dining) {
     const planks: ReactNode[] = [];
-    for (let py = 1.75; py < H; py += 1.75) {
-      planks.push(<Line3 key={py} from={[0, py, 0]} to={[W, py, 0]} stroke="#e8d8c4" strokeWidth={0.8} />);
+    // A painted floor draws its own planks (TerrainFloor), only on its plain cells.
+    for (let py = 1.75; terrain === null && py < H; py += 1.75) {
+      planks.push(<Line3 key={py} from={[0, py, 0]} to={[W, py, 0]} stroke={PLAIN_FLOOR.plank} strokeWidth={0.8} />);
     }
     ground.push(
       <g key="dining" data-testid="live-dining" pointerEvents="none">
@@ -176,8 +213,8 @@ const SceneSvg = memo(function SceneSvg({ data, ids, label }: { data: SceneData;
       </g>,
     );
   }
-  // Kitchen floor: light tiles.
-  {
+  // Kitchen floor: light tiles (the kitchen is on the first floor).
+  if (groundFloor) {
     const k = plan.kitchen;
     const x0 = k.x * CELL;
     const y0 = k.y * CELL;
@@ -231,11 +268,18 @@ const SceneSvg = memo(function SceneSvg({ data, ids, label }: { data: SceneData;
 
   // ── Back walls ──
   const walls: ReactNode[] = [];
-  walls.push(<IsoBox key="wall-n" x={-0.6} y={-0.6} w={W + 0.6} d={0.6} h={WALL_HEIGHT} c={PALETTE.wall} />);
-  walls.push(<IsoBox key="wall-w" x={-0.6} y={0} w={0.6} d={H} h={WALL_HEIGHT} c={PALETTE.wall} />);
+  // Only along cells inside the building (an unpainted plan: each back edge whole, as one wall).
+  for (const [a, b] of insideSpans(plan.cols, (x) => [x, 0])) {
+    const from = a === 0 ? -0.6 : a;
+    walls.push(<IsoBox key={`wall-n-${a}`} x={from} y={-0.6} w={b - from} d={0.6} h={WALL_HEIGHT} c={PALETTE.wall} />);
+  }
+  for (const [a, b] of insideSpans(plan.rows, (y) => [0, y])) {
+    walls.push(<IsoBox key={`wall-w-${a}`} x={-0.6} y={a} w={0.6} d={b - a} h={WALL_HEIGHT} c={PALETTE.wall} />);
+  }
   // Windows on the west wall, where nothing tall stands against it and the name is not painted.
   for (let row = 0; row < plan.rows; row++) {
-    const againstArea = [plan.kitchen, plan.pickup].some((a) => a && a.x === 0 && row >= a.y && row < a.y + a.h);
+    if (!inside(0, row)) continue;
+    const againstArea = groundFloor && [plan.kitchen, plan.pickup].some((a) => a && a.x === 0 && row >= a.y && row < a.y + a.h);
     const nameHere = name?.wall === "west" && row >= name.start && row < name.start + name.length;
     const doorHere = plan.door?.x === 0 && plan.door.y === row;
     if (againstArea || nameHere || doorHere || row % 2 === 1) continue;
@@ -302,7 +346,7 @@ const SceneSvg = memo(function SceneSvg({ data, ids, label }: { data: SceneData;
       ),
     });
   }
-  {
+  if (groundFloor) {
     const [kx, ky] = project(kitchenPlace.x, kitchenPlace.y);
     items.push({
       key: "kitchen",
@@ -352,6 +396,15 @@ const SceneSvg = memo(function SceneSvg({ data, ids, label }: { data: SceneData;
       ),
     });
   }
+  for (const run of wallRuns(terrain, plan.cols, plan.rows, groundFloor ? plan.door : null)) {
+    items.push({ key: `wall-${run.x}-${run.y}`, rect: { x: run.x, y: run.y, w: run.w, h: 1 }, node: <WallBlock run={run} /> });
+  }
+  for (const edge of voidEdges(terrain, plan.cols, plan.rows)) {
+    items.push({ key: `curb-${edge.side}-${edge.x}-${edge.y}`, rect: voidEdgeRect(edge), node: <VoidCurb edge={edge} /> });
+  }
+  for (const item of level.decor) {
+    items.push({ key: `decor-${item.x}-${item.y}`, rect: { x: item.x, y: item.y, w: 1, h: 1 }, node: <DecorArt kind={item.kind} x={item.x} y={item.y} /> });
+  }
   const objects = paintOrder(items, (item) => item.rect);
 
   // ── Back door: painted on the wall ──
@@ -383,10 +436,16 @@ const SceneSvg = memo(function SceneSvg({ data, ids, label }: { data: SceneData;
   {
     const gapEast = plan.door && side === "east" ? [plan.door.y * CELL, (plan.door.y + 1) * CELL] : null;
     const gapSouth = plan.door && side === "south" ? [plan.door.x * CELL, (plan.door.x + 1) * CELL] : null;
-    const segments = (length: number, gap: number[] | null): [number, number][] =>
-      gap ? ([[0, gap[0]!], [gap[1]!, length]] as [number, number][]).filter(([a, b]) => b - a > 0.05) : [[0, length]];
-    for (const [a, b] of segments(W - 0.4, gapSouth)) frontLayer.push(<IsoBox key={`ws-${a}`} x={a} y={H - 0.4} w={b - a} d={0.4} h={0.9} c={PALETTE.wall} />);
-    for (const [a, b] of segments(H, gapEast)) frontLayer.push(<IsoBox key={`we-${a}`} x={W - 0.4} y={a} w={0.4} d={b - a} h={0.9} c={PALETTE.wall} />);
+    // Spans of the front edges inside the building, cut at `length` and around the door.
+    const segments = (spans: [number, number][], length: number, gap: number[] | null): [number, number][] =>
+      spans
+        .map(([a, b]): [number, number] => [a, Math.min(b, length)])
+        .flatMap(([a, b]): [number, number][] => (gap ? [[a, Math.min(b, gap[0]!)], [Math.max(a, gap[1]!), b]] : [[a, b]]))
+        .filter(([a, b]) => b - a > 0.05);
+    const south = insideSpans(plan.cols, (x) => [x, plan.rows - 1]);
+    const east = insideSpans(plan.rows, (y) => [plan.cols - 1, y]);
+    for (const [a, b] of segments(south, W - 0.4, gapSouth)) frontLayer.push(<IsoBox key={`ws-${a}`} x={a} y={H - 0.4} w={b - a} d={0.4} h={0.9} c={PALETTE.wall} />);
+    for (const [a, b] of segments(east, H, gapEast)) frontLayer.push(<IsoBox key={`we-${a}`} x={W - 0.4} y={a} w={0.4} d={b - a} h={0.9} c={PALETTE.wall} />);
     if (plan.door && front) {
       const east = side === "east";
       const s0 = (east ? plan.door.y : plan.door.x) * CELL;
@@ -483,9 +542,9 @@ const SceneSvg = memo(function SceneSvg({ data, ids, label }: { data: SceneData;
   }
 
   // Tickets floating over the kitchen: Listo (by the pass), Pendiente, En preparación (by the oven).
-  const shownGroups = (["ready", "pending", "preparing"] as const).flatMap((key) => groups.filter((g) => g.key === key && g.tickets.length > 0));
+  const shownGroups = groundFloor ? (["ready", "pending", "preparing"] as const).flatMap((key) => groups.filter((g) => g.key === key && g.tickets.length > 0)) : [];
   const [ax, ay] = frame.ticketsAnchor;
-  if (shownGroups.length === 0) {
+  if (groundFloor && shownGroups.length === 0) {
     overlay.push(
       <g key="no-tickets" {...hit({ kind: "kitchen" }, "", false)} transform={`translate(${r1(ax)},${r1(ay)}) scale(${os})`}>
         <rect x={-74} y={-22} width={148} height={22} rx={11} fill="#ffffff" fillOpacity={0.94} stroke="#e7e5e4" filter={url(ids.soft)} />
@@ -649,6 +708,11 @@ const SceneSvg = memo(function SceneSvg({ data, ids, label }: { data: SceneData;
           <stop offset={0.6} stopColor="#dba07c" />
           <stop offset={1} stopColor="#bf7c58" />
         </radialGradient>
+        <radialGradient id={ids.glow}>
+          <stop offset={0} stopColor="#fde68a" stopOpacity={0.75} />
+          <stop offset={0.5} stopColor="#fde68a" stopOpacity={0.3} />
+          <stop offset={1} stopColor="#fde68a" stopOpacity={0} />
+        </radialGradient>
         <radialGradient id={ids.fire}>
           <stop offset={0} stopColor="#fde68a" />
           <stop offset={0.45} stopColor="#fb923c" />
@@ -699,7 +763,7 @@ function ringShape(ring: LiveTarget | null, layout: LiveLayout, motos: readonly 
   const rectPath = (r: GridRect) => floorRectPath(r.x * CELL + 0.2, r.y * CELL + 0.2, r.w * CELL - 0.4, r.h * CELL - 0.4);
   switch (ring.kind) {
     case "kitchen":
-      return rectPath(plan.kitchen);
+      return layout.ground ? rectPath(plan.kitchen) : null;
     case "pickup":
       return plan.pickup ? rectPath(plan.pickup) : null;
     case "door":
@@ -731,7 +795,8 @@ export interface SceneTooltip {
 /**
  * The interactive isometric scene: hover highlights and shows a tooltip, click/Enter selects. Event
  * delegation through `data-id` (see `targetKey`), so the memoized drawing never re-renders on hover.
- * `camera` (quarter turns, already applied to `data.layout`) only drives the short fade when it changes.
+ * `camera` (quarter turns, already applied to `data.layout`) and the floor drawn (`data.layout.floor`) only drive
+ * the short fade when they change. `overlay` floats over the drawing's top-left corner (the floor selector).
  */
 export function LiveScene({
   data,
@@ -739,6 +804,7 @@ export function LiveScene({
   onSelect,
   describe,
   camera = 0,
+  overlay,
   className,
 }: {
   data: SceneData;
@@ -746,19 +812,22 @@ export function LiveScene({
   onSelect(target: LiveTarget): void;
   describe(target: LiveTarget): SceneTooltip | null;
   camera?: number;
+  overlay?: ReactNode;
   className?: string;
 }) {
+  const view = `${camera}:${data.layout.floor}`;
   const reactId = useId();
   const ids = useMemo(() => sceneIds(`lf${reactId}`), [reactId]);
   const scope = ids.blur;
   const wrapRef = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<string | null>(null);
   const [tip, setTip] = useState<{ key: string; x: number; y: number } | null>(null);
-  // The drawing fades in after the camera turns (not on the first paint); the tooltip would point at the old spot.
-  const [shownCamera, setShownCamera] = useState(camera);
+  // The drawing fades in after the camera turns or the floor changes (not on the first paint); the tooltip would
+  // point at the old spot.
+  const [shownView, setShownView] = useState(view);
   const [fade, setFade] = useState(false);
-  if (shownCamera !== camera) {
-    setShownCamera(camera);
+  if (shownView !== view) {
+    setShownView(view);
     setFade(true);
     setHover(null);
     setTip(null);
@@ -769,7 +838,7 @@ export function LiveScene({
     const key = focused.current;
     if (!key || (document.activeElement && document.activeElement !== document.body)) return;
     wrapRef.current?.querySelector<SVGElement>(`[data-id="${key}"][tabindex]`)?.focus();
-  }, [camera]);
+  }, [view]);
 
   const keyOf = (element: EventTarget | null) => (element instanceof Element ? (element.closest("[data-id]")?.getAttribute("data-id") ?? null) : null);
 
@@ -831,10 +900,12 @@ export function LiveScene({
       {/* Only [\w:-] reach the selector (targetKey/parseTarget), so the rule cannot be broken out of. */}
       {hover && parseTarget(hover) ? <style>{hoverCss}</style> : null}
       <SceneIdsContext.Provider value={ids}>
-        <div key={camera} className={cn("h-full w-full", fade && "animate-in duration-300 fade-in-0 motion-reduce:animate-none")} data-testid="live-camera" data-angle={camera * 90}>
+        <div key={view} className={cn("h-full w-full", fade && "animate-in duration-300 fade-in-0 motion-reduce:animate-none")} data-testid="live-camera" data-angle={camera * 90}>
           <SceneSvg data={data} ids={ids} label={label} />
         </div>
       </SceneIdsContext.Provider>
+      {/* On desktop the indicator cards overlap the top edge of the scene: start below them. */}
+      {overlay ? <div className="absolute top-2 left-2 z-[2] max-w-[calc(100%_-_1rem)] xl:top-12 xl:left-4">{overlay}</div> : null}
       {tip && tipText ? (
         <div
           className="pointer-events-none absolute z-10 max-w-60 -translate-x-1/2 -translate-y-[calc(100%+14px)] rounded-lg bg-foreground px-2.5 py-1.5 text-xs leading-snug text-background shadow-lg"

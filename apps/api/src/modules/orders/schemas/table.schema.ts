@@ -20,6 +20,10 @@ export class TableLayoutDoc {
   /** 0 = horizontal, 90 = vertical. Missing in layouts saved before it existed: read as 0. */
   @Prop({ type: Number, enum: TABLE_ROTATIONS, default: 0 })
   rotation!: TableRotation;
+
+  /** Index of its floor in `restaurants.floorPlan.floors`. Missing in layouts saved before floors: read as 0. */
+  @Prop({ min: 0, default: 0 })
+  floor!: number;
 }
 const TableLayoutSchema = SchemaFactory.createForClass(TableLayoutDoc);
 

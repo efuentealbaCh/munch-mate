@@ -1036,6 +1036,155 @@
           "x": 6,
           "y": 8
         },
+        "floors": [
+          {
+            "name": "Salón",
+            "terrainRows": [
+              "wwwwwwwww#tttt",
+              "wwwwwwwww#tttt",
+              "wwwwwwwwwwtttt",
+              "wwwwwwwwwwwwww",
+              "wwwwwwwwwwwwww",
+              "wwwwwwwwwwwwww",
+              "ssssssssssssss",
+              "ggggsssssssttt",
+              "ggggsssssssttt"
+            ],
+            "decor": [
+              {
+                "kind": "plant",
+                "x": 0,
+                "y": 0
+              },
+              {
+                "kind": "plant",
+                "x": 8,
+                "y": 0
+              },
+              {
+                "kind": "lamp",
+                "x": 9,
+                "y": 5
+              },
+              {
+                "kind": "plant",
+                "x": 12,
+                "y": 4
+              },
+              {
+                "kind": "tree",
+                "x": 0,
+                "y": 7
+              },
+              {
+                "kind": "flowers",
+                "x": 2,
+                "y": 7
+              },
+              {
+                "kind": "flowers",
+                "x": 1,
+                "y": 8
+              },
+              {
+                "kind": "bench",
+                "x": 3,
+                "y": 8
+              },
+              {
+                "kind": "planter",
+                "x": 5,
+                "y": 8
+              },
+              {
+                "kind": "planter",
+                "x": 7,
+                "y": 8
+              }
+            ]
+          },
+          {
+            "name": "Terraza",
+            "terrainRows": [
+              "gggggggggg____",
+              "gssssssssg____",
+              "gssssssssg____",
+              "gssssssssg____",
+              "gssssssssg____",
+              "gssssssssg____",
+              "gssssssssg____",
+              "gssssssssg____",
+              "gggggggggg____"
+            ],
+            "decor": [
+              {
+                "kind": "tree",
+                "x": 0,
+                "y": 0
+              },
+              {
+                "kind": "tree",
+                "x": 9,
+                "y": 0
+              },
+              {
+                "kind": "flowers",
+                "x": 4,
+                "y": 0
+              },
+              {
+                "kind": "flowers",
+                "x": 5,
+                "y": 0
+              },
+              {
+                "kind": "umbrella",
+                "x": 2,
+                "y": 2
+              },
+              {
+                "kind": "umbrella",
+                "x": 5,
+                "y": 2
+              },
+              {
+                "kind": "lamp",
+                "x": 8,
+                "y": 1
+              },
+              {
+                "kind": "bench",
+                "x": 3,
+                "y": 6
+              },
+              {
+                "kind": "planter",
+                "x": 7,
+                "y": 6
+              },
+              {
+                "kind": "plant",
+                "x": 0,
+                "y": 8
+              },
+              {
+                "kind": "plant",
+                "x": 9,
+                "y": 8
+              },
+              {
+                "kind": "flowers",
+                "x": 4,
+                "y": 8
+              },
+              {
+                "kind": "flowers",
+                "x": 5,
+                "y": 8
+              }
+            ]
+          }
+        ],
         "tables": [
           {
             "label": "Mesa 1",
@@ -1096,17 +1245,19 @@
           },
           {
             "label": "Terraza 1",
-            "x": 1,
-            "y": 6,
+            "x": 2,
+            "y": 3,
             "shape": "round",
-            "seats": 2
+            "seats": 2,
+            "floor": 1
           },
           {
             "label": "Terraza 2",
-            "x": 3,
-            "y": 6,
+            "x": 5,
+            "y": 3,
             "shape": "round",
-            "seats": 2
+            "seats": 2,
+            "floor": 1
           }
         ]
       },

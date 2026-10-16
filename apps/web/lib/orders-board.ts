@@ -385,3 +385,28 @@ export function dayTotals(orders: readonly OrderView[]): DayTotals {
 export function sortNewestFirst(orders: readonly OrderView[]): OrderView[] {
   return [...orders].sort((a, b) => -byCreatedAsc(a, b));
 }
+
+/** Query parameter that opens «Pedidos» focused on one order (`/admin/:id/pedidos?pedido=<orderId>`, from En vivo). */
+export const FOCUS_ORDER_PARAM = "pedido";
+
+/** Link to «Pedidos» focused on one order. */
+export function focusOrderHref(restaurantId: string, orderId: string): string {
+  return `/admin/${restaurantId}/pedidos?${FOCUS_ORDER_PARAM}=${encodeURIComponent(orderId)}`;
+}
+
+/**
+ * Where an order to focus is shown: on the board while in progress, otherwise in «Hoy» (finished or cancelled
+ * today). Waits while the lists it depends on are still loading.
+ * @param today null until «Hoy» is loaded (it only loads once that tab is open).
+ * @returns "board", "today", "missing" (not in either: an older day) or null while loading.
+ */
+export function focusOrderPlace(
+  orderId: string,
+  active: readonly Pick<OrderView, "id">[] | null,
+  today: readonly Pick<OrderView, "id">[] | null,
+): "board" | "today" | "missing" | null {
+  if (!active) return null;
+  if (active.some((order) => order.id === orderId)) return "board";
+  if (!today) return null;
+  return today.some((order) => order.id === orderId) ? "today" : "missing";
+}

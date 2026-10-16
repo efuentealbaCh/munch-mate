@@ -17,6 +17,8 @@ export interface SceneIds {
   soft2: string;
   roadGradient: string;
   roadFade: string;
+  /** Soft light of the floor lamps (decorations). */
+  glow: string;
 }
 
 export function sceneIds(prefix: string): SceneIds {
@@ -31,6 +33,7 @@ export function sceneIds(prefix: string): SceneIds {
     soft2: id("soft2"),
     roadGradient: id("road-g"),
     roadFade: id("road-fade"),
+    glow: id("glow"),
   };
 }
 

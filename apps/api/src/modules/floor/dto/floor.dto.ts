@@ -1,7 +1,12 @@
 import {
+  DECOR_KINDS,
+  type DecorKind,
   FLOOR_LIMITS,
+  FLOOR_MATERIALS,
   type FloorCell,
-  type FloorPlan,
+  type FloorDecor,
+  type FloorLevel,
+  type FloorPlanInput,
   type FloorRect,
   type SaveFloorPlanInput,
   TABLE_ROTATIONS,
@@ -12,9 +17,10 @@ import {
   type TableSeats,
   type TableShape,
 } from "@app/types";
-import { Type } from "class-transformer";
+import { Transform, Type } from "class-transformer";
 import {
   ArrayMaxSize,
+  ArrayMinSize,
   IsArray,
   IsDefined,
   IsIn,
@@ -23,11 +29,14 @@ import {
   IsOptional,
   IsString,
   Length,
+  Matches,
   Max,
+  MaxLength,
   Min,
   ValidateIf,
   ValidateNested,
 } from "class-validator";
+import { cleanLine } from "../../../common/validation/clean-text";
 
 // Shape and bounds only: how the pieces fit together (areas, door, overlaps) is checked by the service with
 // `floorPlanProblem` (@app/utils), the same rules the editor uses.
@@ -68,6 +77,47 @@ export class FloorCellDto implements FloorCell {
   y!: number;
 }
 
+export class FloorDecorDto implements FloorDecor {
+  @IsIn(DECOR_KINDS, { message: "Decoración desconocida" })
+  kind!: DecorKind;
+
+  @IsInt(CELL)
+  @Min(0, CELL)
+  @Max(MAX_CELL, CELL)
+  x!: number;
+
+  @IsInt(CELL)
+  @Min(0, CELL)
+  @Max(MAX_CELL, CELL)
+  y!: number;
+}
+
+// Any run of material codes (none of them is special inside a character class: ".", letters, "#", "_").
+const TERRAIN = new RegExp(`^[${Object.values(FLOOR_MATERIALS).join("")}]*$`);
+const MAX_TERRAIN = FLOOR_LIMITS.colsMax * FLOOR_LIMITS.rowsMax;
+
+export class FloorLevelDto implements FloorLevel {
+  @Transform(cleanLine)
+  @IsString({ message: "Cada piso necesita un nombre" })
+  @Length(1, FLOOR_LIMITS.floorNameMax, {
+    message: `El nombre del piso debe tener entre 1 y ${FLOOR_LIMITS.floorNameMax} caracteres`,
+  })
+  name!: string;
+
+  /** null or missing = plain floor; its length against the grid is checked by `floorPlanProblem`. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(MAX_TERRAIN)
+  @Matches(TERRAIN, { message: "El terreno del piso tiene materiales desconocidos" })
+  terrain!: string | null;
+
+  @IsArray()
+  @ArrayMaxSize(FLOOR_LIMITS.decorMax, { message: `Cada piso admite hasta ${FLOOR_LIMITS.decorMax} decoraciones` })
+  @ValidateNested({ each: true })
+  @Type(() => FloorDecorDto)
+  decor!: FloorDecorDto[];
+}
+
 export class FloorPlanDto {
   @IsInt({ message: "cols debe ser un número entero" })
   cols!: number;
@@ -90,6 +140,15 @@ export class FloorPlanDto {
   @ValidateNested()
   @Type(() => FloorCellDto)
   door?: FloorCellDto | null;
+
+  /** Missing = one plain floor, so clients older than the floors keep working. */
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(1, { message: "El plano debe tener al menos un piso" })
+  @ArrayMaxSize(FLOOR_LIMITS.floorsMax, { message: `El plano admite hasta ${FLOOR_LIMITS.floorsMax} pisos` })
+  @ValidateNested({ each: true })
+  @Type(() => FloorLevelDto)
+  floors?: FloorLevelDto[];
 }
 
 export class TableLayoutDto implements TableLayoutInput {
@@ -113,6 +172,13 @@ export class TableLayoutDto implements TableLayoutInput {
   @IsOptional()
   @IsIn(TABLE_ROTATIONS, { message: "La mesa puede estar horizontal (0) o vertical (90)" })
   rotation?: TableRotation;
+
+  /** Index in `plan.floors`; missing = 0 (first floor). A floor the plan lacks answers `unknown_floor`. */
+  @IsOptional()
+  @IsInt({ message: "El piso de la mesa debe ser un número entero" })
+  @Min(0, { message: "El piso de la mesa debe ser un número entero" })
+  @Max(FLOOR_LIMITS.floorsMax - 1, { message: "Una mesa está en un piso que ya no existe" })
+  floor?: number;
 }
 
 export class TablePlacementDto {
@@ -152,12 +218,19 @@ export class SaveFloorPlanDto {
  * sent (possibly null) so `floorPlanProblem` reports `kitchen_required`.
  */
 export function toSaveFloorPlanInput(dto: SaveFloorPlanDto): SaveFloorPlanInput {
-  const plan: FloorPlan | null = dto.plan && {
+  const plan: FloorPlanInput | null = dto.plan && {
     cols: dto.plan.cols,
     rows: dto.plan.rows,
     kitchen: (dto.plan.kitchen ?? null) as FloorRect,
     pickup: dto.plan.pickup ?? null,
     door: dto.plan.door ?? null,
+    ...(dto.plan.floors && {
+      floors: dto.plan.floors.map((level) => ({
+        name: level.name,
+        terrain: level.terrain || null,
+        decor: level.decor.map((item) => ({ kind: item.kind, x: item.x, y: item.y })),
+      })),
+    }),
   };
   return { plan, tables: (dto.tables ?? []).map((t) => ({ tableId: t.tableId, layout: t.layout ?? null })) };
 }
